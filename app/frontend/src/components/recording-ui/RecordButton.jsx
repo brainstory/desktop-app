@@ -29,6 +29,7 @@ function RecordButton({
 	const [isTextInput, setIsTextInput] = useState(false);
 	const [userTextInput, setUserTextInput] = useState("");
 	const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+	const [micStarting, setMicStarting] = useState(false);
 	const [errorMessage, setErrorMessage] = useState(null);
 	const context = useContext(AppContext);
 
@@ -78,12 +79,13 @@ function RecordButton({
 				handleError(error);
 			}
 		} else {
-			setStatus("recording");
+			setStatus("starting mic...");
 			setWarningType(null);
 			// flip immediately - the first start in a session can take a
 			// moment (CoreAudio device init), and the button should respond
 			// instantly; reverted if the mic can't start
 			setIsRecording(true);
+			setMicStarting(true);
 			try {
 				await startWavCapture();
 				const recordingTimeout = setTimeout(() => {
@@ -92,12 +94,15 @@ function RecordButton({
 					setWarningType("timer"); // Set warning when time limit is exceeded
 				}, RECORDING_MAX_DURATION);
 				setTimer(recordingTimeout);
+				setStatus("recording");
 			} catch (error) {
 				console.error("Error accessing microphone:", error);
 				setIsRecording(false);
 				setStatus("idle");
 				setErrorMessage(String(error?.message ?? error));
 				setMicPermissionDenied(true);
+			} finally {
+				setMicStarting(false);
 			}
 		}
 	};
@@ -196,12 +201,15 @@ function RecordButton({
 			let icon;
 			const baseStyleClasses = `${buttonSizing} focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 relative flex items-center justify-center bg-white shadow-xl border-[1px] border-stone-200 text-stone-500 hover:text-stone-700 font-bold rounded-full disabled:opacity-40 disabled:cursor-not-allowed group:hover:scale-105 transform transition-transform hover:bg-stone-100 transition-colors duration-300 `;
 			let disabled =
+				micStarting ||
 				isDisabledOverride ||
 				conversationState === CONVERSATION_STATE.WaitingForCoach ||
 				conversationState === CONVERSATION_STATE.TranscribingUser;
 			let onClickHandler = () => {};
 
-			if (isRecording) {
+			if (micStarting) {
+				onClickHandler = () => {};
+			} else if (isRecording) {
 				icon = ICON.Recording;
 				onClickHandler = () => {
 					setSludgeman("idle");
@@ -227,7 +235,15 @@ function RecordButton({
 							className={baseStyleClasses}
 							onClick={onClickHandler}
 						>
-							{icon}
+							{micStarting ? (
+								<div
+									className="w-9 h-9 rounded-full border-[3px] border-stone-200 border-t-pink-500 animate-spin"
+									role="status"
+									aria-label="starting microphone"
+								></div>
+							) : (
+								icon
+							)}
 						</button>
 					</div>
 					<p>{status === "idle" ? "ready to listen" : status}</p>
