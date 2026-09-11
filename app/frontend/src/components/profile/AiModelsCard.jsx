@@ -152,7 +152,7 @@ export function AiModelsCard({ openSnackbar }) {
 								Use
 							</BorderedButton>
 						)}
-						{model.downloaded && !model.active && (
+						{model.downloaded && !isDownloading && (
 							<BorderedButton onClick={() => deleteModelApi(model.id).then(refresh).catch((e) => openSnackbar(false, e))}>
 								Delete
 							</BorderedButton>

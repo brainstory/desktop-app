@@ -138,13 +138,45 @@ pub async fn download_model(
 }
 
 #[tauri::command]
-pub fn delete_model(state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+pub fn delete_model(
+	app: tauri::AppHandle,
+	state: State<'_, AppState>,
+	model_id: String,
+) -> Result<(), String> {
 	let spec = find_model(&model_id, ModelKind::Llm)
 		.or_else(|| find_model(&model_id, ModelKind::Stt))
 		.ok_or_else(|| format!("unknown model {model_id}"))?;
+	{
+		let progress = state.download_progress.lock().unwrap();
+		if progress.contains_key(&model_id) {
+			return Err("model is currently downloading".into());
+		}
+	}
 	let path = state.model_path(spec);
 	if path.exists() {
 		std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+	}
+
+	// If the deleted model is loaded, unload it so the UI reflects reality.
+	let mut runtime = state.runtime.lock().unwrap();
+	let llm_gone = runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+	let stt_gone = runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+	if llm_gone {
+		runtime.llm = None;
+	}
+	if stt_gone {
+		runtime.stt = None;
+	}
+	drop(runtime);
+	if llm_gone {
+		*state.llm_status.lock().unwrap() =
+			crate::models::EngineStatus::new("missing", None, None);
+		state.emit_llm_status(&app);
+	}
+	if stt_gone {
+		*state.stt_status.lock().unwrap() =
+			crate::models::EngineStatus::new("missing", None, None);
+		state.emit_stt_status(&app);
 	}
 	Ok(())
 }
