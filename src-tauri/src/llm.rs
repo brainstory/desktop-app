@@ -17,6 +17,9 @@ use crate::types::ChatMessage;
 const N_CTX: u32 = 16384;
 const MAX_NEW_TOKENS_RESPONSE: u32 = 1024;
 const MAX_NEW_TOKENS_RESULT: u32 = 4096;
+/// Hard ceiling for one generation; without it a stalled decode would
+/// disable the chat UI forever.
+const GENERATION_TIMEOUT_SECS: u64 = 300;
 
 #[allow(dead_code)]
 pub struct LocalLlm {
@@ -191,10 +194,14 @@ impl LocalLlm {
 		let mut output = String::new();
 		let mut generated: u32 = 0;
 		let mut pos = tokens.len() as i32;
+		let started = std::time::Instant::now();
 
 		loop {
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
+			}
+			if started.elapsed() > std::time::Duration::from_secs(GENERATION_TIMEOUT_SECS) {
+				return Err("generation timed out".into());
 			}
 			let token = sampler.sample(&ctx, -1);
 			if self.model.is_eog_token(token) {
@@ -240,12 +247,18 @@ pub struct ExternalLlm {
 }
 
 impl ExternalLlm {
+	/// If no bytes arrive for this long, the endpoint is treated as stalled.
+	const CHUNK_IDLE_TIMEOUT_SECS: u64 = 90;
+
 	pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
 		Self {
 			base_url: base_url.trim_end_matches('/').to_string(),
 			api_key: api_key.to_string(),
 			model: model.to_string(),
-			client: reqwest::Client::new(),
+			client: reqwest::Client::builder()
+				.connect_timeout(std::time::Duration::from_secs(10))
+				.build()
+				.unwrap_or_else(|_| reqwest::Client::new()),
 		}
 	}
 
@@ -286,7 +299,18 @@ impl ExternalLlm {
 			request = request.bearer_auth(&self.api_key);
 		}
 
-		let response = request.send().await.map_err(|e| format!("request failed: {e}"))?;
+		let response = tokio::time::timeout(
+			std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS),
+			request.send(),
+		)
+		.await
+		.map_err(|_| {
+			format!(
+				"external endpoint stalled (no response for {}s)",
+				Self::CHUNK_IDLE_TIMEOUT_SECS
+			)
+		})?
+		.map_err(|e| format!("request failed: {e}"))?;
 		if !response.status().is_success() {
 			let status = response.status();
 			let body = response.text().await.unwrap_or_default();
@@ -302,10 +326,21 @@ impl ExternalLlm {
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
 			}
-			let chunk = match stream.next().await {
-				Some(Ok(c)) => c,
-				Some(Err(e)) => return Err(format!("stream interrupted: {e}")),
-				None => break,
+			let chunk = match tokio::time::timeout(
+				std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS),
+				stream.next(),
+			)
+			.await
+			{
+				Err(_) => {
+					return Err(format!(
+						"external endpoint stalled (no data for {}s)",
+						Self::CHUNK_IDLE_TIMEOUT_SECS
+					))
+				}
+				Ok(Some(Ok(c))) => c,
+				Ok(Some(Err(e))) => return Err(format!("stream interrupted: {e}")),
+				Ok(None) => break,
 			};
 			buffer.extend_from_slice(&chunk);
 
