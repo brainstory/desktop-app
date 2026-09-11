@@ -6,7 +6,7 @@ use std::sync::Arc;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::llama_backend::LlamaBackend;
 
@@ -23,6 +23,8 @@ pub struct LocalLlm {
 	backend: Arc<LlamaBackend>,
 	model: Arc<LlamaModel>,
 	pub model_id: String,
+	/// general.architecture from the GGUF metadata
+	architecture: String,
 }
 
 impl LocalLlm {
@@ -32,46 +34,81 @@ impl LocalLlm {
 		let params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
 		let model = LlamaModel::load_from_file(&backend, path, &params)
 			.map_err(|e| format!("failed to load model {path:?}: {e}"))?;
-		Ok(Self { backend, model: Arc::new(model), model_id: model_id.to_string() })
+		let architecture = model
+			.meta_val_str("general.architecture")
+			.unwrap_or_default();
+		Ok(Self { backend, model: Arc::new(model), model_id: model_id.to_string(), architecture })
+	}
+
+	fn apply_llama_template(
+		&self,
+		template: &LlamaChatTemplate,
+		chat: &[LlamaChatMessage],
+	) -> Result<String, String> {
+		self.model
+			.apply_chat_template(template, chat, true)
+			.map_err(|e| format!("failed to apply chat template: {e}"))
+	}
+
+	/// Manual prompt format matching the model's native chat markers. Used
+	/// when llama.cpp's built-in template applier can't handle the model's
+	/// (e.g. the Gemma 4 canonical template, which its minja subset rejects).
+	fn manual_prompt(&self, system: &str, messages: &[ChatMessage]) -> String {
+		if self.architecture.starts_with("gemma") {
+			// Gemma 4: <bos><|turn>role\ncontent<turn|>... ending with an
+			// open model turn. The system turn (if any) comes first.
+			let mut prompt = String::from("<bos>");
+			if !system.trim().is_empty() {
+				prompt.push_str(&format!("<|turn>system\n{}<turn|>\n", system.trim()));
+			}
+			for msg in messages {
+				let role = if msg.role == "assistant" { "model" } else { "user" };
+				let content = if role == "user" { msg.content.trim() } else { msg.content.as_str() };
+				prompt.push_str(&format!("<|turn>{role}\n{content}<turn|>\n"));
+			}
+			prompt.push_str("<|turn>model\n");
+			prompt
+		} else {
+			// last resort: plain concatenation
+			let mut prompt = String::new();
+			if !system.trim().is_empty() {
+				prompt.push_str(system.trim());
+				prompt.push_str("\n\n");
+			}
+			for msg in messages {
+				let role = if msg.role == "assistant" { "Assistant" } else { "User" };
+				prompt.push_str(&format!("{role}: {}\n", msg.content));
+			}
+			prompt.push_str("Assistant:");
+			prompt
+		}
 	}
 
 	fn apply_template(&self, system: &str, messages: &[ChatMessage]) -> Result<String, String> {
-		// Models without a built-in chat template (e.g. tiny test models) fall
-		// back to plain concatenation.
-		let template = match self.model.chat_template(None) {
-			Ok(t) => t,
-			Err(_) => {
-				let mut prompt = String::new();
-				if !system.trim().is_empty() {
-					prompt.push_str(system.trim());
-					prompt.push_str("\n\n");
-				}
-				for msg in messages {
-					let role = if msg.role == "assistant" { "Assistant" } else { "User" };
-					prompt.push_str(&format!("{role}: {}\n", msg.content));
-				}
-				prompt.push_str("Assistant:");
+		if let Ok(template) = self.model.chat_template(None) {
+			let mut chat: Vec<LlamaChatMessage> = Vec::new();
+			if !system.trim().is_empty() {
+				chat.push(
+					LlamaChatMessage::new("system".to_string(), system.to_string())
+						.map_err(|e| e.to_string())?,
+				);
+			}
+			for msg in messages {
+				let role = if msg.role == "assistant" { "assistant" } else { "user" };
+				chat.push(
+					LlamaChatMessage::new(role.to_string(), msg.content.clone())
+						.map_err(|e| e.to_string())?,
+				);
+			}
+			if let Ok(prompt) = self.apply_llama_template(&template, &chat) {
 				return Ok(prompt);
 			}
-		};
-
-		let mut chat: Vec<LlamaChatMessage> = Vec::new();
-		if !system.trim().is_empty() {
-			chat.push(
-				LlamaChatMessage::new("system".to_string(), system.to_string())
-					.map_err(|e| e.to_string())?,
+			log::warn!(
+				"built-in chat template failed, falling back to manual {} format",
+				self.architecture
 			);
 		}
-		for msg in messages {
-			let role = if msg.role == "assistant" { "assistant" } else { "user" };
-			chat.push(
-				LlamaChatMessage::new(role.to_string(), msg.content.clone())
-					.map_err(|e| e.to_string())?,
-			);
-		}
-		self.model
-			.apply_chat_template(&template, &chat, true)
-			.map_err(|e| format!("failed to apply chat template: {e}"))
+		Ok(self.manual_prompt(system, messages))
 	}
 
 	fn count_tokens(&self, prompt: &str) -> Result<usize, String> {
