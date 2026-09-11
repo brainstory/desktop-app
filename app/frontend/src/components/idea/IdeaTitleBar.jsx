@@ -113,7 +113,11 @@ export default function IdeaTitleBar({
 		}
 		if (isOwnIdea) {
 			buttons.push(
-				<PinkButton key="export" onClick={handleExport}>
+				<PinkButton
+					key="export"
+					onClick={handleExport}
+					title="Exports the idea summary only — the conversation transcript stays on this device"
+				>
 					{exportState === "exporting"
 						? "Exporting..."
 						: exportState === "done"

@@ -7,6 +7,8 @@ use crate::AppState;
 /// Export an idea (or a feedback document) as a portable JSON file. The user
 /// sends the file to the other person however they like; importing it on
 /// another machine attributes the content to the author stored in the file.
+/// The chat transcript is deliberately NOT included — only the distilled
+/// result is shared, so the raw conversation stays on the author's machine.
 #[tauri::command]
 pub async fn export_idea(
 	app: tauri::AppHandle,
