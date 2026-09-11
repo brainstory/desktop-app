@@ -25,8 +25,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
 # model downloads + external endpoint clients
-reqwest = { version = "0.12", default-features = false, features = [
-	"rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+	"rustls",
 	"stream",
 	"json",
 	"multipart",

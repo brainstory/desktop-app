@@ -13,29 +13,22 @@
 		"astro": "astro"
 	},
 	"devDependencies": {
-		"@tailwindcss/vite": "^4.2.1",
-		"astro": "^5.17.3"
+		"@tailwindcss/vite": "^4.3.3",
+		"astro": "^7.3.2"
 	},
 	"dependencies": {
-		"@astrojs/react": "^4.4.2",
-		"@astrojs/sitemap": "^3.7.0",
-		"@nanostores/react": "^1.0.0",
-		"@rive-app/react-canvas": "^4.27.0",
+		"@astrojs/react": "^6.0.5",
+		"@nanostores/react": "^2.0.1",
+		"@rive-app/react-canvas": "^4.34.1",
 		"@tailwindcss/forms": "^0.5.11",
-		"@tailwindcss/typography": "^0.5.19",
+		"@tailwindcss/typography": "^0.5.20",
 		"@tauri-apps/api": "^2.11.1",
-		"class-variance-authority": "^0.7.1",
-		"clsx": "^2.1.1",
-		"md5": "^2.3.0",
-		"nanostores": "^1.1.0",
-		"react": "^19.2.4",
-		"react-dom": "^19.2.4",
+		"nanostores": "^1.5.3",
+		"react": "^19.3.0",
+		"react-dom": "^19.3.0",
 		"react-markdown": "^10.1.0",
-		"react-media-recorder": "^1.7.2",
 		"react-select": "^5.10.2",
-		"react-timezone-select": "^3.3.2",
-		"tailwind-merge": "^3.5.0",
-		"tailwindcss": "^4.2.1",
-		"uuid": "^13.0.0"
+		"react-timezone-select": "^3.3.3",
+		"tailwindcss": "^4.3.3"
 	}
 }

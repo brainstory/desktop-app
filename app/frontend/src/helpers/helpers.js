@@ -1,4 +1,3 @@
-import md5 from "md5";
 import { ERROR_MESSAGE_MAP } from "@src/const";
 
 export function getQueryParam(name) {

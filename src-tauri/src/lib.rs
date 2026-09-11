@@ -5,7 +5,7 @@ pub mod models;
 pub mod prompts;
 mod reminders;
 pub mod stt;
-mod types;
+pub mod types;
 pub mod voice;
 
 use chrono::Utc;
