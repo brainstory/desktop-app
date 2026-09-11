@@ -15,10 +15,14 @@ struct Capture {
 
 static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
 
+/// Hard cap on capture length (a little above the UI's 4-minute recording
+/// limit) so an abandoned recording can't grow the buffer unboundedly.
+const MAX_CAPTURE_SECS: usize = 300;
+
 /// Begin capturing from the default input device. Errors if already running
 /// or if macOS microphone permission has not been granted.
 pub fn start_capture() -> Result<(), String> {
-	let mut guard = CAPTURE.lock().unwrap();
+	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
 	if guard.is_some() {
 		// Already recording - treat as success so a double-press of the
 		// record button (first press still starting the stream) is harmless.
@@ -69,10 +73,17 @@ pub fn start_capture() -> Result<(), String> {
 			continue;
 		}
 		let queue = Arc::clone(&queue);
+		// Stop appending past the cap; a stream left running by a bug or a
+		// crashed UI must not eat memory forever.
+		let max_samples =
+			stream_config.sample_rate as usize * stream_config.channels as usize * MAX_CAPTURE_SECS;
 		let stream = device.build_input_stream(
-			stream_config.clone(),
+			*stream_config,
 			move |data: &[f32], _: &cpal::InputCallbackInfo| {
-				queue.lock().unwrap().extend_from_slice(data);
+				let mut buf = queue.lock().unwrap_or_else(|e| e.into_inner());
+				if buf.len() < max_samples {
+					buf.extend_from_slice(data);
+				}
 			},
 			move |err| log::warn!("microphone stream error: {err}"),
 			None,
@@ -92,10 +103,9 @@ pub fn start_capture() -> Result<(), String> {
 		}
 	}
 
-	let (stream, sample_rate, channel_count) = built.ok_or_else(|| {
-		build_error.unwrap_or_else(|| "microphone unsupported".into())
-	})?;
-	stream.play().map_err(|e| format!("failed to start microphone: {e}"))?;
+	let (stream, sample_rate, channel_count) =
+		built.ok_or_else(|| build_error.unwrap_or_else(|| "microphone unsupported".into()))?;
+	// The stream is already playing from the candidate loop above.
 
 	*guard = Some(Capture {
 		_stream: stream,
@@ -109,11 +119,15 @@ pub fn start_capture() -> Result<(), String> {
 /// Stop capturing and return the recording as a 16 kHz mono WAV file.
 /// Dropping the cpal stream stops the device.
 pub fn stop_capture() -> Result<Vec<u8>, String> {
-	let mut guard = CAPTURE.lock().unwrap();
+	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
 	let capture = guard.take().ok_or_else(|| "not recording".to_string())?;
 	drop(capture._stream);
 
-	let samples = capture.samples.lock().unwrap().clone();
+	let samples = capture
+		.samples
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.clone();
 	drop(guard);
 	if samples.is_empty() {
 		return Err("no audio captured".into());
@@ -129,7 +143,7 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 	} else {
 		samples
 	};
-	let mono = crate::stt::resample_to_16k(mono, capture.sample_rate);
+	let mono = crate::stt::resample_to_16k(mono, capture.sample_rate)?;
 
 	encode_wav_16k(&mono)
 }

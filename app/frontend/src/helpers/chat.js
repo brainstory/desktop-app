@@ -18,7 +18,8 @@ export function useIdeaIdFromUrl(hasMounted, setIdeaId) {
 
 export function getFirstPrompt(chatType) {
 	const isQotd = getQueryParam("qotd") === null ? false : true;
-	const isTopicStarter = getQueryParam("topic");
+	const topicIndex = Number(getQueryParam("topic"));
+	const topic = Number.isInteger(topicIndex) ? TOPICS[topicIndex] : undefined;
 
 	let firstPrompt = "Hi, how's it going? What's on your mind?";
 	if (chatType === CHAT_TYPE.FEEDBACK) {
@@ -27,13 +28,18 @@ export function getFirstPrompt(chatType) {
 		firstPrompt = "Walk me through how you want your day to go.";
 	} else if (isQotd) {
 		firstPrompt = getQuestionOfTheDay();
-	} else if (isTopicStarter) {
-		firstPrompt = TOPICS[isTopicStarter].prompt;
+	} else if (topic) {
+		firstPrompt = topic.prompt;
 	}
 
 	return firstPrompt;
 }
 
+/**
+ * Append a message to the conversation. Uses the functional state update so
+ * concurrent updates can never clobber each other with a stale array.
+ * `callback` receives the new conversation length.
+ */
 export const addConversationMessage = (
 	message,
 	isUser,
@@ -42,24 +48,19 @@ export const addConversationMessage = (
 	callback
 ) => {
 	const role = isUser ? "user" : "assistant";
-	let updateCurrConversation = [
-		...conversation,
-		{
-			role: role,
-			content: message
-		}
-	];
-	setConversation(updateCurrConversation);
-	callback();
+	setConversation((prev) => [...prev, { role, content: message }]);
+	if (callback) {
+		callback(conversation.length + 1);
+	}
 };
 
 export const removeLastConversationMessage = (conversation, setConversation) => {
-	const removedMessage = conversation.pop();
-	setConversation([...conversation]);
-	return removedMessage.content;
+	const removedMessage = conversation[conversation.length - 1];
+	setConversation(conversation.slice(0, -1));
+	return removedMessage?.content ?? "";
 };
 
-export const handleWebsocketStreamResult = async (
+export const handleStreamResult = async (
 	generateResultStream,
 	updateMessage,
 	successCallbacks,
@@ -83,7 +84,7 @@ export const handleWebsocketStreamResult = async (
 			message = result.response;
 			updateMessage(message);
 		}
-		successCallbacks(message, result?.structured_result ?? null);
+		await successCallbacks(message, result?.structured_result ?? null);
 	} catch (err) {
 		console.log("streaming result failed", err);
 		if (onError) {

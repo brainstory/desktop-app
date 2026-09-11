@@ -12,15 +12,6 @@ export async function getUserApi() {
 	};
 }
 
-/** Kept for compatibility; the desktop app has no trials */
-export async function getUserTrial() {
-	const response = await invoke("get_user_trial");
-	return {
-		trialEndAt: response.trial_end,
-		isPaid: response.is_paid
-	};
-}
-
 export async function getUserDailyStatusApi() {
 	const response = await invoke("get_daily_status");
 	return {

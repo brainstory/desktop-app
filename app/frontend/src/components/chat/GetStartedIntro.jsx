@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { getCookie } from "@helpers/cookie";
+import { useState, useEffect } from "react";
+import { hasDoneGettingStarted } from "@helpers/storage";
 import { TOPICS } from "@src/const";
 
 import { useAppContext } from "@components/chat/reusable/AppWrapper";
@@ -11,7 +11,7 @@ export default function GetStartedIntro({}) {
 	const [isTextLoading, setIsTextLoading] = useState(true);
 	const { sludgeman } = useAppContext();
 
-	const hasDone = getCookie("has_done_getting_started");
+	const hasDone = hasDoneGettingStarted();
 
 	let introTextComponents;
 	if (hasDone) {
@@ -38,9 +38,12 @@ export default function GetStartedIntro({}) {
 		];
 	}
 
-	setTimeout(() => {
-		setIsTextLoading(false);
-	}, 1800);
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			setIsTextLoading(false);
+		}, 1800);
+		return () => clearTimeout(timer);
+	}, []);
 
 	return (
 		<div className="p-6 md:p-10">
@@ -52,10 +55,7 @@ export default function GetStartedIntro({}) {
 						<RivePencil type="jump" small={false} />
 					)}
 				</div>
-				<TextsFadeIn
-					animationFinishedCallbacks={() => setIsTextLoading(false)}
-					classes="tracking-tight text-xl md:text-2xl max-w-2xl flex flex-col gap-3"
-				>
+				<TextsFadeIn classes="tracking-tight text-xl md:text-2xl max-w-2xl flex flex-col gap-3">
 					{introTextComponents}
 				</TextsFadeIn>
 			</div>

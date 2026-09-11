@@ -12,14 +12,16 @@ use std::sync::Arc;
 fn whisper_and_llama_coexist() {
 	let whisper_path = std::env::var("WHISPER_MODEL_PATH")
 		.expect("set WHISPER_MODEL_PATH to a whisper ggml model");
-	let llama_path = std::env::var("LLM_MODEL_PATH")
-		.expect("set LLM_MODEL_PATH to a tiny llama gguf");
+	let llama_path =
+		std::env::var("LLM_MODEL_PATH").expect("set LLM_MODEL_PATH to a tiny llama gguf");
 
 	// --- whisper: transcribe one second of silence ---
 	let engine = SttEngine::load(std::path::Path::new(&whisper_path), "test")
 		.expect("failed to load whisper model");
 	let samples = vec![0.0f32; 16000];
-	let transcript = engine.transcribe(&samples).expect("whisper transcription failed");
+	let transcript = engine
+		.transcribe(&samples)
+		.expect("whisper transcription failed");
 	println!("whisper transcript of silence: {transcript:?}");
 
 	// --- llama.cpp: generate a few tokens ---

@@ -19,26 +19,15 @@ export default function ChatRecorder({
 	isCompressed,
 	allowFinishMinConversationLength
 }) {
-	/** if the min content required is met, allow for the user to get the final result */
-	const [allowFinish, setAllowFinish] = useState(
-		currConversation.length >= allowFinishMinConversationLength
-	);
 	/** if the max content is met, disable further addition to conversation */
 	const [forceFinish, setForceFinish] = useState(currConversation.length > 100);
 
 	useEffect(() => {
-		if (currConversation.length >= allowFinishMinConversationLength) {
-			setAllowFinish(true);
-		} else if (currConversation.length > 100) {
-			// TODO picked an arbitrary number for now
+		if (currConversation.length > 100) {
+			// unbounded conversations degrade model quality; force the result
 			setForceFinish(true);
 		}
 	}, [currConversation]);
-
-	useEffect(
-		() => console.log("conversationState change:", conversationState, currConversation),
-		[conversationState]
-	);
 
 	return (
 		<section
@@ -54,6 +43,9 @@ export default function ChatRecorder({
 				setIsTranscribing={(isTranscribing) => {
 					if (isTranscribing) {
 						setConversationState(CONVERSATION_STATE.TranscribingUser);
+					} else {
+						// transcription failed - release the UI back to idle
+						setConversationState(CONVERSATION_STATE.Idle);
 					}
 				}}
 				setUiTranscript={async (userMessage) => {
@@ -65,12 +57,13 @@ export default function ChatRecorder({
 						setCurrConversation,
 						() => setSaveState(CHAT_SAVE_STATE.SAVING)
 					);
+					// only after the user message is actually appended does
+					// sending become safe (the coach must see it)
 					setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
 				}}
 				getCoachResponse={async () => await handleGetResponse()}
 				startRecordingCallback={() => setSaveState(CHAT_SAVE_STATE.WAITING)}
 			/>
-			{/* <div className="mt-8">{renderButton()}</div> */}
 		</section>
 	);
 }

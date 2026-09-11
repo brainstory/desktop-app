@@ -37,9 +37,12 @@ const AudioRecorder = ({
 	useTimer(isRunning, setTime);
 
 	useEffect(() => {
-		// TODO this useEffect is being called twice with transcript changes
 		if (transcript.length > 0) {
 			setUiTranscript(transcript);
+			// Clear the transcript so saying or typing the same thing twice
+			// in a row still triggers the effect (identical strings would
+			// otherwise be swallowed by React's state dedup).
+			setTranscript("");
 		}
 	}, [transcript]);
 

@@ -4,22 +4,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
-use llama_cpp_2::llama_backend::LlamaBackend;
 
 use crate::types::ChatMessage;
 
 /// Generation context size. Transcripts are conversational; 16k tokens
 /// comfortably fits a long session plus the result document.
 const N_CTX: u32 = 16384;
-const MAX_NEW_TOKENS_RESPONSE: u32 = 1024;
-const MAX_NEW_TOKENS_RESULT: u32 = 4096;
-/// Hard ceiling for one generation; without it a stalled decode would
-/// disable the chat UI forever.
-const GENERATION_TIMEOUT_SECS: u64 = 300;
+pub const MAX_NEW_TOKENS_RESPONSE: u32 = 1024;
+pub const MAX_NEW_TOKENS_RESULT: u32 = 4096;
+/// If no token completes for this long the generation is treated as
+/// stalled and aborted. Generously above even slow-CPU token times.
+const GENERATION_IDLE_TIMEOUT_SECS: u64 = 120;
+/// Hard ceiling for one generation as a backstop; large enough that a
+/// healthy max-length result on a slow machine still finishes.
+const GENERATION_MAX_TOTAL_SECS: u64 = 900;
+/// Prompt tokens are decoded in chunks of this size so cancel/timeout
+/// checks stay responsive during long prompts.
+const PROMPT_DECODE_CHUNK: usize = 512;
 
 #[allow(dead_code)]
 pub struct LocalLlm {
@@ -40,7 +46,12 @@ impl LocalLlm {
 		let architecture = model
 			.meta_val_str("general.architecture")
 			.unwrap_or_default();
-		Ok(Self { backend, model: Arc::new(model), model_id: model_id.to_string(), architecture })
+		Ok(Self {
+			backend,
+			model: Arc::new(model),
+			model_id: model_id.to_string(),
+			architecture,
+		})
 	}
 
 	fn apply_llama_template(
@@ -65,8 +76,16 @@ impl LocalLlm {
 				prompt.push_str(&format!("<|turn>system\n{}<turn|>\n", system.trim()));
 			}
 			for msg in messages {
-				let role = if msg.role == "assistant" { "model" } else { "user" };
-				let content = if role == "user" { msg.content.trim() } else { msg.content.as_str() };
+				let role = if msg.role == "assistant" {
+					"model"
+				} else {
+					"user"
+				};
+				let content = if role == "user" {
+					msg.content.trim()
+				} else {
+					msg.content.as_str()
+				};
 				prompt.push_str(&format!("<|turn>{role}\n{content}<turn|>\n"));
 			}
 			prompt.push_str("<|turn>model\n");
@@ -79,7 +98,11 @@ impl LocalLlm {
 				prompt.push_str("\n\n");
 			}
 			for msg in messages {
-				let role = if msg.role == "assistant" { "Assistant" } else { "User" };
+				let role = if msg.role == "assistant" {
+					"Assistant"
+				} else {
+					"User"
+				};
 				prompt.push_str(&format!("{role}: {}\n", msg.content));
 			}
 			prompt.push_str("Assistant:");
@@ -97,7 +120,11 @@ impl LocalLlm {
 				);
 			}
 			for msg in messages {
-				let role = if msg.role == "assistant" { "assistant" } else { "user" };
+				let role = if msg.role == "assistant" {
+					"assistant"
+				} else {
+					"user"
+				};
 				chat.push(
 					LlamaChatMessage::new(role.to_string(), msg.content.clone())
 						.map_err(|e| e.to_string())?,
@@ -115,7 +142,11 @@ impl LocalLlm {
 	}
 
 	fn count_tokens(&self, prompt: &str) -> Result<usize, String> {
-		Ok(self.model.str_to_token(prompt, AddBos::Never).map_err(|e| e.to_string())?.len())
+		Ok(self
+			.model
+			.str_to_token(prompt, AddBos::Never)
+			.map_err(|e| e.to_string())?
+			.len())
 	}
 
 	/// Build the final prompt, dropping older middle messages until it fits
@@ -151,9 +182,16 @@ impl LocalLlm {
 		cancel: &AtomicBool,
 		mut on_chunk: impl FnMut(String),
 	) -> Result<String, String> {
-		let max_new = if summarize { MAX_NEW_TOKENS_RESULT } else { MAX_NEW_TOKENS_RESPONSE };
+		let max_new = if summarize {
+			MAX_NEW_TOKENS_RESULT
+		} else {
+			MAX_NEW_TOKENS_RESPONSE
+		};
 		let prompt = self.build_prompt(system, messages, max_new)?;
-		let tokens = self.model.str_to_token(&prompt, AddBos::Never).map_err(|e| e.to_string())?;
+		let tokens = self
+			.model
+			.str_to_token(&prompt, AddBos::Never)
+			.map_err(|e| e.to_string())?;
 		if tokens.is_empty() {
 			return Err("empty prompt".into());
 		}
@@ -161,17 +199,46 @@ impl LocalLlm {
 		// The context borrows the model, so it lives only within this call.
 		let ctx_params = LlamaContextParams::default()
 			.with_n_ctx(NonZeroU32::new(N_CTX))
-			.with_n_batch(tokens.len().max(512) as u32);
+			.with_n_batch(PROMPT_DECODE_CHUNK as u32);
 		let mut ctx = self
 			.model
 			.new_context(&self.backend, ctx_params)
 			.map_err(|e| format!("failed to create context: {e}"))?;
 
-		let mut batch = LlamaBatch::new(tokens.len().max(512), 1);
-		for (i, token) in tokens.iter().enumerate() {
-			batch.add(*token, i as i32, &[0], i + 1 == tokens.len()).map_err(|e| e.to_string())?;
+		let started = std::time::Instant::now();
+		let mut last_progress = std::time::Instant::now();
+		let stalled =
+			|| format!("generation stalled (no progress for {GENERATION_IDLE_TIMEOUT_SECS}s)");
+		let overdue = || format!("generation timed out after {GENERATION_MAX_TOTAL_SECS}s");
+
+		// Decode the prompt in chunks: cancel stays responsive and a stalled
+		// decode aborts instead of hanging the whole budget.
+		let mut batch = LlamaBatch::new(PROMPT_DECODE_CHUNK, 1);
+		let n_prompt = tokens.len();
+		for (offset, chunk) in tokens.chunks(PROMPT_DECODE_CHUNK).enumerate() {
+			if cancel.load(Ordering::Relaxed) {
+				return Err("generation cancelled".into());
+			}
+			if last_progress.elapsed()
+				> std::time::Duration::from_secs(GENERATION_IDLE_TIMEOUT_SECS)
+			{
+				return Err(stalled());
+			}
+			if started.elapsed() > std::time::Duration::from_secs(GENERATION_MAX_TOTAL_SECS) {
+				return Err(overdue());
+			}
+			batch.clear();
+			for (i, token) in chunk.iter().enumerate() {
+				let pos = (offset * PROMPT_DECODE_CHUNK + i) as i32;
+				let needs_logits = offset * PROMPT_DECODE_CHUNK + i + 1 == n_prompt;
+				batch
+					.add(*token, pos, &[0], needs_logits)
+					.map_err(|e| e.to_string())?;
+			}
+			ctx.decode(&mut batch)
+				.map_err(|e| format!("prompt decode failed: {e}"))?;
+			last_progress = std::time::Instant::now();
 		}
-		ctx.decode(&mut batch).map_err(|e| format!("prompt decode failed: {e}"))?;
 
 		// Gemma-recommended sampling: top_k 64, top_p 0.95. Summaries use a
 		// lower temperature for more deterministic structure.
@@ -194,28 +261,27 @@ impl LocalLlm {
 		let mut output = String::new();
 		let mut generated: u32 = 0;
 		let mut pos = tokens.len() as i32;
-		let started = std::time::Instant::now();
 
 		loop {
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
 			}
-			if started.elapsed() > std::time::Duration::from_secs(GENERATION_TIMEOUT_SECS) {
-				return Err("generation timed out".into());
+			if last_progress.elapsed()
+				> std::time::Duration::from_secs(GENERATION_IDLE_TIMEOUT_SECS)
+			{
+				return Err(stalled());
+			}
+			if started.elapsed() > std::time::Duration::from_secs(GENERATION_MAX_TOTAL_SECS) {
+				return Err(overdue());
 			}
 			let token = sampler.sample(&ctx, -1);
 			if self.model.is_eog_token(token) {
 				break;
 			}
-			let piece = match self
-				.model
-				.token_to_piece(token, &mut decoder, false, None)
-			{
+			let piece = match self.model.token_to_piece(token, &mut decoder, false, None) {
 				Ok(piece) => piece,
 				// a token with no text piece is not an error; feed it back
-				Err(llama_cpp_2::TokenToStringError::UnknownTokenType) => {
-					String::new()
-				}
+				Err(llama_cpp_2::TokenToStringError::UnknownTokenType) => String::new(),
 				Err(e) => return Err(e.to_string()),
 			};
 			if !piece.is_empty() {
@@ -223,13 +289,17 @@ impl LocalLlm {
 				output.push_str(&piece);
 			}
 			generated += 1;
+			last_progress = std::time::Instant::now();
 			if generated >= max_new {
 				break;
 			}
 
 			batch.clear();
-			batch.add(token, pos, &[0], true).map_err(|e| e.to_string())?;
-			ctx.decode(&mut batch).map_err(|e| format!("decode failed: {e}"))?;
+			batch
+				.add(token, pos, &[0], true)
+				.map_err(|e| e.to_string())?;
+			ctx.decode(&mut batch)
+				.map_err(|e| format!("decode failed: {e}"))?;
 			pos += 1;
 		}
 
@@ -249,6 +319,9 @@ pub struct ExternalLlm {
 impl ExternalLlm {
 	/// If no bytes arrive for this long, the endpoint is treated as stalled.
 	const CHUNK_IDLE_TIMEOUT_SECS: u64 = 90;
+	/// SSE events are tiny; a bigger buffer means the endpoint isn't
+	/// speaking SSE (e.g. CRLF-averse parser deadlock or an HTML error page).
+	const MAX_SSE_BUFFER: usize = 1_000_000;
 
 	pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
 		Self {
@@ -275,6 +348,7 @@ impl ExternalLlm {
 		system: &str,
 		messages: &[ChatMessage],
 		cancel: &AtomicBool,
+		max_tokens: u32,
 		mut on_chunk: impl FnMut(String) + Send,
 	) -> Result<String, String> {
 		let mut body_messages = vec![];
@@ -294,6 +368,7 @@ impl ExternalLlm {
 				"messages": body_messages,
 				"stream": true,
 				"temperature": 0.7,
+				"max_tokens": max_tokens,
 			}));
 		if !self.api_key.is_empty() {
 			request = request.bearer_auth(&self.api_key);
@@ -315,6 +390,19 @@ impl ExternalLlm {
 			let status = response.status();
 			let body = response.text().await.unwrap_or_default();
 			return Err(map_provider_error(status.as_u16(), &body));
+		}
+		let content_type = response
+			.headers()
+			.get(reqwest::header::CONTENT_TYPE)
+			.and_then(|v| v.to_str().ok())
+			.unwrap_or("")
+			.to_ascii_lowercase();
+		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
+			let body = response.text().await.unwrap_or_default();
+			return Err(format!(
+				"endpoint did not return an SSE stream (content-type {content_type}): {}",
+				truncate_body(&body)
+			));
 		}
 
 		use futures_util::StreamExt;
@@ -343,25 +431,30 @@ impl ExternalLlm {
 				Ok(None) => break,
 			};
 			buffer.extend_from_slice(&chunk);
+			if buffer.len() > Self::MAX_SSE_BUFFER && find_event_end(&buffer).is_none() {
+				return Err("external endpoint sent an oversized non-SSE response".into());
+			}
 
-			while let Some(pos) = find_double_newline(&buffer) {
+			while let Some(pos) = find_event_end(&buffer) {
 				let line_bytes: Vec<u8> = buffer.drain(..pos).collect();
 				let line = String::from_utf8_lossy(&line_bytes);
-				let line = line.trim();
-				if let Some(data) = line.strip_prefix("data:") {
-					let data = data.trim();
-					if data == "[DONE]" {
-						return Ok(output);
-					}
-					if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-						if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
-							if !delta.is_empty() {
-								output.push_str(delta);
-								on_chunk(delta.to_string());
-							}
+				for line in line.lines() {
+					let line = line.trim();
+					if let Some(data) = line.strip_prefix("data:") {
+						let data = data.trim();
+						if data == "[DONE]" {
+							return Ok(output);
 						}
-						if let Some(err) = value["error"]["message"].as_str() {
-							return Err(map_provider_error(0, err));
+						if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+							if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
+								if !delta.is_empty() {
+									output.push_str(delta);
+									on_chunk(delta.to_string());
+								}
+							}
+							if let Some(err) = value["error"]["message"].as_str() {
+								return Err(map_provider_error(0, err));
+							}
 						}
 					}
 				}
@@ -371,8 +464,20 @@ impl ExternalLlm {
 	}
 }
 
-fn find_double_newline(buffer: &[u8]) -> Option<usize> {
-	buffer.windows(2).position(|w| w == b"\n\n").map(|p| p + 2)
+/// Find the end of the next SSE event, tolerating both `\n\n` and
+/// `\r\n\r\n` separators.
+fn find_event_end(buffer: &[u8]) -> Option<usize> {
+	let lf = buffer.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
+	let crlf = buffer
+		.windows(4)
+		.position(|w| w == b"\r\n\r\n")
+		.map(|p| p + 4);
+	match (lf, crlf) {
+		(Some(a), Some(b)) => Some(a.min(b)),
+		(Some(a), None) => Some(a),
+		(None, Some(b)) => Some(b),
+		(None, None) => None,
+	}
 }
 
 /// Map provider errors onto the brainstory protocol. HTTP 469 was the
@@ -387,7 +492,10 @@ fn map_provider_error(status: u16, body: &str) -> String {
 		return format!("external endpoint rejected credentials ({status})");
 	}
 	if status != 0 {
-		return format!("external endpoint error ({status}): {}", truncate_body(body));
+		return format!(
+			"external endpoint error ({status}): {}",
+			truncate_body(body)
+		);
 	}
 	truncate_body(body)
 }

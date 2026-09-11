@@ -6,7 +6,8 @@ pub const STORY_INTERVIEW_CONTEXT_SYSTEM: &str =
 	include_str!("../../../prompts/story_interview_context_system_message.txt");
 pub const STORY_INTERVIEW_REACT_SYSTEM: &str =
 	include_str!("../../../prompts/story_interview_react_system_message.txt");
-pub const STORY_RESULT_SYSTEM: &str = include_str!("../../../prompts/story_result_system_message.txt");
+pub const STORY_RESULT_SYSTEM: &str =
+	include_str!("../../../prompts/story_result_system_message.txt");
 pub const FEEDBACK_RESULT_SYSTEM: &str =
 	include_str!("../../../prompts/feedback_result_system_message.txt");
 pub const FEEDBACK_JSON_RESULT_SYSTEM: &str =
@@ -28,6 +29,13 @@ impl ChatType {
 			_ => ChatType::Original,
 		}
 	}
+}
+
+/// User content interpolated into the tag-structured prompts can't be
+/// allowed to break the tag structure (e.g. an imported idea containing
+/// `</idea>`), so closing markers are neutralized.
+fn sanitize_tag_content(content: &str, tag: &str) -> String {
+	content.replace(&format!("</{tag}>"), &format!("<\\{tag}>"))
 }
 
 /// Options describing one LLM call, resolved by the ai command layer.
@@ -60,9 +68,16 @@ impl PromptRequest {
 			ChatType::Original => STORY_INTERVIEW_SYSTEM.to_string(),
 			ChatType::DailyIntent => STORY_INTERVIEW_CONTEXT_SYSTEM.to_string(),
 			ChatType::Feedback => {
-				let author = self.react_to_author.clone().unwrap_or_else(|| "the author".into());
-				let is_current_user = if self.react_to_is_current_user { "true" } else { "false" };
-				let idea = self.react_to.clone().unwrap_or_default();
+				let author = self
+					.react_to_author
+					.clone()
+					.unwrap_or_else(|| "the author".into());
+				let is_current_user = if self.react_to_is_current_user {
+					"true"
+				} else {
+					"false"
+				};
+				let idea = sanitize_tag_content(&self.react_to.clone().unwrap_or_default(), "idea");
 				format!(
 					"{}\n\n<idea author=\"{}\" is_current_user=\"{}\">{}</idea>",
 					STORY_INTERVIEW_REACT_SYSTEM.trim_end(),
@@ -78,24 +93,31 @@ impl PromptRequest {
 	pub fn user_messages(&self) -> Vec<ChatMessage> {
 		if self.summarize {
 			let transcript = serde_json::to_string(&self.messages).unwrap_or_else(|_| "[]".into());
-			let mut content = format!("<t>{}</t>", transcript);
+			let mut content = format!("<t>{}</t>", sanitize_tag_content(&transcript, "t"));
 			if self.chat_type == ChatType::Feedback {
 				if let Some(oid) = &self.react_to {
 					let author = self
 						.react_to_author
 						.clone()
 						.unwrap_or_else(|| "the author".into());
-					let is_current_user = if self.react_to_is_current_user { "true" } else { "false" };
+					let is_current_user = if self.react_to_is_current_user {
+						"true"
+					} else {
+						"false"
+					};
 					content = format!(
 						"<oid oida=\"{}\" is_current_user=\"{}\">{}</oid>\n{}",
 						author.replace('"', "'"),
 						is_current_user,
-						oid,
+						sanitize_tag_content(oid, "oid"),
 						content
 					);
 				}
 			}
-			return vec![ChatMessage { role: "user".into(), content }];
+			return vec![ChatMessage {
+				role: "user".into(),
+				content,
+			}];
 		}
 		self.messages.clone()
 	}

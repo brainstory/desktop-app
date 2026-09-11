@@ -23,8 +23,8 @@ export function AssistantResponseText({
 			return (
 				<div>
 					<p className={assistantTextStyle}>
-						Sorry, your message was flagged by OpenAI for being inappropriate. You can
-						continue your Brainstory by rewording what you said:
+						Sorry, your message was flagged as inappropriate. You can continue your
+						Brainstory by rewording what you said:
 					</p>
 					<p className="tracking-tight mt-4 md:text-lg md:leading-snug italic">
 						{content}
@@ -48,7 +48,6 @@ export function AssistantResponseText({
 			{renderText()}
 			<Tooltip text="Another question">
 				<TransparentButton
-					id="subscription-modal-btn"
 					icon="refresh"
 					title="Ask a different question"
 					classes={`${!enableSkip && "cursor-not-allowed"}`}

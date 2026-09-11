@@ -1,9 +1,9 @@
-import { getCookie, setCookie } from "@src/helpers/cookie";
+import { hasDoneGettingStarted, hasSeenIndex, markIndexSeen } from "@helpers/storage";
 
 export default function IndexWrapper() {
 	// First-run onboarding: send everyone through the guide once.
-	if (getCookie("has_done_getting_started") === undefined && getCookie("has_seen_index") === undefined) {
-		setCookie("has_seen_index", true, 1);
+	if (!hasDoneGettingStarted() && !hasSeenIndex()) {
+		markIndexSeen();
 		location.href = "/get-started";
 	} else {
 		location.href = "/dashboard";

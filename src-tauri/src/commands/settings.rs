@@ -1,4 +1,4 @@
-	use tauri::{Manager, State};
+use tauri::{Manager, State};
 
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::models::AiSettings;
@@ -10,7 +10,10 @@ use crate::AppState;
 #[tauri::command]
 pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
 	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
-	let timezone = state.db.get_setting("user_timezone").filter(|s| !s.is_empty());
+	let timezone = state
+		.db
+		.get_setting("user_timezone")
+		.filter(|s| !s.is_empty());
 	let reminder_enabled = state
 		.db
 		.get_setting("reminder_enabled")
@@ -64,33 +67,48 @@ pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
 	}
 }
 
+fn valid_reminder_time(value: &str) -> bool {
+	let mut parts = value.split(':');
+	let (Some(hours), Some(minutes), None) = (parts.next(), parts.next(), parts.next()) else {
+		return false;
+	};
+	match (hours.parse::<u32>(), minutes.parse::<u32>()) {
+		(Ok(h), Ok(m)) => h <= 23 && m <= 59 && minutes.len() == 2,
+		_ => false,
+	}
+}
+
 #[tauri::command]
 pub fn save_user_settings(
 	state: State<'_, AppState>,
 	user: Option<serde_json::Value>,
 	enabled_log_question_ids: Option<Vec<i64>>,
 	notifications: Option<Vec<serde_json::Value>>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
 	if let Some(user) = &user {
 		if let Some(name) = user["name"].as_str() {
-			state.db.set_setting("user_name", name);
+			state.db.set_setting("user_name", name)?;
 		}
 		if let Some(timezone) = user["timezone"].as_str() {
-			state.db.set_setting("user_timezone", timezone);
+			state.db.set_setting("user_timezone", timezone)?;
 		}
 	}
 
 	if let Some(ids) = &enabled_log_question_ids {
-		let ids: Vec<i64> = {
-			let mut ids = ids.clone();
-			ids.sort();
-			ids.dedup();
-			ids
-		};
+		let mut ids: Vec<i64> = ids
+			.iter()
+			.copied()
+			.filter(|id| DEFAULT_LOG_QUESTIONS.iter().any(|(qid, _, _)| qid == id))
+			.collect();
+		ids.sort();
+		ids.dedup();
 		if ids.is_empty() {
-			return serde_json::json!({ "error": "at least one log question must be enabled" });
+			return Err("at least one log question must be enabled".into());
 		}
-		state.db.set_setting("enabled_log_question_ids", &serde_json::to_string(&ids).unwrap());
+		state.db.set_setting(
+			"enabled_log_question_ids",
+			&serde_json::to_string(&ids).expect("serializing Vec<i64> cannot fail"),
+		)?;
 	}
 
 	if let Some(notifications) = &notifications {
@@ -98,16 +116,23 @@ pub fn save_user_settings(
 			let title = notification["title"].as_str().unwrap_or("");
 			if title == "Daily intention reminder" {
 				if let Some(value) = notification["value"].as_str() {
-					state.db.set_setting("reminder_time", value);
+					if !valid_reminder_time(value) {
+						return Err(format!("invalid reminder time '{value}' (expected HH:MM)"));
+					}
+					state.db.set_setting("reminder_time", value)?;
 				}
 				if let Some(enabled) = notification["enabled"].as_bool() {
-					state.db.set_setting("reminder_enabled", if enabled { "true" } else { "false" });
+					state
+						.db
+						.set_setting("reminder_enabled", if enabled { "true" } else { "false" })?;
+					// keep the tray menu checkmark in sync with the setting
+					crate::sync_tray_reminder_check(enabled);
 				}
 			}
 		}
 	}
 
-	serde_json::json!({ "id": "settings" })
+	Ok(serde_json::json!({ "id": "settings" }))
 }
 
 #[tauri::command]
@@ -178,18 +203,34 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("no external LLM endpoint configured".into());
 	}
+	if !settings.ext_llm_base_url.starts_with("http://")
+		&& !settings.ext_llm_base_url.starts_with("https://")
+	{
+		return Err(format!(
+			"invalid endpoint URL '{}' (include http:// or https://)",
+			settings.ext_llm_base_url
+		));
+	}
 	let client = crate::llm::ExternalLlm::new(
 		&settings.ext_llm_base_url,
 		&settings.ext_llm_api_key,
-		if settings.ext_llm_model.is_empty() { "default" } else { &settings.ext_llm_model },
+		if settings.ext_llm_model.is_empty() {
+			"default"
+		} else {
+			&settings.ext_llm_model
+		},
 	);
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let mut got_any = false;
 	let output = client
 		.generate(
 			"You are a helpful assistant.",
-			&[crate::types::ChatMessage { role: "user".into(), content: "Say OK".into() }],
+			&[crate::types::ChatMessage {
+				role: "user".into(),
+				content: "Say OK".into(),
+			}],
 			&cancel,
+			16,
 			|_| got_any = true,
 		)
 		.await?;
@@ -228,7 +269,7 @@ fn encode_tiny_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
 	let mut out: Vec<u8> = Vec::new();
 	out.extend_from_slice(b"RIFF");
 	let data_len = (samples.len() * 2) as u32;
-	out.extend_from_slice(&((36 + data_len)).to_le_bytes());
+	out.extend_from_slice(&(36 + data_len).to_le_bytes());
 	out.extend_from_slice(b"WAVE");
 	out.extend_from_slice(b"fmt ");
 	out.extend_from_slice(&16u32.to_le_bytes());
@@ -261,8 +302,12 @@ pub fn set_app_presence(
 				.into(),
 		);
 	}
-	state.db.set_setting("show_in_dock", if dock { "true" } else { "false" });
-	state.db.set_setting("show_in_tray", if tray { "true" } else { "false" });
+	state
+		.db
+		.set_setting("show_in_dock", if dock { "true" } else { "false" })?;
+	state
+		.db
+		.set_setting("show_in_tray", if tray { "true" } else { "false" })?;
 	crate::apply_presence(app.app_handle(), dock, tray);
 	Ok(())
 }

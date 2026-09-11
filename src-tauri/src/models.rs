@@ -65,10 +65,10 @@ pub const STT_MODELS: [ModelSpec; 2] = [
 		id: "whisper-small-en",
 		kind: ModelKind::Stt,
 		label: "Whisper small (English)",
-		description: "whisper.cpp ggml small English model (~466 MB). Better accuracy.",
+		description: "whisper.cpp ggml small English model (~488 MB). Better accuracy.",
 		repo: "ggerganov/whisper.cpp",
-		filename: "ggml-small.bin",
-		size_bytes: 465_766_335,
+		filename: "ggml-small.en.bin",
+		size_bytes: 487_614_201,
 	},
 ];
 
@@ -100,15 +100,27 @@ impl AiSettings {
 		Self {
 			llm_mode: {
 				let m = get("ai_llm_mode");
-				if m.is_empty() { "local".into() } else { m }
+				if m.is_empty() {
+					"local".into()
+				} else {
+					m
+				}
 			},
 			llm_model: {
 				let m = get("ai_llm_model");
-				if m.is_empty() { LLM_MODELS[0].id.to_string() } else { m }
+				if m.is_empty() {
+					LLM_MODELS[0].id.to_string()
+				} else {
+					m
+				}
 			},
 			stt_model: {
 				let m = get("ai_stt_model");
-				if m.is_empty() { STT_MODELS[0].id.to_string() } else { m }
+				if m.is_empty() {
+					STT_MODELS[0].id.to_string()
+				} else {
+					m
+				}
 			},
 			ext_llm_base_url: get("ext_llm_base_url"),
 			ext_llm_api_key: get("ext_llm_api_key"),
@@ -120,7 +132,7 @@ impl AiSettings {
 	}
 
 	pub fn save(&self, db: &Db) {
-		db.set_settings(&[
+		if let Err(e) = db.set_settings(&[
 			("ai_llm_mode", self.llm_mode.clone()),
 			("ai_llm_model", self.llm_model.clone()),
 			("ai_stt_model", self.stt_model.clone()),
@@ -130,7 +142,9 @@ impl AiSettings {
 			("ext_stt_base_url", self.ext_stt_base_url.clone()),
 			("ext_stt_api_key", self.ext_stt_api_key.clone()),
 			("ext_stt_model", self.ext_stt_model.clone()),
-		]);
+		]) {
+			log::error!("failed to save AI settings: {e}");
+		}
 	}
 }
 
@@ -151,7 +165,11 @@ pub struct EngineStatus {
 
 impl EngineStatus {
 	pub fn new(state: &str, model_id: Option<&str>, error: Option<&str>) -> Self {
-		Self { state: state.into(), model_id: model_id.map(|s| s.into()), error: error.map(|s| s.into()) }
+		Self {
+			state: state.into(),
+			model_id: model_id.map(|s| s.into()),
+			error: error.map(|s| s.into()),
+		}
 	}
 }
 
@@ -161,12 +179,25 @@ pub struct AppState {
 	pub runtime: std::sync::Mutex<Runtime>,
 	pub llm_status: std::sync::Mutex<EngineStatus>,
 	pub stt_status: std::sync::Mutex<EngineStatus>,
+	/// Cancel token for the in-flight LLM generation. Only generations use
+	/// this - downloads get their own token in `download_cancels`.
 	pub generation_cancel: std::sync::Mutex<Arc<AtomicBool>>,
 	/// model id -> progress percentage for in-flight downloads
 	pub download_progress: std::sync::Mutex<std::collections::HashMap<String, f64>>,
+	/// model id -> cancel token for in-flight downloads
+	pub download_cancels: std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+	/// guards so only one load per engine kind runs at a time
+	pub llm_loading: AtomicBool,
+	pub stt_loading: AtomicBool,
 	/// when the tray icon is hidden, closing the window quits the app
 	/// (otherwise it would keep running with no way to reach it)
 	pub quit_on_close: AtomicBool,
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+	// A poisoned lock still holds usable state; recover instead of
+	// panicking on every later call.
+	mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl AppState {
@@ -174,11 +205,18 @@ impl AppState {
 		Self {
 			db,
 			data_dir,
-			runtime: std::sync::Mutex::new(Runtime { backend: None, llm: None, stt: None }),
+			runtime: std::sync::Mutex::new(Runtime {
+				backend: None,
+				llm: None,
+				stt: None,
+			}),
 			llm_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
 			stt_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
 			generation_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
 			download_progress: std::sync::Mutex::new(std::collections::HashMap::new()),
+			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
+			llm_loading: AtomicBool::new(false),
+			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),
 		}
 	}
@@ -196,99 +234,151 @@ impl AppState {
 	}
 
 	pub fn emit_llm_status(&self, app: &AppHandle) {
-		let status = self.llm_status.lock().unwrap().clone();
+		let status = lock(&self.llm_status).clone();
 		let _ = app.emit("llm-status", status);
 	}
 
 	pub fn emit_stt_status(&self, app: &AppHandle) {
-		let status = self.stt_status.lock().unwrap().clone();
+		let status = lock(&self.stt_status).clone();
 		let _ = app.emit("stt-status", status);
 	}
 
 	/// Load the given LLM model file into the runtime. Blocking; call from a
 	/// background thread.
 	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) {
+		// One load at a time: a second activate while the first is running
+		// would mmap two multi-GB models simultaneously.
+		if self.llm_loading.swap(true, Ordering::SeqCst) {
+			log::warn!(
+				"llm load already in progress, ignoring request for {}",
+				spec.id
+			);
+			return;
+		}
 		{
-			let mut s = self.llm_status.lock().unwrap();
+			let mut s = lock(&self.llm_status);
 			*s = EngineStatus::new("loading", Some(spec.id), None);
 		}
 		self.emit_llm_status(app);
 
 		let path = self.model_path(spec);
 		let result = (|| -> Result<LocalLlm, String> {
-			let mut runtime = self.runtime.lock().unwrap();
-			if runtime.backend.is_none() {
-				let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
-					.map_err(|e| format!("failed to init llama backend: {e}"))?;
-				runtime.backend = Some(Arc::new(backend));
+			// Drop the previous engine before loading the new file so peak
+			// memory stays at one model instead of two.
+			{
+				let mut runtime = lock(&self.runtime);
+				if runtime.backend.is_none() {
+					let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+						.map_err(|e| format!("failed to init llama backend: {e}"))?;
+					runtime.backend = Some(Arc::new(backend));
+				}
+				runtime.llm = None;
 			}
-			let backend = runtime.backend.clone().unwrap();
-			drop(runtime);
+			let backend = lock(&self.runtime).backend.clone().unwrap();
 			LocalLlm::load(backend, &path, spec.id)
 		})();
 
 		match result {
 			Ok(engine) => {
-				let mut runtime = self.runtime.lock().unwrap();
-				runtime.llm = Some(Arc::new(engine));
-				drop(runtime);
-				let mut s = self.llm_status.lock().unwrap();
-				*s = EngineStatus::new("ready", Some(spec.id), None);
+				if path.is_file() {
+					let mut runtime = lock(&self.runtime);
+					runtime.llm = Some(Arc::new(engine));
+					drop(runtime);
+					let mut s = lock(&self.llm_status);
+					*s = EngineStatus::new("ready", Some(spec.id), None);
+				} else {
+					// The model file was deleted while loading; don't
+					// resurrect a deleted model in the runtime.
+					log::warn!("{} was deleted while loading; not activating it", spec.id);
+					let mut s = lock(&self.llm_status);
+					*s = EngineStatus::new("missing", None, None);
+				}
 			}
 			Err(e) => {
 				log::error!("llm load failed: {e}");
-				let mut s = self.llm_status.lock().unwrap();
+				let mut s = lock(&self.llm_status);
 				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
 			}
 		}
+		self.llm_loading.store(false, Ordering::SeqCst);
 		self.emit_llm_status(app);
 	}
 
 	/// Load the given whisper model file. Blocking; call from a background thread.
 	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) {
+		if self.stt_loading.swap(true, Ordering::SeqCst) {
+			log::warn!(
+				"stt load already in progress, ignoring request for {}",
+				spec.id
+			);
+			return;
+		}
 		{
-			let mut s = self.stt_status.lock().unwrap();
+			let mut s = lock(&self.stt_status);
 			*s = EngineStatus::new("loading", Some(spec.id), None);
 		}
 		self.emit_stt_status(app);
 
 		let path = self.model_path(spec);
-		match SttEngine::load(&path, spec.id) {
+		let result = {
+			// Free the previous engine before loading the new file.
+			lock(&self.runtime).stt = None;
+			SttEngine::load(&path, spec.id)
+		};
+
+		match result {
 			Ok(engine) => {
-				let mut runtime = self.runtime.lock().unwrap();
-				runtime.stt = Some(Arc::new(engine));
-				drop(runtime);
-				let mut s = self.stt_status.lock().unwrap();
-				*s = EngineStatus::new("ready", Some(spec.id), None);
+				if path.is_file() {
+					let mut runtime = lock(&self.runtime);
+					runtime.stt = Some(Arc::new(engine));
+					drop(runtime);
+					let mut s = lock(&self.stt_status);
+					*s = EngineStatus::new("ready", Some(spec.id), None);
+				} else {
+					log::warn!("{} was deleted while loading; not activating it", spec.id);
+					let mut s = lock(&self.stt_status);
+					*s = EngineStatus::new("missing", None, None);
+				}
 			}
 			Err(e) => {
 				log::error!("stt load failed: {e}");
-				let mut s = self.stt_status.lock().unwrap();
+				let mut s = lock(&self.stt_status);
 				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
 			}
 		}
+		self.stt_loading.store(false, Ordering::SeqCst);
 		self.emit_stt_status(app);
 	}
 }
 
 pub fn model_url(spec: &ModelSpec) -> String {
-	format!("https://huggingface.co/{}/resolve/main/{}", spec.repo, spec.filename)
+	format!(
+		"https://huggingface.co/{}/resolve/main/{}",
+		spec.repo, spec.filename
+	)
 }
 
 /// Stream a model file to disk, reporting progress through `on_progress`
-/// (percentage 0-100). Returns Ok(()) when done.
+/// (percentage 0-100). Verifies the download completed fully before moving
+/// it into place; the `.part` file is removed on any failure.
 pub async fn download_model_file(
 	url: &str,
 	dest: &Path,
+	expected_size: u64,
 	cancel: &AtomicBool,
 	on_progress: &mut (impl FnMut(f64) + Send),
 ) -> Result<(), String> {
 	let tmp = dest.with_extension("part");
 	if tmp.exists() {
-		tokio::fs::remove_file(&tmp).await.map_err(|e| e.to_string())?;
+		tokio::fs::remove_file(&tmp)
+			.await
+			.map_err(|e| e.to_string())?;
 	}
 
-	let client = reqwest::Client::new();
+	let client = reqwest::Client::builder()
+		.connect_timeout(std::time::Duration::from_secs(15))
+		.build()
+		.map_err(|e| e.to_string())?;
 	let response = client
 		.get(url)
 		.header("User-Agent", "brainstory-desktop/0.1")
@@ -302,31 +392,67 @@ pub async fn download_model_file(
 	let total = response.content_length().unwrap_or(0);
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
-	let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+	let mut file = tokio::fs::File::create(&tmp)
+		.await
+		.map_err(|e| e.to_string())?;
 	use tokio::io::AsyncWriteExt;
 
-	let mut downloaded: u64 = 0;
-	let mut last_report: u64 = 0;
-	while let Some(chunk) = stream.next().await {
-		if cancel.load(Ordering::Relaxed) {
-			let _ = tokio::fs::remove_file(&tmp).await;
-			return Err("download cancelled".into());
-		}
-		let chunk = chunk.map_err(|e| format!("download interrupted: {e}"))?;
-		file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-		downloaded += chunk.len() as u64;
-		if downloaded - last_report > 2_000_000 || downloaded == total {
-			last_report = downloaded;
-			let pct = if total > 0 {
-				(downloaded as f64 / total as f64) * 100.0
-			} else {
-				0.0
+	// Every failure path below removes the partial file, so a retry starts
+	// clean instead of leaving gigabytes of junk behind.
+	let outcome = async {
+		let mut downloaded: u64 = 0;
+		let mut last_report: u64 = 0;
+		const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+		loop {
+			if cancel.load(Ordering::Relaxed) {
+				return Err("download cancelled".into());
+			}
+			let chunk = match tokio::time::timeout(CHUNK_IDLE_TIMEOUT, stream.next()).await {
+				Err(_) => return Err("download stalled (no data for 60s)".into()),
+				Ok(Some(Ok(c))) => c,
+				Ok(Some(Err(e))) => return Err(format!("download interrupted: {e}")),
+				Ok(None) => break,
 			};
-			on_progress(pct);
+			file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+			downloaded += chunk.len() as u64;
+			if downloaded - last_report > 2_000_000 || downloaded == total {
+				last_report = downloaded;
+				let pct = if total > 0 {
+					(downloaded as f64 / total as f64) * 100.0
+				} else {
+					0.0
+				};
+				on_progress(pct);
+			}
+		}
+		file.flush().await.map_err(|e| e.to_string())?;
+		// The stream can end "cleanly" mid-body; only a full-length file is
+		// a valid model, anything else fails to load with cryptic errors.
+		if total > 0 && downloaded != total {
+			return Err(format!(
+				"download incomplete (got {downloaded} of {total} bytes) - please retry"
+			));
+		}
+		if expected_size > 0 && downloaded != expected_size {
+			return Err(format!(
+				"download size mismatch (got {downloaded} bytes, expected {expected_size}) - please retry"
+			));
+		}
+		Ok(())
+	}
+	.await;
+
+	match outcome {
+		Ok(()) => {
+			drop(file);
+			tokio::fs::rename(&tmp, dest)
+				.await
+				.map_err(|e| e.to_string())?;
+			Ok(())
+		}
+		Err(e) => {
+			let _ = tokio::fs::remove_file(&tmp).await;
+			Err(e)
 		}
 	}
-	file.flush().await.map_err(|e| e.to_string())?;
-	drop(file);
-	tokio::fs::rename(&tmp, dest).await.map_err(|e| e.to_string())?;
-	Ok(())
 }

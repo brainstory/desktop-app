@@ -48,14 +48,6 @@ pub struct UserData {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub struct TrialData {
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub trial_end: Option<String>,
-	pub is_paid: bool,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
 pub struct DailyStatus {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub log_id: Option<String>,

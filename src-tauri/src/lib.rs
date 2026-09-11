@@ -8,24 +8,45 @@ pub mod stt;
 pub mod types;
 pub mod voice;
 
+use std::sync::Mutex;
+
 use chrono::Utc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WindowEvent, Wry};
 
 use models::{AiSettings, AppState, ModelKind};
+
+/// Handle to the tray's reminder check item, kept so settings-page changes
+/// can sync its checkmark (otherwise it shows the opposite of reality).
+static TRAY_REMINDER_ITEM: Mutex<Option<CheckMenuItem<Wry>>> = Mutex::new(None);
+
+pub fn sync_tray_reminder_check(enabled: bool) {
+	let guard = TRAY_REMINDER_ITEM.lock().unwrap_or_else(|e| e.into_inner());
+	if let Some(item) = guard.as_ref() {
+		if let Err(e) = item.set_checked(enabled) {
+			log::warn!("failed to update tray reminder checkmark: {e}");
+		}
+	}
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	tauri::Builder::default()
+		.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+			// A second launch just focuses the existing window instead of
+			// running two processes against the same database.
+			if let Some(window) = app.get_webview_window("main") {
+				let _ = window.show();
+				let _ = window.unminimize();
+				let _ = window.set_focus();
+			}
+		}))
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_dialog::init())
 		.invoke_handler(tauri::generate_handler![
 			commands::data::get_user,
-			commands::data::get_user_trial,
 			commands::data::get_daily_status,
-			commands::data::get_daily_list,
-			commands::data::get_accountability,
 			commands::data::get_all_ideas,
 			commands::data::get_idea,
 			commands::data::get_idea_children,
@@ -67,11 +88,16 @@ pub fn run() {
 				.expect("failed to resolve app data dir");
 			std::fs::create_dir_all(data_dir.join("models")).ok();
 
-			let db = db::Db::open(&data_dir.join("brainstory.db"))
-				.expect("failed to open database");
+			let db = open_database(&data_dir);
 			if db.get_setting("created_at").is_none() {
-				let now = Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-				db.set_setting("created_at", &now);
+				// naive UTC, no trailing Z (the frontend appends it itself)
+				let now = Utc::now()
+					.naive_utc()
+					.format("%Y-%m-%dT%H:%M:%S")
+					.to_string();
+				if let Err(e) = db.set_setting("created_at", &now) {
+					log::error!("failed to record account creation date: {e}");
+				}
 			}
 
 			app.manage(AppState::new(db, data_dir));
@@ -95,7 +121,10 @@ pub fn run() {
 			}
 
 			reminders::spawn(app.handle().clone());
-			spawn_model_loader(app.handle().clone(), AiSettings::load(&app.state::<AppState>().db));
+			spawn_model_loader(
+				app.handle().clone(),
+				AiSettings::load(&app.state::<AppState>().db),
+			);
 
 			Ok(())
 		})
@@ -129,6 +158,27 @@ pub fn run() {
 		});
 }
 
+/// Open the database, quarantining an unopenable/corrupt file instead of
+/// failing to launch forever. The old file is kept for manual recovery.
+fn open_database(data_dir: &std::path::Path) -> db::Db {
+	let db_path = data_dir.join("brainstory.db");
+	match db::Db::open(&db_path) {
+		Ok(db) => db,
+		Err(e) => {
+			log::error!("database open failed: {e}");
+			let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+			let corrupt = data_dir.join(format!("brainstory.db.corrupt-{stamp}"));
+			let _ = std::fs::rename(&db_path, &corrupt);
+			// move WAL sidecars along with it so the fresh DB starts clean
+			for ext in ["wal", "shm"] {
+				let _ = std::fs::rename(db_path.with_extension(ext), corrupt.with_extension(ext));
+			}
+			db::Db::open(&db_path)
+				.expect("failed to open a fresh database after quarantining the corrupt one")
+		}
+	}
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 	let reminder_enabled = app
 		.state::<AppState>()
@@ -138,10 +188,18 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 		.unwrap_or(false);
 
 	let open = MenuItem::with_id(app, "open", "Open Brainstory", true, None::<&str>)?;
-	let reminder =
-		CheckMenuItem::with_id(app, "reminder", "Daily reminder", true, reminder_enabled, None::<&str>)?;
+	let reminder = CheckMenuItem::with_id(
+		app,
+		"reminder",
+		"Daily reminder",
+		true,
+		reminder_enabled,
+		None::<&str>,
+	)?;
 	let quit = MenuItem::with_id(app, "quit", "Quit Brainstory", true, None::<&str>)?;
 	let menu = Menu::with_items(app, &[&open, &reminder, &quit])?;
+
+	*TRAY_REMINDER_ITEM.lock().unwrap_or_else(|e| e.into_inner()) = Some(reminder);
 
 	let mut tray = TrayIconBuilder::with_id("main-tray")
 		.menu(&menu)
@@ -156,7 +214,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 					.get_setting("reminder_enabled")
 					.map(|v| v == "true")
 					.unwrap_or(false);
-				state.db.set_setting("reminder_enabled", if enabled { "true" } else { "false" });
+				if let Err(e) = state
+					.db
+					.set_setting("reminder_enabled", if enabled { "true" } else { "false" })
+				{
+					log::error!("failed to save reminder setting: {e}");
+				}
+				// keep the native checkmark and the setting in lockstep
+				sync_tray_reminder_check(enabled);
 			}
 			"quit" => {
 				crate::force_exit();
@@ -164,7 +229,12 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 			_ => {}
 		})
 		.on_tray_icon_event(|tray, event| {
-			if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+			if let TrayIconEvent::Click {
+				button: MouseButton::Left,
+				button_state: MouseButtonState::Up,
+				..
+			} = event
+			{
 				show_main_window(tray.app_handle());
 			}
 		});
@@ -180,11 +250,12 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// hidden, closing the window quits the app so it can't get stranded running
 /// invisibly in the background.
 pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
-	let state = app.state::<AppState>();
-	state
-		.quit_on_close
-		.store(!tray, std::sync::atomic::Ordering::Relaxed);
-	drop(state);
+	{
+		let state = app.state::<AppState>();
+		state
+			.quit_on_close
+			.store(!tray, std::sync::atomic::Ordering::Relaxed);
+	}
 
 	#[cfg(target_os = "macos")]
 	{
@@ -194,8 +265,8 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 		if !dock {
 			// Resigning the regular activation policy can bounce focus to
 			// Finder; take it back so the app stays front and center.
-			let mtm = objc2::MainThreadMarker::new()
-				.expect("apply_presence must run on the main thread");
+			let mtm =
+				objc2::MainThreadMarker::new().expect("apply_presence must run on the main thread");
 			objc2_app_kit::NSApplication::sharedApplication(mtm).activate();
 		}
 	}
@@ -229,7 +300,9 @@ fn show_main_window(app: &AppHandle) {
 /// happens on a background thread so the UI starts instantly.
 pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 	std::thread::spawn(move || {
-		let Some(state) = app.try_state::<AppState>() else { return };
+		let Some(state) = app.try_state::<AppState>() else {
+			return;
+		};
 
 		// STT: load local whisper unless an external endpoint is configured.
 		if settings.ext_stt_base_url.is_empty() {
@@ -239,13 +312,13 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				}
 			}
 		} else {
-			let mut s = state.stt_status.lock().unwrap();
+			let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
 			*s = models::EngineStatus::new("external", None, None);
 		}
 
 		// LLM: load local model unless external mode is active.
 		if settings.llm_mode != "local" {
-			let mut s = state.llm_status.lock().unwrap();
+			let mut s = state.llm_status.lock().unwrap_or_else(|e| e.into_inner());
 			*s = models::EngineStatus::new("external", None, None);
 			return;
 		}

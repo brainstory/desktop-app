@@ -15,11 +15,8 @@ fn main() {
 	let now = || Instant::now();
 
 	let t = now();
-	let backend = Arc::new(
-		llama_cpp_2::llama_backend::LlamaBackend::init().expect("backend init"),
-	);
-	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test")
-		.expect("model load");
+	let backend = Arc::new(llama_cpp_2::llama_backend::LlamaBackend::init().expect("backend init"));
+	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test").expect("model load");
 	eprintln!("[timing] model load: {:?}", t.elapsed());
 
 	let request = PromptRequest {
@@ -43,7 +40,11 @@ fn main() {
 
 	let t = now();
 	let system = request.system_prompt();
-	eprintln!("[timing] system prompt: {:?} ({} chars)", t.elapsed(), system.len());
+	eprintln!(
+		"[timing] system prompt: {:?} ({} chars)",
+		t.elapsed(),
+		system.len()
+	);
 
 	let user_messages = request.user_messages();
 	let cancel = Arc::new(AtomicBool::new(false));

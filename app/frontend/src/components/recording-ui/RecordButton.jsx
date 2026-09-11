@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
@@ -20,7 +20,6 @@ function RecordButton({
 }) {
 	const RECORDING_MAX_DURATION = 240000; // 4 minutes
 
-	const [timer, setTimer] = useState(null);
 	const [warningType, setWarningType] = useState(null);
 	const [readyToSend, setReadyToSend] = useState(
 		conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript
@@ -32,6 +31,10 @@ function RecordButton({
 	const [micStarting, setMicStarting] = useState(false);
 	const [errorMessage, setErrorMessage] = useState(null);
 	const context = useContext(AppContext);
+
+	// Refs so the unmount cleanup always sees the live values.
+	const timerRef = useRef(null);
+	const activeRecordingRef = useRef(false);
 
 	const buttonSizing = isCompressed ? "w-[54px] h-[54px]" : "w-[96px] h-[96px]";
 	const shadownSizing = isCompressed
@@ -45,20 +48,38 @@ function RecordButton({
 	useEffect(() => {
 		if (readyToSend === true) {
 			resetTimer();
-			getCoachResponse().then(() => {
-				setReadyToSend(false);
-				// clear any possible user text input
-				setUserTextInput("");
-			});
+			getCoachResponse()
+				.catch((err) => console.error("coach response failed", err))
+				.finally(() => {
+					setReadyToSend(false);
+					// clear any possible user text input
+					setUserTextInput("");
+				});
 		}
 	}, [readyToSend]);
+
+	// If the component goes away mid-recording (user ends the chat, page
+	// navigates), stop the timer and release the Rust-side microphone.
+	useEffect(() => {
+		return () => {
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+			}
+			if (activeRecordingRef.current) {
+				invoke("stop_voice_capture").catch(() => {});
+			}
+		};
+	}, []);
 
 	// ---- Audio capture happens in the Rust process (cpal): the webview's
 	// getUserMedia delivers silent audio in some permission states. ----
 
 	const startWavCapture = async () => {
 		await invoke("start_voice_capture");
-	};	const stopWavCapture = async () => {
+	};
+
+	const stopWavCapture = async () => {
+		activeRecordingRef.current = false;
 		const wav = await invoke("stop_voice_capture"); // ArrayBuffer
 		if (!wav || wav.byteLength <= 44) {
 			handleError("no audio captured");
@@ -71,7 +92,7 @@ function RecordButton({
 		if (isRecording) {
 			setIsRecording(false);
 			setWarningType(null);
-			clearTimeout(timer);
+			clearTimeout(timerRef.current);
 			setStatus("idle");
 			try {
 				await stopWavCapture();
@@ -88,12 +109,13 @@ function RecordButton({
 			setMicStarting(true);
 			try {
 				await startWavCapture();
+				activeRecordingRef.current = true;
 				const recordingTimeout = setTimeout(() => {
 					stopWavCapture().catch((error) => handleError(error));
 					setIsRecording(false);
 					setWarningType("timer"); // Set warning when time limit is exceeded
 				}, RECORDING_MAX_DURATION);
-				setTimer(recordingTimeout);
+				timerRef.current = recordingTimeout;
 				setStatus("recording");
 			} catch (error) {
 				console.error("Error accessing microphone:", error);
@@ -125,7 +147,9 @@ function RecordButton({
 			.then((transcript) => {
 				setTranscript(transcript);
 				setIsTranscribing(false);
-				setReadyToSend(true);
+				// No setReadyToSend here: sending is driven by
+				// conversationState turning ReadyToSendUserTranscript, which
+				// the parent sets only after the user message is appended.
 			})
 			.catch((error) => {
 				if (retriesLeft >= 1) {
@@ -177,7 +201,13 @@ function RecordButton({
 							className={`${shadownSizing} pointer-events-none rounded-full absolute bg-gradient-to-r from-pink-500 via-pink-400 to-pink-700 opacity-40 blur transition-all duration-300`}
 						></div>
 						<button
-							className={`${buttonSizing} bg-white relative flex justify-center items-center shadow-xl border-[1px] border-stone-200 text-stone-500 font-bold rounded-full cursor-not-allowed opacity-70`}
+							className={`${buttonSizing} bg-white relative flex justify-center items-center shadow-xl border-[1px] border-stone-200 text-stone-500 font-bold rounded-full group:hover:scale-105 transform transition-transform hover:bg-stone-100 transition-colors duration-300`}
+							onClick={() => {
+								// let the user retry (transient errors like a
+								// busy mic land here too, not just permission)
+								setMicPermissionDenied(false);
+								handleToggleRecording();
+							}}
 						>
 							{ICON.MicOff}
 						</button>
@@ -266,6 +296,8 @@ function RecordButton({
 	const warningBoxStyle =
 		"flex justify-center fixed z-50 left-0 right-0 w-3/4 mx-auto bg-red-700 text-white py-4 px-4 rounded-lg shadow-lg flex items-center top-8";
 
+	const secondsRemaining = RECORDING_MAX_DURATION / 1000 - time;
+
 	return (
 		<>
 			{renderInputComponent()}
@@ -281,12 +313,10 @@ function RecordButton({
 			)}
 			<ChangeInputTypeButton isTextInput={isTextInput} onToggle={onInterfaceToggle} />
 			{/* show time limit almost up warning if 20 seconds from max  */}
-			{time + 30 > RECORDING_MAX_DURATION / 1000 && time !== 239 && (
+			{isRecording && secondsRemaining <= 30 && secondsRemaining > 0 && (
 				<div className="flex justify-center fixed z-50 top-8 left-0 right-0 w-3/4 mx-auto bg-amber-400 text-black py-4 px-4 rounded-lg shadow-lg flex items-center">
 					<p className="text-sm font-semibold">
-						{`Max recording limit of 4 minutes almost reached. You have ${
-							RECORDING_MAX_DURATION / 1000 - (time + 1)
-						} seconds remaining`}
+						{`Max recording limit of 4 minutes almost reached. You have ${secondsRemaining} seconds remaining`}
 					</p>
 				</div>
 			)}

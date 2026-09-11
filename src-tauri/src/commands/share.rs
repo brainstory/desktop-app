@@ -90,7 +90,8 @@ pub async fn export_idea(
 	};
 	let path = path.into_path().map_err(|e| e.to_string())?;
 
-	std::fs::write(&path, serde_json::to_string_pretty(&payload).unwrap()).map_err(|e| e.to_string())?;
+	std::fs::write(&path, serde_json::to_string_pretty(&payload).unwrap())
+		.map_err(|e| e.to_string())?;
 
 	Ok(json!({ "cancelled": false, "path": path.to_string_lossy(), "kind": payload["kind"] }))
 }
@@ -123,6 +124,15 @@ pub async fn import_share(
 	if payload["format"].as_str() != Some("brainstory-share") {
 		return Err("not a brainstory share file".into());
 	}
+	match payload["version"].as_i64() {
+		Some(1) => {}
+		Some(v) => {
+			return Err(format!(
+				"share file version {v} is newer than this app supports - update Brainstory and try again"
+			))
+		}
+		None => return Err("share file is missing its version".into()),
+	}
 	let author = payload["author"]
 		.as_str()
 		.filter(|s| !s.is_empty())
@@ -130,15 +140,45 @@ pub async fn import_share(
 	let kind = payload["kind"]
 		.as_str()
 		.ok_or_else(|| "share file is missing its kind".to_string())?;
+	// Prefer the original creation date; fall back to now if it's malformed.
+	let parse_created_at = |value: Option<&str>| -> Option<String> {
+		let value = value?;
+		chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S")
+			.ok()
+			.map(|_| value.to_string())
+	};
 
 	match kind {
 		"idea" => {
 			let idea = &payload["idea"];
-			let id = uuid::Uuid::new_v4().to_string();
-			let title = idea["title"].as_str().unwrap_or("Imported idea").to_string();
+			let title = idea["title"]
+				.as_str()
+				.unwrap_or("Imported idea")
+				.to_string();
+			let share_id = idea["share_id"].as_str().unwrap_or("").to_string();
+			// Importing the same file twice should be a no-op, not a duplicate
+			// library entry with a colliding share id.
+			if !share_id.is_empty() {
+				if let Some(existing) = state.db.get_idea_by_share_id(&share_id) {
+					return Ok(json!({
+						"cancelled": false,
+						"kind": "idea",
+						"duplicate": true,
+						"id": existing.id,
+						"title": existing.title,
+						"author": author,
+					}));
+				}
+			}
 			let result = idea["result"].as_str().unwrap_or("").to_string();
-			let share_id = idea["share_id"].as_str().unwrap_or(&id).to_string();
 			let idea_type = idea["type"].as_str().unwrap_or("original").to_string();
+			let id = uuid::Uuid::new_v4().to_string();
+			let share_id = if share_id.is_empty() {
+				id.clone()
+			} else {
+				share_id
+			};
+			let created_at = parse_created_at(idea["created_at"].as_str());
 			state.db.insert_idea(
 				&id,
 				&title,
@@ -152,8 +192,11 @@ pub async fn import_share(
 				Some(author),
 				None,
 				Some(&share_id),
-			);
-			Ok(json!({ "cancelled": false, "kind": "idea", "id": id, "title": title, "author": author }))
+				created_at.as_deref(),
+			)?;
+			Ok(
+				json!({ "cancelled": false, "kind": "idea", "id": id, "title": title, "author": author }),
+			)
 		}
 		"feedback" => {
 			let feedback = &payload["feedback"];
@@ -170,16 +213,32 @@ pub async fn import_share(
 					"the original idea for this feedback is not in your library".to_string()
 				})?;
 
-			let id = uuid::Uuid::new_v4().to_string();
 			let title = feedback["title"]
 				.as_str()
 				.map(|s| s.to_string())
 				.filter(|s| !s.is_empty())
 				.unwrap_or_else(|| format!("Feedback: {}", parent.title));
 			let result = feedback["result"].as_str().unwrap_or("").to_string();
-			let structured = feedback["structured_result"].as_object().map(|_| {
-				feedback["structured_result"].clone()
+			// Same feedback file twice = no-op.
+			let duplicate = state.db.get_idea_children(&parent.id).iter().any(|child| {
+				child.result.as_deref() == Some(result.as_str())
+					&& child.creator_name.as_deref() == Some(author)
 			});
+			if duplicate {
+				return Ok(json!({
+					"cancelled": false,
+					"kind": "feedback",
+					"duplicate": true,
+					"parent_id": parent.id,
+					"title": title,
+					"author": author,
+				}));
+			}
+			let structured = feedback["structured_result"]
+				.as_object()
+				.map(|_| feedback["structured_result"].clone());
+			let id = uuid::Uuid::new_v4().to_string();
+			let created_at = parse_created_at(feedback["created_at"].as_str());
 			state.db.insert_idea(
 				&id,
 				&title,
@@ -193,9 +252,10 @@ pub async fn import_share(
 				Some(author),
 				None,
 				None,
-			);
+				created_at.as_deref(),
+			)?;
 			// Imported feedback arrives unread so it surfaces in the UI.
-			state.db.set_idea_unread(&id, true);
+			state.db.set_idea_unread(&id, true)?;
 			Ok(json!({
 				"cancelled": false,
 				"kind": "feedback",

@@ -9,7 +9,7 @@ import { AppWrapper } from "@components/chat/reusable/AppWrapper";
 import DailyIntentModal from "@components/form/DailyIntentModal";
 import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 
-const isDailyIntent = getQueryParam("dailyIntent");
+const isDailyIntent = getQueryParam("dailyIntent") === "true";
 
 const INTENT_PROGRESS_STATE = {
 	start_log: 1,
@@ -30,21 +30,23 @@ export default function ChatApp() {
 
 	useEffect(() => {
 		if (isDailyIntent) {
-			getUserDailyStatusApi().then((resp) => {
-				if (!resp.logId) {
-					setIsOpen(true);
-					setIntentProgressState(INTENT_PROGRESS_STATE.start_log);
-				}
-				setLogId(resp.logId);
-				if (!!resp.intentIdeaId) {
-					// intent idea draft is found
-					let url = new URL(window.location.href);
-					let params = new URLSearchParams(url.search);
-					params.set("id", resp.intentIdeaId);
-					history.pushState(null, null, "?" + params.toString());
-					setDraftId(resp.intentIdeaId);
-				}
-			});
+			getUserDailyStatusApi()
+				.then((resp) => {
+					if (!resp.logId) {
+						setIsOpen(true);
+						setIntentProgressState(INTENT_PROGRESS_STATE.start_log);
+					}
+					setLogId(resp.logId);
+					if (!!resp.intentIdeaId) {
+						// intent idea draft is found
+						let url = new URL(window.location.href);
+						let params = new URLSearchParams(url.search);
+						params.set("id", resp.intentIdeaId);
+						history.pushState(null, null, "?" + params.toString());
+						setDraftId(resp.intentIdeaId);
+					}
+				})
+				.catch((err) => console.log("error getting daily status", err));
 		}
 	}, []);
 

@@ -11,10 +11,16 @@ use crate::stt;
 use crate::types::{ChatMessage, StreamEvent};
 
 /// Cancel any in-flight generation and return the fresh token for this one.
+/// The whole swap happens under one lock so two overlapping generations can
+/// never end up with a token that `cancel_generation` can't reach.
 fn take_cancel_token(state: &AppState) -> Arc<AtomicBool> {
 	let token = Arc::new(AtomicBool::new(false));
-	state.generation_cancel.lock().unwrap().store(true, Ordering::Relaxed);
-	*state.generation_cancel.lock().unwrap() = token.clone();
+	let mut current = state
+		.generation_cancel
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	let old = std::mem::replace(&mut *current, token.clone());
+	old.store(true, Ordering::Relaxed);
 	token
 }
 
@@ -36,30 +42,39 @@ pub async fn transcribe(
 	// STT offload rule: if an external STT endpoint is configured, use it;
 	// otherwise use the local whisper model.
 	if !settings.ext_stt_base_url.is_empty() {
-		let transcript =
-			stt::transcribe_external(&settings.ext_stt_base_url, &settings.ext_stt_api_key, &settings.ext_stt_model, bytes)
-				.await?;
+		let transcript = stt::transcribe_external(
+			&settings.ext_stt_base_url,
+			&settings.ext_stt_api_key,
+			&settings.ext_stt_model,
+			bytes,
+		)
+		.await?;
 		return Ok(serde_json::json!({ "transcript": transcript }));
 	}
 
-	let samples = stt::wav_to_samples(&bytes)?;
 	let engine = {
-		let runtime = state.runtime.lock().unwrap();
+		let runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
 		runtime.stt.clone()
 	};
 	let engine = engine.ok_or_else(|| {
 		"Speech model not downloaded yet. Open Settings > AI Models to download one.".to_string()
 	})?;
 
-	let transcript = tauri::async_runtime::spawn_blocking(move || engine.transcribe(&samples))
-		.await
-		.map_err(|e| e.to_string())??;
+	// WAV decoding of a multi-minute recording is CPU work too; keep it off
+	// the async runtime alongside the whisper inference.
+	let transcript = tauri::async_runtime::spawn_blocking(move || {
+		let samples = stt::wav_to_samples(&bytes)?;
+		engine.transcribe(&samples)
+	})
+	.await
+	.map_err(|e| e.to_string())??;
 
 	let _ = app; // reserved for status events
 	Ok(serde_json::json!({ "transcript": transcript }))
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_response(
 	state: State<'_, AppState>,
 	messages: Vec<ChatMessage>,
@@ -93,9 +108,16 @@ pub async fn generate_response(
 	let cancel = take_cancel_token(&state);
 	let settings = AiSettings::load(&state.db);
 
-	let output =
-		run_generation(&state, &settings, system, &user_messages, request.summarize, cancel, |_| {})
-			.await?;
+	let output = run_generation(
+		&state,
+		&settings,
+		system,
+		&user_messages,
+		request.summarize,
+		cancel,
+		|_| {},
+	)
+	.await?;
 
 	// If a structured result was requested, try to extract the JSON document.
 	let mut structured = None;
@@ -112,6 +134,7 @@ pub async fn generate_response(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_streaming_response(
 	state: State<'_, AppState>,
 	messages: Vec<ChatMessage>,
@@ -148,10 +171,15 @@ pub async fn generate_streaming_response(
 
 	let _ = on_event.send(StreamEvent::new("status", "thinking..."));
 
+	// If the webview went away (page reloaded mid-stream), stop generating
+	// instead of burning CPU on output nobody will see.
 	let channel_writer = {
 		let sender = on_event.clone();
+		let cancel_writer = cancel.clone();
 		move |piece: String| {
-			let _ = sender.send(StreamEvent::new("chunk", piece));
+			if sender.send(StreamEvent::new("chunk", piece)).is_err() {
+				cancel_writer.store(true, Ordering::Relaxed);
+			}
 		}
 	};
 	let output = run_generation(
@@ -200,7 +228,11 @@ pub async fn generate_streaming_response(
 
 #[tauri::command]
 pub fn cancel_generation(state: State<'_, AppState>) {
-	state.generation_cancel.lock().unwrap().store(true, Ordering::Relaxed);
+	state
+		.generation_cancel
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.store(true, Ordering::Relaxed);
 }
 
 /// Start capturing microphone audio (Rust-side, bypasses the webview).
@@ -232,11 +264,12 @@ fn local_llm(state: &State<'_, AppState>) -> Result<Arc<crate::llm::LocalLlm>, S
 	state
 		.runtime
 		.lock()
-		.unwrap()
+		.unwrap_or_else(|e| e.into_inner())
 		.llm
 		.clone()
 		.ok_or_else(|| {
-			"Language model not downloaded yet. Open Settings > AI Models to download one.".to_string()
+			"Language model not downloaded yet. Open Settings > AI Models to download one."
+				.to_string()
 		})
 }
 
@@ -247,7 +280,11 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 	Ok(ExternalLlm::new(
 		&settings.ext_llm_base_url,
 		&settings.ext_llm_api_key,
-		if settings.ext_llm_model.is_empty() { "default" } else { &settings.ext_llm_model },
+		if settings.ext_llm_model.is_empty() {
+			"default"
+		} else {
+			&settings.ext_llm_model
+		},
 	))
 }
 
@@ -262,9 +299,16 @@ async fn run_generation(
 	cancel: Arc<AtomicBool>,
 	on_chunk: impl FnMut(String) + Send + 'static,
 ) -> Result<String, String> {
+	let max_tokens = if summarize {
+		crate::llm::MAX_NEW_TOKENS_RESULT
+	} else {
+		crate::llm::MAX_NEW_TOKENS_RESPONSE
+	};
 	if settings.llm_mode == "external" {
 		let client = external_llm(settings)?;
-		client.generate(&system, messages, &cancel, on_chunk).await
+		client
+			.generate(&system, messages, &cancel, max_tokens, on_chunk)
+			.await
 	} else {
 		let engine = local_llm(state)?;
 		let messages = messages.to_vec();

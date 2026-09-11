@@ -2,6 +2,9 @@
 dist/
 .astro/
 
+# generated vendored assets (see scripts/vendor-assets.mjs)
+public/vendor/
+
 # dependencies
 node_modules/
 

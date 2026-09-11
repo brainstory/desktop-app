@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { getAllIdeasApi } from "@helpers/api/user.js";
 import { importShareApi } from "@helpers/api/share.js";
-import { setCookie } from "@helpers/cookie";
+import { setGettingStartedDone } from "@helpers/storage";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
@@ -36,9 +36,9 @@ export default function DashboardSection() {
 				userIdeas.reduce((acc, idea) => acc || !idea.creatorEmail, false) || false;
 			setShowGetStarted(!hasCreatedIdea);
 
-			// resetting cookie bc max expiration is 400 days on chrome
-			// but also for edge case where past users have already created ideas before we implemented /get-started
-			setCookie("has_done_getting_started", hasCreatedIdea);
+			// keep the onboarding flag in sync with reality (e.g. for past
+			// users who already created ideas before /get-started existed)
+			setGettingStartedDone(hasCreatedIdea);
 		}
 	}, [userIdeas]);
 

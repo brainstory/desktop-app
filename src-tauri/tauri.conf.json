@@ -20,9 +20,9 @@
 				"center": true
 			}
 		],
-		"security": {
-			"csp": null
-		}
+	"security": {
+				"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; media-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+			}
 	},
 	"bundle": {
 		"active": true,

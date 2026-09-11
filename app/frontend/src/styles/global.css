@@ -1,3 +1,4 @@
+@import "@fontsource-variable/inter";
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @plugin "@tailwindcss/forms";
@@ -80,12 +81,7 @@
 }
 
 :root {
-	font-family: "Inter", sans-serif;
-}
-@supports (font-variation-settings: normal) {
-	:root {
-		font-family: "Inter var", sans-serif;
-	}
+	font-family: "Inter Variable", "Inter", sans-serif;
 }
 
 ::-webkit-scrollbar {

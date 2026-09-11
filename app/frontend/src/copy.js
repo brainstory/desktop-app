@@ -5,7 +5,7 @@ export const SUCCESS_COPY = {
 };
 
 export const ERROR_COPY = {
-	DEFAULT: "Error! Contact support@brainstory.ai for assistance.",
-	RESET_PWD: "Error resetting password! Contact support@brainstory.ai for assistance.",
-	SAVE: "Error saving changes. Try again or contact support@brainstory.ai"
+	DEFAULT: "Something went wrong. Please try again.",
+	RESET_PWD: "Error resetting password. Please try again.",
+	SAVE: "Error saving changes. Please try again."
 };

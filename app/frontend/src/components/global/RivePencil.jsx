@@ -1,4 +1,9 @@
-import { useRive } from "@rive-app/react-canvas";
+import { useRive, RuntimeLoader } from "@rive-app/react-canvas";
+
+// Load the Rive WASM engine from the app bundle instead of the unpkg CDN
+// (see scripts/vendor-assets.mjs) so animations work fully offline.
+RuntimeLoader.setWasmUrl("/vendor/rive/rive.wasm");
+RuntimeLoader.setWasmFallbackUrl("/vendor/rive/rive_fallback.wasm");
 
 export default function RivePencil({ type = "wave", small = false }) {
 	return (

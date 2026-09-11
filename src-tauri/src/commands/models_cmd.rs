@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
@@ -14,7 +17,10 @@ pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
 			ModelKind::Llm => &crate::models::LLM_MODELS,
 			ModelKind::Stt => &crate::models::STT_MODELS,
 		};
-		let progress = state.download_progress.lock().unwrap();
+		let progress = state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		list.iter()
 			.map(|spec| ModelStatus {
 				id: spec.id.to_string(),
@@ -47,9 +53,33 @@ pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
 #[tauri::command]
 pub fn get_runtime_status(state: State<'_, AppState>) -> serde_json::Value {
 	json!({
-		"llm": state.llm_status.lock().unwrap().clone(),
-		"stt": state.stt_status.lock().unwrap().clone(),
+		"llm": state.llm_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+		"stt": state.stt_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
 	})
+}
+
+/// Removes the download's bookkeeping entries when dropped, so even a
+/// panicking task can't wedge future downloads with a stale entry.
+struct DownloadGuard {
+	app: tauri::AppHandle,
+	model_id: String,
+}
+
+impl Drop for DownloadGuard {
+	fn drop(&mut self) {
+		if let Some(state) = self.app.try_state::<AppState>() {
+			state
+				.download_progress
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.remove(&self.model_id);
+			state
+				.download_cancels
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.remove(&self.model_id);
+		}
+	}
 }
 
 #[tauri::command]
@@ -65,35 +95,52 @@ pub async fn download_model(
 		.clone();
 
 	{
-		let mut progress = state.download_progress.lock().unwrap();
+		let mut progress = state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		if progress.contains_key(&model_id) {
 			return Err("model is already downloading".into());
 		}
 		progress.insert(model_id.clone(), 0.0);
 	}
+	// This download gets its own cancel token, fully independent of the
+	// generation token - chatting must never kill a download and vice versa.
+	let cancel = Arc::new(AtomicBool::new(false));
+	state
+		.download_cancels
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.insert(model_id.clone(), cancel.clone());
 
 	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
 
-	let cancel = state.generation_cancel.lock().unwrap().clone();
 	let app_handle = app.clone();
 	let dest = state.model_path(&spec);
 	let url = model_url(&spec);
 
 	tauri::async_runtime::spawn(async move {
+		let _guard = DownloadGuard {
+			app: app_handle.clone(),
+			model_id: model_id.clone(),
+		};
 		{
 			let state = app_handle.state::<AppState>();
+			let model_id = model_id.clone();
 			let mut on_progress = |pct: f64| {
-				state.download_progress.lock().unwrap().insert(model_id.clone(), pct);
+				state
+					.download_progress
+					.lock()
+					.unwrap_or_else(|e| e.into_inner())
+					.insert(model_id.clone(), pct);
 				let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
 				let _ = app_handle.emit(
 					"model-download",
 					json!({ "modelId": model_id, "kind": "progress", "pct": pct }),
 				);
 			};
-			let result = download_model_file(&url, &dest, &cancel, &mut on_progress).await;
-
-			let state = app_handle.state::<AppState>();
-			state.download_progress.lock().unwrap().remove(&model_id);
+			let result =
+				download_model_file(&url, &dest, spec.size_bytes, &cancel, &mut on_progress).await;
 
 			match result {
 				Ok(()) => {
@@ -103,6 +150,7 @@ pub async fn download_model(
 						json!({ "modelId": model_id, "kind": "done" }),
 					);
 					// If this model is the active one, load it right away.
+					let state = app_handle.state::<AppState>();
 					let settings = AiSettings::load(&state.db);
 					let is_active_llm = spec.kind == ModelKind::Llm
 						&& settings.llm_mode == "local"
@@ -113,12 +161,9 @@ pub async fn download_model(
 						let app2 = app_handle.clone();
 						tauri::async_runtime::spawn_blocking(move || {
 							let state = app2.state::<AppState>();
-							let spec = find_model(&model_id, ModelKind::Llm)
-								.or_else(|| find_model(&model_id, ModelKind::Stt))
-								.unwrap();
 							match spec.kind {
-								ModelKind::Llm => state.load_llm(&app2, spec),
-								ModelKind::Stt => state.load_stt(&app2, spec),
+								ModelKind::Llm => state.load_llm(&app2, &spec),
+								ModelKind::Stt => state.load_stt(&app2, &spec),
 							}
 						});
 					}
@@ -147,9 +192,26 @@ pub fn delete_model(
 		.or_else(|| find_model(&model_id, ModelKind::Stt))
 		.ok_or_else(|| format!("unknown model {model_id}"))?;
 	{
-		let progress = state.download_progress.lock().unwrap();
+		let progress = state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		if progress.contains_key(&model_id) {
 			return Err("model is currently downloading".into());
+		}
+	}
+	// A load of this model running in the background would re-install the
+	// engine right after deletion; refuse until it finishes.
+	match spec.kind {
+		ModelKind::Llm => {
+			if state.llm_loading.load(Ordering::SeqCst) {
+				return Err("model is currently loading - try again in a moment".into());
+			}
+		}
+		ModelKind::Stt => {
+			if state.stt_loading.load(Ordering::SeqCst) {
+				return Err("model is currently loading - try again in a moment".into());
+			}
 		}
 	}
 	let path = state.model_path(spec);
@@ -158,9 +220,11 @@ pub fn delete_model(
 	}
 
 	// If the deleted model is loaded, unload it so the UI reflects reality.
-	let mut runtime = state.runtime.lock().unwrap();
-	let llm_gone = runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
-	let stt_gone = runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+	let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
+	let llm_gone =
+		runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+	let stt_gone =
+		runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
 	if llm_gone {
 		runtime.llm = None;
 	}
@@ -169,12 +233,12 @@ pub fn delete_model(
 	}
 	drop(runtime);
 	if llm_gone {
-		*state.llm_status.lock().unwrap() =
+		*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
 			crate::models::EngineStatus::new("missing", None, None);
 		state.emit_llm_status(&app);
 	}
 	if stt_gone {
-		*state.stt_status.lock().unwrap() =
+		*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
 			crate::models::EngineStatus::new("missing", None, None);
 		state.emit_stt_status(&app);
 	}

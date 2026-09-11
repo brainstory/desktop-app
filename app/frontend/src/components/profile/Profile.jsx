@@ -3,7 +3,7 @@ import { useStore } from "@nanostores/react";
 import { $userState } from "@components/global/userStore.js";
 
 import { getUserSettingsApi, saveUserSettingsApi } from "@helpers/api/settings.js";
-import { getQueryParam } from "@helpers/helpers.js";
+import { getQueryParam, normalizeApiError } from "@helpers/helpers.js";
 
 import { PhotoNameCard, GeneralCard } from "./ProfileCards";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
@@ -88,8 +88,7 @@ export default function Profile() {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
 			.catch((e) => {
-				openSnackbar(false, ERROR_COPY.SAVE);
-				throw e;
+				openSnackbar(false, normalizeApiError(e));
 			});
 	};
 
@@ -99,8 +98,7 @@ export default function Profile() {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
 			.catch((e) => {
-				openSnackbar(false, ERROR_COPY.SAVE);
-				throw e;
+				openSnackbar(false, normalizeApiError(e));
 			});
 	};
 
@@ -111,8 +109,7 @@ export default function Profile() {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
 			.catch((e) => {
-				openSnackbar(false, ERROR_COPY.SAVE);
-				throw e;
+				openSnackbar(false, normalizeApiError(e));
 			});
 	};
 

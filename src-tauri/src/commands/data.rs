@@ -1,9 +1,7 @@
 use tauri::State;
 
 use crate::db::{DEFAULT_LOG_QUESTIONS, SURVEY_QUESTIONS};
-use crate::types::{
-	DailyStatus, IdeaItem, LogAnswerItem, LogQuestionItem, TrialData, UserData,
-};
+use crate::types::{DailyStatus, IdeaItem, LogAnswerItem, LogQuestionItem, UserData};
 use crate::AppState;
 
 fn idea_list(ideas: Vec<IdeaItem>) -> serde_json::Value {
@@ -13,45 +11,26 @@ fn idea_list(ideas: Vec<IdeaItem>) -> serde_json::Value {
 #[tauri::command]
 pub fn get_user(state: State<'_, AppState>) -> UserData {
 	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
-	let timezone = state.db.get_setting("user_timezone").filter(|s| !s.is_empty());
+	let timezone = state
+		.db
+		.get_setting("user_timezone")
+		.filter(|s| !s.is_empty());
 	let created_at = state
 		.db
 		.get_setting("created_at")
-		.unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
-	UserData { email: None, name, mail_verified: true, timezone, created_at }
-}
-
-#[tauri::command]
-pub fn get_user_trial() -> TrialData {
-	TrialData { trial_end: None, is_paid: true }
+		.unwrap_or_else(|| "1970-01-01T00:00:00".into());
+	UserData {
+		email: None,
+		name,
+		mail_verified: true,
+		timezone,
+		created_at,
+	}
 }
 
 #[tauri::command]
 pub fn get_daily_status(state: State<'_, AppState>) -> DailyStatus {
 	state.db.get_daily_status()
-}
-
-#[tauri::command]
-pub fn get_daily_list(state: State<'_, AppState>) -> serde_json::Value {
-	let items: Vec<serde_json::Value> = state
-		.db
-		.get_daily_list()
-		.into_iter()
-		.map(|(date, idea_id, log_id, created_at)| {
-			serde_json::json!({
-				"date": date,
-				"idea_id": idea_id,
-				"log_id": log_id,
-				"created_at": created_at,
-			})
-		})
-		.collect();
-	serde_json::json!({ "week_start": "", "daily_intent": items })
-}
-
-#[tauri::command]
-pub fn get_accountability() -> serde_json::Value {
-	serde_json::json!({ "accountability_flag": false, "accountability_message": null })
 }
 
 #[tauri::command]
@@ -81,38 +60,49 @@ pub fn create_idea(
 	idea_metadata: Option<serde_json::Value>,
 	idea_type: Option<String>,
 	log_id: Option<String>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
 	let id = uuid::Uuid::new_v4().to_string();
 	let idea_type = idea_type.unwrap_or_else(|| "original".into());
 	let result = result.unwrap_or_default();
 	let transcript = transcript.unwrap_or_default();
 
+	if let Some(parent_id) = &parent_idea_id {
+		if state.db.get_idea(parent_id).is_none() {
+			return Err(format!("parent idea {parent_id} not found"));
+		}
+	}
+
 	let mut title = String::new();
 	if !result.is_empty() {
 		title = title_from_result(&result);
 	}
-	state.db.insert_idea(
-		&id,
-		&title,
-		&idea_type,
-		&result,
-		None,
-		&transcript,
-		&idea_metadata.unwrap_or_else(|| serde_json::json!({})),
-		parent_idea_id.as_deref(),
-		log_id.as_deref(),
-		None,
-		None,
-		None,
-	);
-
 	if idea_type == "daily_intent" {
-		state.db.set_daily_intent(&id);
-		if !result.is_empty() {
-			state.db.mark_daily_completed(&id);
-		}
+		state.db.create_daily_intent_idea(
+			&id,
+			&title,
+			&result,
+			&transcript,
+			&idea_metadata.unwrap_or_else(|| serde_json::json!({})),
+		)?;
+	} else {
+		state.db.insert_idea(
+			&id,
+			&title,
+			&idea_type,
+			&result,
+			None,
+			&transcript,
+			&idea_metadata.unwrap_or_else(|| serde_json::json!({})),
+			parent_idea_id.as_deref(),
+			log_id.as_deref(),
+			None,
+			None,
+			None,
+			None,
+		)?;
 	}
-	serde_json::json!({ "id": id })
+
+	Ok(serde_json::json!({ "id": id }))
 }
 
 #[tauri::command]
@@ -123,16 +113,16 @@ pub fn update_idea(
 	result: Option<String>,
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	structured_result: Option<serde_json::Value>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
+	if state.db.get_idea(&id).is_none() {
+		return Err(format!("idea {id} not found"));
+	}
 	let mut derived_title = title;
 	if derived_title.is_none() {
 		if let Some(r) = &result {
 			if !r.is_empty() {
-				let existing = state
-					.db
-					.get_idea(&id)
-					.map(|i| i.title)
-					.unwrap_or_default();				if existing.trim().is_empty() {
+				let existing = state.db.get_idea(&id).map(|i| i.title).unwrap_or_default();
+				if existing.trim().is_empty() {
 					derived_title = Some(title_from_result(r));
 				}
 			}
@@ -144,25 +134,31 @@ pub fn update_idea(
 		result.as_deref(),
 		transcript.as_deref(),
 		structured_result.as_ref(),
-	);
+	)?;
 	if let Some(r) = &result {
 		if !r.is_empty() {
-			state.db.mark_daily_completed(&id);
+			state.db.mark_daily_completed(&id)?;
 		}
 	}
-	serde_json::json!({ "id": id })
+	Ok(serde_json::json!({ "id": id }))
 }
 
 #[tauri::command]
-pub fn mark_idea_read(state: State<'_, AppState>, idea_id: String) -> serde_json::Value {
-	state.db.mark_idea_read(&idea_id);
-	serde_json::json!({ "id": idea_id })
+pub fn mark_idea_read(
+	state: State<'_, AppState>,
+	idea_id: String,
+) -> Result<serde_json::Value, String> {
+	state.db.mark_idea_read(&idea_id)?;
+	Ok(serde_json::json!({ "id": idea_id }))
 }
 
 #[tauri::command]
-pub fn delete_idea(state: State<'_, AppState>, idea_id: String) -> serde_json::Value {
-	let deleted = state.db.delete_idea(&idea_id);
-	serde_json::json!({ "id": idea_id, "deleted": deleted })
+pub fn delete_idea(
+	state: State<'_, AppState>,
+	idea_id: String,
+) -> Result<serde_json::Value, String> {
+	let deleted = state.db.delete_idea(&idea_id)?;
+	Ok(serde_json::json!({ "id": idea_id, "deleted": deleted }))
 }
 
 #[tauri::command]
@@ -175,9 +171,9 @@ pub fn get_log_questions(state: State<'_, AppState>) -> serde_json::Value {
 			id: *id,
 			text: text.to_string(),
 			label: label.to_string(),
-			value: answers.as_ref().and_then(|a| {
-				a.iter().find(|item| item.id == *id).map(|item| item.value)
-			}),
+			value: answers
+				.as_ref()
+				.and_then(|a| a.iter().find(|item| item.id == *id).map(|item| item.value)),
 		})
 		.filter(|q| enabled_ids.contains(&q.id))
 		.collect();
@@ -185,10 +181,13 @@ pub fn get_log_questions(state: State<'_, AppState>) -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn submit_log(state: State<'_, AppState>, log: Vec<LogAnswerItem>) -> serde_json::Value {
+pub fn submit_log(
+	state: State<'_, AppState>,
+	log: Vec<LogAnswerItem>,
+) -> Result<serde_json::Value, String> {
 	let id = uuid::Uuid::new_v4().to_string();
-	state.db.insert_log(&id, &log);
-	serde_json::json!({ "id": id })
+	state.db.insert_log(&id, &log)?;
+	Ok(serde_json::json!({ "id": id }))
 }
 
 #[tauri::command]
@@ -201,10 +200,10 @@ pub fn submit_survey(
 	state: State<'_, AppState>,
 	survey: serde_json::Value,
 	idea_id: Option<String>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
 	let id = uuid::Uuid::new_v4().to_string();
-	state.db.insert_survey(&id, idea_id.as_deref(), &survey);
-	serde_json::json!({ "id": id })
+	state.db.insert_survey(&id, idea_id.as_deref(), &survey)?;
+	Ok(serde_json::json!({ "id": id }))
 }
 
 #[tauri::command]
@@ -218,6 +217,12 @@ pub fn enabled_log_ids(state: &AppState) -> Vec<i64> {
 		.db
 		.get_setting("enabled_log_question_ids")
 		.and_then(|s| serde_json::from_str::<Vec<i64>>(&s).ok())
+		.map(|ids| {
+			// ignore ids that don't correspond to a known question
+			ids.into_iter()
+				.filter(|id| DEFAULT_LOG_QUESTIONS.iter().any(|(qid, _, _)| qid == id))
+				.collect::<Vec<_>>()
+		})
 		.filter(|ids| !ids.is_empty())
 		.unwrap_or_else(|| DEFAULT_LOG_QUESTIONS.iter().map(|(id, _, _)| *id).collect())
 }
@@ -232,5 +237,12 @@ fn title_from_result(result: &str) -> String {
 			}
 		}
 	}
-	result.lines().next().unwrap_or("").trim().chars().take(60).collect()
+	result
+		.lines()
+		.next()
+		.unwrap_or("")
+		.trim()
+		.chars()
+		.take(60)
+		.collect()
 }

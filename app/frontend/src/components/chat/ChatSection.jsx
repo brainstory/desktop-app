@@ -7,33 +7,31 @@ import {
 	CHAT_TYPE
 } from "@src/const";
 import {
-	handleWebsocketStreamResult,
+	handleStreamResult,
 	addConversationMessage,
 	removeLastConversationMessage,
 	findMostRecentAssistantContent,
 	getFirstPrompt,
 	useIdeaIdFromUrl
 } from "@helpers/chat";
-import { setCookie } from "@helpers/cookie";
+import { markGettingStartedDone } from "@helpers/storage";
 import { getIdeaApi, createIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
-import { getQueryParam, callApiWithRetry } from "@helpers/helpers";
+import { getQueryParam, callApiWithRetry, normalizeApiError } from "@helpers/helpers";
 
 import ChatRecorder from "@components/chat/reusable/ChatRecorder";
 import FinishedResultSection from "@components/chat/reusable/FinishedResultSection";
 import ChatIdeaMainSection from "@components/chat/ChatIdeaMainSection";
 import ChatFeedbackMainSection from "@components/chat/ChatFeedbackMainSection";
-import MicPermissionModal from "@components/chat/reusable/MicPermissionModal";
 import ErrorSection from "@components/error/ErrorSection";
 
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
 import ChatTopBar from "./reusable/ChatTopBar";
 
 const parentId = getQueryParam("parentId");
-const isFeedbackAndFrom = getQueryParam("isFeedbackAndFrom");
 const isFromGuide = getQueryParam("topic");
 let chatType = CHAT_TYPE.ORIGINAL;
-if (getQueryParam("dailyIntent")) {
+if (getQueryParam("dailyIntent") === "true") {
 	chatType = CHAT_TYPE.DAILY_INTENT;
 } else if (parentId) {
 	chatType = CHAT_TYPE.FEEDBACK;
@@ -48,7 +46,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 	const [readyToSave, setReadyToSave] = useState(false);
 	/** true if there's no id in query param and conversation meets length */
 	const [readyToCreateIdea, setReadyToCreateIdea] = useState(false);
-	/** true if user message was inappropriate by openai */
+	/** true if user message was inappropriate by the AI provider */
 	const [isUserResendRequired, setIsUserResendRequired] = useState(false);
 	/** if isUserResendRequired is true, then this field value is the inappropriate flagged transcript */
 	const [inappropriateUserTranscript, setInappropriateUserTranscript] = useState(null);
@@ -57,18 +55,13 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 	const [errorComponent, setErrorComponent] = useState();
 	/** true if saving is in progress, false if already saved */
 	const [saveState, setSaveState] = useState(CHAT_SAVE_STATE.WAITING);
-	/** true if close mic permissions modal */
-	const [isMicPermissionModalClose, setIsMicPermissionModalClose] = useState(false);
 	/** error from the AI layer that is not the 469 resend case (e.g. no model downloaded) */
 	const [aiError, setAiError] = useState(null);
 
-	let firstPrompt = getFirstPrompt(chatType);
-	const localStoreConversation = JSON.parse(localStorage.getItem(`currConversation+${parentId}`));
-	const [currConversation, setCurrConversation] = useState(
-		isFeedbackAndFrom && localStoreConversation
-			? localStoreConversation
-			: [{ role: "assistant", content: firstPrompt }]
-	);
+	const firstPrompt = getFirstPrompt(chatType);
+	const [currConversation, setCurrConversation] = useState([
+		{ role: "assistant", content: firstPrompt }
+	]);
 	const askADifferentQuestionString = "Ask me a different question!";
 	const minConversationLenForCreateAndEnd =
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ||
@@ -85,7 +78,6 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 		if (readyToCreateIdea) {
 			createIdeaApi(result, currConversation, chatType, parentId, dailyLogId)
 				.then((createdIdeaId) => {
-					console.log("NEW IDEA CREATED", createdIdeaId);
 					setIdeaId(createdIdeaId);
 					let url = new URL(window.location.href);
 					let params = new URLSearchParams(url.search);
@@ -93,7 +85,9 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					history.pushState(null, null, "?" + params.toString());
 				})
 				.catch((err) => {
-					setAiError(`Could not save this session: ${err?.message ?? err}`);
+					setAiError(`Could not save this session: ${normalizeApiError(err)}`);
+					// allow the next conversation update to retry creation
+					setReadyToCreateIdea(false);
 				});
 		}
 	}, [readyToCreateIdea]);
@@ -103,7 +97,6 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 			if (ideaId) {
 				updateIdeaApi(ideaId, currConversation)
 					.then(() => {
-						console.log("SAVED", ideaId);
 						// don't show SAVED visual for saving the user message so that
 						// the switch from SAVING to SAVED doesn't happen twice
 						if (currConversation[currConversation.length - 1].role === "assistant") {
@@ -111,12 +104,10 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 						}
 					})
 					.catch((e) => {
-						console.log("save failed", e);
 						setSaveState(CHAT_SAVE_STATE.FAILED);
-						setAiError(`Autosave failed: ${e?.message ?? e}`);
+						setAiError(`Autosave failed: ${normalizeApiError(e)}`);
 					});
 			} else {
-				console.log("Meets requirements for creating idea to database", currConversation);
 				setReadyToCreateIdea(true);
 			}
 		}
@@ -132,11 +123,6 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 						window.location.href = `/idea?id=${res.id}`;
 						return;
 					}
-					// this is commented out because chatType should be updated if it'll be a variable that will be used beyond creation
-					// but right now, it's only used when the idea has not been created yet and therefore this update doesn't matter
-					// if (res.type) {
-					// 	chatType = res.type;
-					// }
 					const savedConversation = [...res.transcript];
 					// Only adopt the saved transcript if it has more messages than
 					// what we hold locally: restores a resumed draft, but never
@@ -217,15 +203,16 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 						isUser,
 						currConversation,
 						setCurrConversation,
-						() =>
-							currConversation.length >= minConversationLenForCreateAndEnd &&
+						(newLength) =>
+							newLength >= minConversationLenForCreateAndEnd &&
 							setSaveState(CHAT_SAVE_STATE.SAVING)
 					);
 					setIsUserResendRequired(false);
 					setInappropriateUserTranscript(null);
 				})
 				.catch((err) => {
-					if (err.message.includes(ERROR_MESSAGE_MAP[469])) {
+					const message = normalizeApiError(err);
+					if (message.includes(ERROR_MESSAGE_MAP[469])) {
 						setIsUserResendRequired(true);
 						const removedMessage = removeLastConversationMessage(
 							currConversation,
@@ -233,7 +220,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 						);
 						setInappropriateUserTranscript(removedMessage);
 					} else {
-						setAiError(String(err?.message ?? err));
+						setAiError(message);
 					}
 				})
 				.finally(() => {
@@ -247,17 +234,29 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 
 	/** Generate idea summary result */
 	const handleGetResult = () => {
+		// idea creation can still be in flight for young conversations; never
+		// generate a result we can't save
+		if (!ideaId) {
+			setAiError("Still saving this session - try again in a moment.");
+			return;
+		}
 		conversationEndCallbacks();
 		setConversationState(CONVERSATION_STATE.FinishWithResult);
-		const resultFinishedCallbacks = (result, structuredResult) => {
-			setReadyToSave(true);
-			// final update with saving result
-			updateIdeaApi(ideaId, currConversation, result, structuredResult);
+		const resultFinishedCallbacks = async (result, structuredResult) => {
+			// final update with saving result - only claim success once it saved
+			try {
+				await updateIdeaApi(ideaId, currConversation, result, structuredResult);
+				setReadyToSave(true);
+			} catch (e) {
+				setAiError(`Could not save your summary: ${normalizeApiError(e)}`);
+				setConversationState(CONVERSATION_STATE.Idle);
+				return;
+			}
 			if (isFromGuide) {
-				setCookie("has_done_getting_started", true);
+				markGettingStartedDone();
 			}
 		};
-		handleWebsocketStreamResult(
+		handleStreamResult(
 			() =>
 				generateResponseStreamApi(
 					currConversation,
@@ -269,7 +268,11 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 				),
 			setResult,
 			resultFinishedCallbacks,
-			(err) => setAiError(String(err?.message ?? err))
+			(err) => {
+				setAiError(normalizeApiError(err));
+				// re-enable the button so the user can retry
+				setConversationState(CONVERSATION_STATE.Idle);
+			}
 		);
 	};
 
@@ -280,8 +283,8 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 			isUser,
 			currConversation,
 			setCurrConversation,
-			() => {
-				currConversation.length >= minConversationLenForCreateAndEnd &&
+			(newLength) => {
+				newLength >= minConversationLenForCreateAndEnd &&
 					setSaveState(CHAT_SAVE_STATE.SAVING);
 			}
 		);
@@ -307,6 +310,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 			currConversation.length > 1 && conversationState === CONVERSATION_STATE.Idle;
 		const mainSectionChildren = [
 			<AssistantResponseText
+				key="assistant-response"
 				styleSetting={parentIdea && "feedback"}
 				content={aiMessageContent}
 				enableSkip={enableSkip}
@@ -314,13 +318,13 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 				didFailToSend={isUserResendRequired}
 			/>,
 			<ChatRecorder
+				key="chat-recorder"
 				allowFinishMinConversationLength={minConversationLenForCreateAndEnd}
 				isCompressed={parentIdea && "feedback"}
 				conversationState={conversationState}
 				setConversationState={setConversationState}
 				currConversation={currConversation}
 				setCurrConversation={setCurrConversation}
-				setResult={setResult}
 				setSaveState={(state) =>
 					currConversation.length >= minConversationLenForCreateAndEnd &&
 					setSaveState(state)
@@ -351,9 +355,6 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 							</button>
 						</span>
 					</div>
-				)}
-				{!isMicPermissionModalClose && (
-					<MicPermissionModal setIsClose={setIsMicPermissionModalClose} />
 				)}
 
 				<ChatTopBar

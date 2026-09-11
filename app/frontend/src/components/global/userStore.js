@@ -2,17 +2,14 @@ import { map } from "nanostores";
 import { getUserApi } from "@helpers/api/user";
 
 /**
- * Initialize state as undefined.
- * If undefined consumers know api has not yet resolved to populate state
- */
-
-/**
- * When populated, the userState will contain:
+ * The userState store starts empty and is populated once getUserApi
+ * resolves; empty means "not loaded yet".
+ *
+ * When populated, it contains:
  * - name: Name of the current user
  * - createdAt: when the local account was created
  */
 export const $userState = map({});
-export const $userTrial = map({ isPaid: true });
 
 // Populate userState
 getUserApi()
@@ -30,7 +27,6 @@ getUserApi()
 			import("@helpers/api/settings").then(({ saveUserSettingsApi }) => {
 				saveUserSettingsApi(null, userBrowserTimezone)
 					.then(() => {
-						console.log("successful set timezone", userBrowserTimezone);
 						$userState.setKey("timezone", userBrowserTimezone);
 					})
 					.catch((err) => console.log("unsuccessful at setting timezone", err));
