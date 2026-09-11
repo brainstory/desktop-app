@@ -82,6 +82,37 @@
 
 :root {
 	font-family: "Inter Variable", "Inter", sans-serif;
+	color-scheme: light;
+}
+
+/* Timezone select (react-select). The app only ships a light theme, so the
+   control's background and border are pinned here as plain CSS - this way the
+   select stays visible even if react-select's injected emotion styles fail. */
+.timezone-select-control {
+	background-color: #fff;
+	border: 1px solid #d6d3d1;
+	border-radius: 0.5rem;
+	cursor: pointer;
+}
+.timezone-select-control:hover {
+	border-color: #a8a29e;
+}
+.timezone-select-menu {
+	background-color: #fff;
+	border: 1px solid #d6d3d1;
+	border-radius: 0.5rem;
+	z-index: 20;
+}
+.timezone-select-option {
+	background-color: #fff;
+	padding: 0.375rem 0.5rem;
+	cursor: pointer;
+}
+.timezone-select-option--focused {
+	background-color: #fce7f3;
+}
+.timezone-select-option--selected {
+	font-weight: 600;
 }
 
 ::-webkit-scrollbar {

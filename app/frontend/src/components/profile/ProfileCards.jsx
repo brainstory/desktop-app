@@ -84,9 +84,7 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 	return (
 		<Card columns={2} title="General Information">
 			<div className="mb-4">
-				<label className="block mb-2 text-sm font-medium text-stone-900 dark:text-white">
-					Your name
-				</label>
+				<label className="block mb-2 text-sm font-medium text-stone-900">Your name</label>
 				<input
 					value={editedName}
 					type="text"
@@ -98,21 +96,32 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 				{errorMessage && <p className="mt-1 text-pink-600 text-sm">{errorMessage}</p>}
 			</div>
 			<div className="[&_:focus-visible]:ring-0">
-				<label className="block mb-2 text-sm font-medium text-stone-900 dark:text-white">
+				<label className="block mb-2 text-sm font-medium text-stone-900">
 					Your timezone
 				</label>
 				<TimezoneSelect
 					value={selectedTimezone}
 					onChange={handleTimezoneSelect}
+					classNames={{
+						control: () => "timezone-select-control",
+						menu: () => "timezone-select-menu",
+						option: (state) =>
+							`timezone-select-option${state.isFocused ? " timezone-select-option--focused" : ""}${state.isSelected ? " timezone-select-option--selected" : ""}`
+					}}
 					styles={{
 						control: (baseStyles, state) => ({
 							...baseStyles,
-							// backgroundColor: "rgb(250 250 249 / 1)",
+							backgroundColor: "#ffffff",
+							border: "1px solid #d6d3d1",
+							boxShadow: "none",
 							fontSize: "0.875rem",
 							lineHeight: "1.5rem",
 							borderRadius: "0.5rem",
 							fontFamily: `"Inter var", sans-serif`,
-							padding: "0"
+							padding: "0",
+							"&:hover": {
+								borderColor: "#a8a29e"
+							}
 						}),
 						input: (baseStyles, state) => ({
 							...baseStyles,
@@ -126,7 +135,11 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 						menu: (baseStyles, state) => ({
 							...baseStyles,
 							fontSize: "0.875rem",
-							lineHeight: "1.5rem"
+							lineHeight: "1.5rem",
+							backgroundColor: "#ffffff",
+							border: "1px solid #d6d3d1",
+							borderRadius: "0.5rem",
+							zIndex: 20
 						})
 					}}
 				/>
