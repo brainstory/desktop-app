@@ -60,29 +60,31 @@ export const removeLastConversationMessage = (conversation, setConversation) => 
 };
 
 export const handleWebsocketStreamResult = async (
-	generateResultWebsocket,
+	generateResultStream,
 	updateMessage,
 	successCallbacks
 ) => {
-	const { url } = await generateResultWebsocket();
+	const { channel, invokePromise } = generateResultStream();
 	let message = "";
-	if (url) {
-		const ws = new WebSocket(url);
-		ws.onmessage = async (event) => {
-			const objectData = JSON.parse(event.data);
-			if (objectData.type === "chunk") {
-				message = message + objectData.content;
-				updateMessage(message);
-			}
-			if (objectData.type === "cumulative") {
-				updateMessage(objectData.content);
-			}
-		};
-		ws.onclose = (event) => {
-			successCallbacks(message);
-		};
-	} else {
-		// TODO handle if api doesn't return a websocket url e.g. server error
+	channel.onmessage = (event) => {
+		if (event.type === "chunk") {
+			message = message + event.content;
+			updateMessage(message);
+		}
+		if (event.type === "cumulative") {
+			message = event.content;
+			updateMessage(message);
+		}
+	};
+	try {
+		const result = await invokePromise;
+		if (result?.response) {
+			message = result.response;
+			updateMessage(message);
+		}
+		successCallbacks(message, result?.structured_result ?? null);
+	} catch (err) {
+		console.log("streaming result failed", err);
 	}
 };
 

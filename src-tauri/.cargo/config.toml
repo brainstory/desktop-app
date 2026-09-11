@@ -1,0 +1,4 @@
+# llama.cpp / whisper.cpp require C++ filesystem APIs from macOS 10.15+;
+# we target 12+ for Metal + WKWebView media capture.
+[target.'cfg(target_os = "macos")']
+env = { MACOSX_DEPLOYMENT_TARGET = "12.0" }

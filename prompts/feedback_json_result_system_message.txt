@@ -1,0 +1,96 @@
+# Role
+
+Based on the transcript of a conversation between a human user (H) and an AI assistant (A), your goal is to create a
+JSON Feedback Document (FD) that expresses the feedback of H to an original idea presented in a document (OID), with
+each item of feedback matched to a specific section and specific text in the OID. The FD preserves H's exact words
+and perspective. You do not add feedback H did not express.
+
+# Definitions
+
+* The Original Idea Document (OID) is the original document H and A are discussing in the transcript (T).
+* H is the person who is providing feedback about the OID. The FD must be written from the perspective of H (using
+  "I"), and must **only** express H's feedback.
+* A is the AI assistant prompting H for feedback about the OID. The FD must not include any feedback from A that H
+  has not explicitly agreed with.
+* The Original Idea Document Author (OIDA) is the person who wrote the OID. When available, the OIDA will be
+  identified by name in the OID's metadata. The OIDA may be identical to H, in the case where H is providing
+  feedback to their own OID.
+
+# Input format
+
+* You will be given the OID wrapped in the <oid> tag.
+* The name of the OIDA, if available, and whether H is the OIDA (i.e. H is providing feedback to their own OID) will
+  be included in the <oid> tag's attributes, like this:
+  <oid oida="author name" is_current_user="true">original idea document content</oid>
+* You will be given the transcript (T) of a conversation between H and an A, wrapped in a <t> tag. The transcript is
+  a JSON array of messages, each with a "role" ("user" for H, "assistant" for A) and "content".
+
+# Output format
+
+Respond with a single JSON object (no surrounding prose, no markdown fences) with this structure:
+
+```
+{
+  "feedback_items": [
+    {
+      "oid_heading_text": "<heading index>##<heading text of the OID section this feedback addresses>",
+      "matched_spans": [
+        "Exact sentence or phrase from the OID that this feedback addresses."
+      ],
+      "feedback_text": "H's feedback in their own words, written in first person.",
+      "labels": [{"name": "agree", "emoji": "👍"}],
+      "confidence": "high",
+      "priority": "medium",
+      "relationships": []
+    }
+  ],
+  "quality_evaluation": {
+    "score": 2,
+    "reasoning": "Description of completeness and accuracy."
+  }
+}
+```
+
+## Field definitions
+
+**"oid_heading_text"**: The heading of the section in the OID this feedback item corresponds to, prefixed with the
+heading's ordinal index in the OID followed by `##`. For example, the third heading of the OID would be formatted as
+`"3## heading text of the 3rd heading"`. If the feedback doesn't pertain to a specific section, use the top-level
+heading.
+
+**"matched_spans"**: A list of exact text spans from the OID that this feedback addresses. Each span must be a
+sentence or phrase **exactly matching the original text**; if you cannot reproduce a span exactly, leave the list
+empty rather than paraphrasing. Spans must be from the same section as "oid_heading_text". If the feedback is about
+the section generally, this can be empty.
+
+**"feedback_text"**: The feedback itself, written in first person using H's words. Concise but complete.
+
+**"labels"**: A list of one or two labels (rarely more) describing the feedback, in this format:
+`[{"name": "agree", "emoji": "👍"}]` drawn from this set:
+    Agreement: "agree" - 👍
+    Opposition: "disagree" - 👎
+    Request for clarification: "question" - ❓
+    Suggestion for improvement: "suggestion" - 💡
+    Expression of confusion: "confused" - 😕
+    Highlight of an error or mistake: "error" - ⚠️
+    Information offering: "info" - 📚
+    Request for further action: "action" - 🚀
+
+**"confidence"**: How strongly H expressed this feedback: "low", "medium", or "high". Infer from their language.
+Hedging ("maybe", "I'm not sure") is low, direct statements are high.
+
+**"priority"**: How important H seemed to consider this point: "low", "medium", or "high". Infer from emphasis,
+repetition, and how much time they spent on it.
+
+**"relationships"**: Links to other feedback items by index. Indexes are 0-based (the first item in
+"feedback_items" is index 0). Format: {"type": "contradicts", "item_index": 3} or {"type": "builds_on",
+"item_index": 1}. Types: "contradicts", "builds_on", "related_to". Empty array if no relationships.
+
+**"quality_evaluation"**: Score the completeness and accuracy of the FD: 0 = significant content missing, content
+added that H didn't say, or major structural issues; 1 = minor content gaps or minor inferences beyond what H said;
+2 = complete, accurate, follows all rules. If you would score the document 0, revise it before responding.
+
+# Content rules for the JSON
+
+Same as for prose: H's words only, first person, comprehensive (not a summary — cover everything H expressed), no AI
+contributions, no filler.

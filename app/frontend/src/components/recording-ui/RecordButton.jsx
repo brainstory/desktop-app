@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
 import { ICON } from "./RecordIcons";
@@ -18,16 +18,12 @@ function RecordButton({
 	isCompressed
 }) {
 	const RECORDING_MAX_DURATION = 240000; // 4 minutes
-	const isFirefox = navigator.userAgent.indexOf("Firefox") !== -1;
-	const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 	const [timer, setTimer] = useState(null);
 	const [warningType, setWarningType] = useState(null);
 	const [readyToSend, setReadyToSend] = useState(
 		conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript
 	);
-	const [audioStream, setAudioStream] = useState(null);
-	const [mediaRecorder, setMediaRecorder] = useState(null);
 	const [status, setStatus] = useState("idle");
 	const [isTextInput, setIsTextInput] = useState(false);
 	const [userTextInput, setUserTextInput] = useState("");
@@ -54,57 +50,124 @@ function RecordButton({
 		}
 	}, [readyToSend]);
 
-	useEffect(() => {
-		if (!audioStream) {
-			navigator.mediaDevices
-				.getUserMedia({ audio: true })
-				.then((stream) => {
-					setAudioStream(stream);
-					let mimeType;
-					if (isFirefox) {
-						mimeType = "video/webm";
-					} else if (isSafari) {
-						mimeType = "video/mp4;codecs=avc1";
-					} else {
-						mimeType = "video/webm;codecs=vp8,opus";
-					}
-					const mediaRecorder = new MediaRecorder(stream, { mimeType });
-					setMediaRecorder(mediaRecorder);
-					let audio;
+	// ---- WAV capture (16 kHz mono PCM, what whisper expects) ----
 
-					mediaRecorder.ondataavailable = (event) => {
-						if (event.data.size > 0) {
-							audio = [event.data];
-						}
-					};
+	// refs so the audio graph survives re-renders
+	const audioContextRef = useRef(null);
+	const mediaStreamRef = useRef(null);
+	const sourceNodeRef = useRef(null);
+	const workletNodeRef = useRef(null);
+	const pcmChunksRef = useRef([]);
 
-					mediaRecorder.onstop = (event) => {
-						const audioBlob = new Blob(audio, { type: "audio/wav" });
-						generateTranscript(audioBlob);
-						setStatus("idle");
-					};
-				})
-				.catch((error) => {
-					console.error("Error accessing microphone:", error);
-					setMicPermissionDenied(true);
-				});
+	const startWavCapture = async () => {
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		mediaStreamRef.current = stream;
+
+		// requesting 16 kHz avoids resampling in most cases; browsers that
+		// can't honor it will still deliver a resampleable rate
+		const context = new AudioContext({ sampleRate: 16000 });
+		await context.audioWorklet.addModule("/wav-recorder-worklet.js");
+
+		pcmChunksRef.current = [];
+		const worklet = new AudioWorkletNode(context, "pcm-collector");
+		worklet.port.onmessage = (event) => {
+			pcmChunksRef.current.push(event.data);
+		};
+
+		const source = context.createMediaStreamSource(stream);
+		// connect through a muted gain so the graph is pulled but silent
+		const mute = context.createGain();
+		mute.gain.value = 0;
+		source.connect(worklet);
+		worklet.connect(mute);
+		mute.connect(context.destination);
+
+		audioContextRef.current = context;
+		sourceNodeRef.current = source;
+		workletNodeRef.current = worklet;
+	};
+
+	const stopWavCapture = () => {
+		const context = audioContextRef.current;
+		const chunks = pcmChunksRef.current;
+		try {
+			workletNodeRef.current?.disconnect();
+			sourceNodeRef.current?.disconnect();
+			mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+			context?.close();
+		} catch (e) {
+			console.log("error tearing down audio graph", e);
 		}
-	}, [audioStream]);
+		audioContextRef.current = null;
+		sourceNodeRef.current = null;
+		workletNodeRef.current = null;
+		mediaStreamRef.current = null;
 
-	const handleToggleRecording = () => {
+		if (!chunks.length) {
+			handleError("no audio captured");
+			return;
+		}
+		const sampleRate = context?.sampleRate || 16000;
+		const blob = encodeWav(chunks, sampleRate);
+		generateTranscript(blob);
+	};
+
+	const encodeWav = (chunks, sampleRate) => {
+		const totalSamples = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+		const buffer = new ArrayBuffer(44 + totalSamples * 2);
+		const view = new DataView(buffer);
+
+		const writeString = (offset, str) => {
+			for (let i = 0; i < str.length; i++) {
+				view.setUint8(offset + i, str.charCodeAt(i));
+			}
+		};
+
+		writeString(0, "RIFF");
+		view.setUint32(4, 36 + totalSamples * 2, true);
+		writeString(8, "WAVE");
+		writeString(12, "fmt ");
+		view.setUint32(16, 16, true);
+		view.setUint16(20, 1, true); // PCM
+		view.setUint16(22, 1, true); // mono
+		view.setUint32(24, sampleRate, true);
+		view.setUint32(28, sampleRate * 2, true);
+		view.setUint16(32, 2, true);
+		view.setUint16(34, 16, true);
+		writeString(36, "data");
+		view.setUint32(40, totalSamples * 2, true);
+
+		let offset = 44;
+		for (const chunk of chunks) {
+			for (let i = 0; i < chunk.length; i++, offset += 2) {
+				const sample = Math.max(-1, Math.min(1, chunk[i]));
+				view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+			}
+		}
+		return new Blob([buffer], { type: "audio/wav" });
+	};
+
+	const handleToggleRecording = async () => {
 		if (isRecording) {
-			mediaRecorder.stop();
+			stopWavCapture();
 			setIsRecording(false);
 			setWarningType(null);
 			clearTimeout(timer);
 		} else {
 			setStatus("recording");
 			setWarningType(null);
-			mediaRecorder.start();
-			setIsRecording(true);
+			try {
+				await startWavCapture();
+				setIsRecording(true);
+			} catch (error) {
+				console.error("Error accessing microphone:", error);
+				setMicPermissionDenied(true);
+				setStatus("idle");
+				return;
+			}
 
 			const recordingTimeout = setTimeout(() => {
-				mediaRecorder.stop();
+				stopWavCapture();
 				setIsRecording(false);
 				setWarningType("timer"); // Set warning when time limit is exceeded
 			}, RECORDING_MAX_DURATION);
@@ -188,10 +251,10 @@ function RecordButton({
 						</button>
 					</div>
 					<div className="text-black text-base">
-						<p>Mark can't hear you without your mic!</p>
+						<p>Brainstory can't hear you without your mic!</p>
 						<p>
-							<b>Allow microphone</b> in your browser or device settings{" "}
-							{isSafari ? "and refresh" : ""}
+							<b>Allow microphone</b> in your system settings{" "}
+							{"and try again"}
 						</p>
 					</div>
 				</div>

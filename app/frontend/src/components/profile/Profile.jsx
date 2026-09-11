@@ -8,6 +8,7 @@ import { getQueryParam } from "@helpers/helpers.js";
 import { PhotoNameCard, GeneralCard } from "./ProfileCards";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
+import AiModelsCard from "./AiModelsCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
@@ -15,7 +16,8 @@ import { TailwindComposedTabs } from "@ds/TailwindTabs.jsx";
 
 const TAB_MAP = {
 	general: 0,
-	dailyLog: 1
+	dailyLog: 1,
+	aiModels: 2
 };
 
 export default function Profile() {
@@ -143,6 +145,10 @@ export default function Profile() {
 					saveSettings={handleLogSettingsSave}
 				/>
 			)
+		},
+		{
+			label: "AI Models",
+			content: <AiModelsCard openSnackbar={openSnackbar} />
 		}
 	];
 
@@ -163,7 +169,7 @@ export default function Profile() {
 				/>
 			)}
 
-			{!userEmail || isLoading ? (
+			{isLoading ? (
 				<LoadingAnimation text="Loading user profile..." />
 			) : (
 				<TailwindComposedTabs data={tabData} activeTab={activeTab} accentColor="pink" />

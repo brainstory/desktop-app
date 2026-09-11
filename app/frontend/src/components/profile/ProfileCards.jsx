@@ -1,14 +1,7 @@
 import React, { useState } from "react";
 import TimezoneSelect from "react-timezone-select";
 
-import { resetPasswordApi } from "@helpers/api/auth.js";
-import { getGravatarUrl } from "@helpers/helpers";
-
-import AddProfilePictureModal from "@components/profile/AddProfilePictureModal";
-
-import BorderedButton from "@ds/BorderedButton";
 import PinkButton from "@ds/PinkButton";
-import { ERROR_COPY } from "@ds/Snackbar";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 export function Card({ children, title, subtitle, columns = 1, classes = "" }) {
@@ -34,39 +27,14 @@ export function Card({ children, title, subtitle, columns = 1, classes = "" }) {
 	);
 }
 
-export function PhotoNameCard({ userName, userEmail, createdAt, openSnackbar }) {
-	const [isResetPasswordLoading, setResetPasswordLoading] = useState(false);
-	const [isAddProfilePicModalOpen, setIsAddProfilePicModalOpen] = useState(false);
-
-	const handleResetPassword = async () => {
-		setResetPasswordLoading(true);
-
-		await resetPasswordApi()
-			.then((res) => {
-				const pwdSuccessMessage = `Password reset instructions sent to ${userEmail}`;
-				openSnackbar(true, pwdSuccessMessage);
-			})
-			.catch((err) => {
-				openSnackbar(false, ERROR_COPY.RESET_PWD);
-				console.log("error", err);
-			})
-			.finally(() => setResetPasswordLoading(false));
-	};
-
+export function PhotoNameCard({ userName, createdAt }) {
 	return (
 		<Card columns={1}>
-			<button
-				onClick={() => setIsAddProfilePicModalOpen(true)}
-				className="group bg-stone-200 flex items-center justify-center rounded-md text-4xl text-pink-600 relative"
-			>
-				<img
-					src={getGravatarUrl(userEmail)}
-					alt="User Gravatar"
-					className="w-32 h-32 rounded-md"
-				/>
-			</button>
+			<div className="bg-stone-200 flex items-center justify-center rounded-md text-4xl text-pink-600 relative w-32 h-32">
+				{userName ? userName.trim().charAt(0).toUpperCase() : "?"}
+			</div>
 			<p className="text-2xl font-semibold mt-4 mb-1 truncate">{userName}</p>
-			<p className="text-stone-600 mb-1 truncate">{userEmail}</p>
+			<p className="text-stone-600 mb-1 truncate">Local account</p>
 			<p className="text-xs text-stone-600 mt-4 mb-1 truncate">
 				Joined on{" "}
 				{formatISO8601ToHumanReadable(createdAt, {
@@ -75,19 +43,6 @@ export function PhotoNameCard({ userName, userEmail, createdAt, openSnackbar }) 
 					year: "numeric"
 				})}
 			</p>
-			<div className="flex flex-col gap-1">
-				<BorderedButton onClick={manageSubscription} title="Submit survey">
-					Manage Subscription
-				</BorderedButton>
-				<BorderedButton onClick={handleResetPassword}>
-					{isResetPasswordLoading ? "Sending reset email..." : "Reset Password"}
-				</BorderedButton>
-			</div>
-
-			<AddProfilePictureModal
-				isOpen={isAddProfilePicModalOpen}
-				onClose={() => setIsAddProfilePicModalOpen(false)}
-			/>
 		</Card>
 	);
 }

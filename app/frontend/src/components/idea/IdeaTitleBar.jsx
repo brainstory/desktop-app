@@ -1,28 +1,23 @@
 import { useState, useRef, useEffect } from "react";
-import GetFeedbackModal from "@src/components/feedback-modal/GetFeedbackModal";
 import { updateIdeaTitleApi } from "@helpers/api/idea";
+import { exportIdeaApi } from "@helpers/api/share";
 import PinkButton from "@ds/PinkButton.jsx";
-import { getAllUserNotifications } from "@helpers/api/user";
 
 export default function IdeaTitleBar({
 	idea,
-	userEmail,
-	canShare,
+	isOwnIdea,
 	isFeedbackMissing,
 	requestedDraftId,
 	parentId
 }) {
-	const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
+	const [exportState, setExportState] = useState(null);
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedTitle, setEditedTitle] = useState(idea.title);
-	const h1Ref = useRef(null);
 	const textarea = useRef(null);
 
-	let createdByText = userEmail;
-	if (idea.creatorEmail === userEmail) {
-		createdByText = "You";
-	} else if (idea.creatorName) {
+	let createdByText = "You";
+	if (idea.creatorName) {
 		createdByText = idea.creatorName;
 	}
 
@@ -62,27 +57,57 @@ export default function IdeaTitleBar({
 		}
 	};
 
-	const renderShareFeedbackButton = () => {
-		if (canShare) {
-			// share button
-			return [
-				<PinkButton onClick={() => setIsFeedbackModalOpen(true)}>Share</PinkButton>,
-				<GetFeedbackModal
-					isOpen={isFeedbackModalOpen}
-					onClose={() => setIsFeedbackModalOpen(false)}
-					ideaId={idea.id}
-					ideaTitle={idea.title}
-					ideaSummary={idea.summary}
-				/>
-			];
-		} else if (isFeedbackMissing) {
-			let feedbackHref = requestedDraftId
-				? `/chat?id=${requestedDraftId}&isFeedbackAndFrom=${idea.creatorName}`
-				: `/chat?parentId=${idea.id}&isFeedbackAndFrom=${idea.creatorName}`;
-			console.log(isFeedbackMissing, feedbackHref);
+	const handleExport = () => {
+		setExportState("exporting");
+		exportIdeaApi(idea.id)
+			.then((res) => {
+				if (res.cancelled) {
+					setExportState(null);
+				} else {
+					setExportState("done");
+					setTimeout(() => setExportState(null), 4000);
+				}
+			})
+			.catch((err) => {
+				console.log("export failed", err);
+				setExportState("error");
+				setTimeout(() => setExportState(null), 4000);
+			});
+	};
 
-			return <PinkButton href={feedbackHref}>Give Feedback</PinkButton>;
+	const renderActionButtons = () => {
+		const buttons = [];
+		if (!parentId) {
+			buttons.push(
+				<PinkButton
+					key="give-feedback"
+					onClick={() => {
+						let feedbackHref = requestedDraftId
+							? `/chat?id=${requestedDraftId}`
+							: `/chat?parentId=${idea.id}`;
+						window.location.href = feedbackHref;
+					}}
+				>
+					Give Feedback
+				</PinkButton>
+			);
 		}
+		if (isOwnIdea) {
+			buttons.push(
+				<PinkButton key="export" onClick={handleExport}>
+					{exportState === "exporting"
+						? "Exporting..."
+						: exportState === "done"
+							? "Exported!"
+							: exportState === "error"
+								? "Export failed"
+								: parentId
+									? "Export Feedback"
+									: "Export"}
+				</PinkButton>
+			);
+		}
+		return buttons;
 	};
 
 	return (
@@ -108,18 +133,30 @@ export default function IdeaTitleBar({
 					)}
 					<div className="flex flex-col">
 						<div className="flex flex-row text-left text-base text-stone-900">
-							{/* do not allow editing title if not users idea */}
-							{userEmail !== idea.creatorEmail && (
-								<h1
-									ref={h1Ref}
-									className="group-hover:underline underline-offset-2 decoration-dotted rounded cursor-text md:mr-2 relative"
-								>
-									{editedTitle}
-								</h1>
+							{!isEditing && (
+								<div className="flex flex-row items-center relative group">
+									<button onClick={startEditing}>
+										<h1
+											className="group-hover:underline underline-offset-2 decoration-dotted rounded cursor-text md:mr-2 relative"
+											title="Rename"
+										>
+											{editedTitle}
+										</h1>
+									</button>
+									<button
+										onClick={startEditing}
+										aria-label="Start editing"
+										className="disabled:text-stone-400 hover:bg-stone-200 self-center p-1 leading-none rounded-full"
+									>
+										<ion-icon
+											class="w-4 h-4 hydrated pointer-events-none"
+											name="create-outline"
+											role="img"
+										></ion-icon>
+									</button>
+								</div>
 							)}
-
-							{/* allow title editing if it's the user's idea */}
-							{userEmail === idea.creatorEmail && isEditing && (
+							{isEditing && (
 								<div className="flex flex-row">
 									<h1
 										tabIndex="0"
@@ -155,31 +192,6 @@ export default function IdeaTitleBar({
 									</button>
 								</div>
 							)}
-							{userEmail === idea.creatorEmail && !isEditing && (
-								<div className="flex flex-row items-center relative group">
-									<button onClick={startEditing}>
-										<h1
-											ref={h1Ref}
-											className="group-hover:underline underline-offset-2 decoration-dotted rounded cursor-text md:mr-2 relative"
-										>
-											{editedTitle}
-										</h1>
-									</button>
-									{userEmail === idea.creatorEmail && (
-										<button
-											onClick={startEditing}
-											aria-label="Start editing"
-											className="disabled:text-stone-400 hover:bg-stone-200 self-center p-1 leading-none rounded-full"
-										>
-											<ion-icon
-												class="w-4 h-4 hydrated pointer-events-none"
-												name="create-outline"
-												role="img"
-											></ion-icon>
-										</button>
-									)}
-								</div>
-							)}
 						</div>
 						<h2 className="text-sm tracking-tight text-stone-500 mt-1">
 							Created by {createdByText}
@@ -187,8 +199,8 @@ export default function IdeaTitleBar({
 					</div>
 				</div>
 
-				<div className="flex rounded-md shadow-sm self-center" role="group">
-					{renderShareFeedbackButton()}
+				<div className="flex gap-3 rounded-md shadow-sm self-center" role="group">
+					{renderActionButtons()}
 				</div>
 			</div>
 		</div>

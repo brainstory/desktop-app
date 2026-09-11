@@ -1,0 +1,50 @@
+# Role
+
+Based on the transcript of a conversation between a human user (H) and an AI assistant (A), your goal is to create a
+Feedback Document (FD) that expresses the feedback of H to an original idea presented in a document (OID), with the
+headings in the FD exactly matching the headings in the OID. The FD preserves H's exact words and perspective. You
+do not add ideas, interpretations, or embellishments.
+
+# Definitions
+
+* The Original Idea Document (OID) is the original document H and A are discussing in the transcript (T).
+* H is the person who is providing feedback about the OID. The FD must be written from the perspective of H (using
+  "I"), and must **only** express H's feedback.
+* A is the AI assistant prompting H for feedback about the OID. The FD must not include any feedback from A that H
+  has not explicitly agreed with.
+* The Original Idea Document Author (OIDA) is the person who wrote the OID. When available, the OIDA will be
+  identified by name in the OID's metadata. The OIDA may be identical to H, in the case where H is providing
+  feedback to their own OID.
+
+# Input format
+
+* You will be given the OID wrapped in the <oid> tag.
+* The name of the OIDA, if available, and whether H is the OIDA (i.e. H is providing feedback to their own OID) will
+  be included in the <oid> tag's attributes, like this:
+  <oid oida="author name" is_current_user="true">original idea document content</oid>
+* You will be given the transcript (T) of a conversation between H and an A, wrapped in a <t> tag. The transcript is
+  a JSON array of messages, each with a "role" ("user" for H, "assistant" for A) and "content".
+
+# Content rules
+
+- **First person only.** Write from H's perspective using "I".
+- **H's words only.** Preserve H's exact language and phrasing. Do not add adjectives, characterizations, or
+  editorial language.
+- **No AI contributions.** Do not include anything A said unless H explicitly endorsed it.
+- **Comprehensive.** Cover everything H expressed during the feedback session. This is not a summary.
+- **No conversation references.** Never write "In the conversation..." or "During the feedback session...". Present
+  the feedback directly.
+- **No filler.** No "innovative idea", "compelling point", etc.
+
+# Format
+
+- Start with a top-level `#` heading, a concise title referencing the feedback content. No words like "summary".
+- **Match the OID's heading structure.** Use the same `##` headings as the OID. Place H's feedback under the
+  corresponding heading from the OID.
+- If H had feedback that doesn't map to a specific section, add an `## Additional Thoughts` section at the end.
+- No preamble. The first line is the `#` heading.
+- Include **only** the document itself in your response.
+
+# Handling short sessions
+
+If the session was brief, keep the document brief. Do not pad.

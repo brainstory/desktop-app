@@ -1,7 +1,8 @@
 import { formatISO8601ToHumanReadable, getGravatarUrl } from "@helpers/helpers";
 
-export default function UnreadFeedbackCard({ id, title, createdAt, creatorEmail }) {
+export default function UnreadFeedbackCard({ id, title, createdAt, creatorName }) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt);
+	const attributedTo = creatorName || "Someone";
 
 	return (
 		<a href={`/idea?id=${id}`}>
@@ -16,7 +17,7 @@ export default function UnreadFeedbackCard({ id, title, createdAt, creatorEmail 
 				</div>
 
 				<div>
-					<FeedbackFrom creatorEmail={creatorEmail} />
+					<FeedbackFrom creatorName={attributedTo} />
 					<hr className="w-8/12 h-1 mx-auto my-4 bg-stone-100 border-0 rounded md:my-4" />
 					<p className="flex justify-end items-center text-pink-700 hover:underline mt-3">
 						<span className="mr-2">View Feedback</span>
@@ -33,18 +34,18 @@ export default function UnreadFeedbackCard({ id, title, createdAt, creatorEmail 
 	);
 }
 
-function FeedbackFrom({ creatorEmail }) {
+function FeedbackFrom({ creatorName }) {
 	return (
 		<div className="group mb-4 flex items-center">
 			<img
-				key={creatorEmail + "-creator-gravatar"}
+				key={creatorName + "-creator-avatar"}
 				className="inline-block h-8 w-8 rounded-full ring-2 ring-white mr-2"
-				src={getGravatarUrl(creatorEmail)}
-				alt={`${creatorEmail}'s Gravatar `}
+				src={getGravatarUrl(creatorName)}
+				alt={`${creatorName}'s avatar`}
 			/>
 			<div className="width-[100%] truncate">
 				<p className="text-xs font-medium text-pink-700">Feedback from</p>
-				<p className="text-xs font-medium text-pink-700 truncate">{creatorEmail}</p>
+				<p className="text-xs font-medium text-pink-700 truncate">{creatorName}</p>
 			</div>
 		</div>
 	);

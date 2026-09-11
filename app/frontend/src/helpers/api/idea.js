@@ -1,18 +1,11 @@
-const PUBLIC_API_URL = import.meta.env.PUBLIC_API_URL;
+import { invoke } from "@tauri-apps/api/core";
 import { TOPICS } from "@src/const";
 
 import { getQueryParam } from "@helpers/helpers";
-import { authRedirect, getDefaultAPIHeaders } from "@helpers/api/auth";
 
 /** Get idea */
 export async function getIdeaApi(idea_id) {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea/${idea_id}`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("get_idea", { ideaId: idea_id });
 
 	const parentIdea = response?.parent_idea
 		? {
@@ -43,13 +36,7 @@ export async function getIdeaApi(idea_id) {
 
 /** Get idea's children (ideas that branched off from idea_id) */
 export async function getIdeaChildrenApi(idea_id) {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea/${idea_id}/children`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("get_idea_children", { ideaId: idea_id });
 
 	const strip = (str) => {
 		// remove the first line before the first \n\n,
@@ -69,7 +56,6 @@ export async function getIdeaChildrenApi(idea_id) {
 					matchedSpans: feedbackComment.matched_spans,
 					feedbackText: feedbackComment.feedback_text,
 					labels: feedbackComment.labels
-					// transcriptIndices: feedbackComment.transcript_indices
 			  }))
 			: [];
 		return {
@@ -86,14 +72,8 @@ export async function getIdeaChildrenApi(idea_id) {
 }
 
 /**
- * /** Create an idea saved in the database.
+ * Create an idea saved in the local database.
  * Called after user is finished with an idea and a summary is generated.
- * @param {*} result
- * @param {Array} transcript
- * @param {string} [ideaType="original"] enum string value
- * @param {string} [parentIdeaId=null] expected if idea has a parent (e.g. is feedback)
- * @param {dict} [ideaMetadata={}]
- * @param {string} [logId=null] expected if idea has a parent (e.g. is feedback)
  * @returns created idea's uuid
  */
 export async function createIdeaApi(
@@ -112,43 +92,28 @@ export async function createIdeaApi(
 		};
 	}
 
-	const body = {
-		result: result,
-		transcript: transcript,
-		parent_idea_id: parentIdeaId,
-		idea_metadata: ideaMetadata,
-		idea_type: ideaType,
-		log_id: logId
-	};
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea`, {
-			method: "POST",
-			body: JSON.stringify(body),
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("create_idea", {
+		result,
+		transcript,
+		parentIdeaId,
+		ideaMetadata,
+		ideaType,
+		logId
+	});
 	return response.id;
 }
 
 /** Update an idea saved in the database.
- * Called after user is finished with an idea and a summary is generated.
+ * Called whenever a draft is saved or the final result is stored.
  * @returns created idea's uuid
  */
-export async function updateIdeaApi(ideaId, transcript, result = "") {
-	const body = {
+export async function updateIdeaApi(ideaId, transcript, result = "", structuredResult = null) {
+	const response = await invoke("update_idea", {
 		id: ideaId,
-		transcript: transcript,
-		result: result
-	};
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea`, {
-			method: "PUT",
-			body: JSON.stringify(body),
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+		transcript,
+		result,
+		structuredResult
+	});
 	return response.id;
 }
 
@@ -157,32 +122,16 @@ export async function updateIdeaApi(ideaId, transcript, result = "") {
  * @returns created idea's uuid
  */
 export async function updateIdeaTitleApi(ideaId, title) {
-	const body = {
+	const response = await invoke("update_idea", {
 		id: ideaId,
-		title: title,
-	};
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea`, {
-			method: "PUT",
-			body: JSON.stringify(body),
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+		title
+	});
 	return response.id;
 }
 
-/** Mark idea read by user.
- * Only applicable for ideas that are not the user's but are shared with the user
- */
+/** Mark idea read by user. Only applies to ideas imported from others. */
 export async function markIdeaReadApi(idea_id) {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/idea/${idea_id}/mark-read`, {
-			method: "PUT",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("mark_idea_read", { ideaId: idea_id });
 	return response;
 }
 

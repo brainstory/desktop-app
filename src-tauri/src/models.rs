@@ -1,0 +1,327 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+use crate::db::Db;
+use crate::llm::LocalLlm;
+use crate::stt::SttEngine;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelKind {
+	Llm,
+	Stt,
+}
+
+#[derive(Clone)]
+pub struct ModelSpec {
+	pub id: &'static str,
+	pub kind: ModelKind,
+	pub label: &'static str,
+	pub description: &'static str,
+	pub repo: &'static str,
+	pub filename: &'static str,
+	pub size_bytes: u64,
+}
+
+/// Known-good open model builds. The local LLM catalog defaults to Google's
+/// Gemma 4 edge models (QAT quantized, runnable on integrated GPUs / Apple
+/// Silicon); STT ships whisper.cpp ggml builds.
+pub const LLM_MODELS: [ModelSpec; 2] = [
+	ModelSpec {
+		id: "gemma-4-E2B-qat",
+		kind: ModelKind::Llm,
+		label: "Gemma 4 E2B (light)",
+		description: "Google Gemma 4 E2B instruct, QAT 4-bit. Lightest option (~3.3 GB). Best for laptops.",
+		repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
+		filename: "gemma-4-E2B_q4_0-it.gguf",
+		size_bytes: 3_349_516_256,
+	},
+	ModelSpec {
+		id: "gemma-4-E4B",
+		kind: ModelKind::Llm,
+		label: "Gemma 4 E4B",
+		description: "Google Gemma 4 E4B instruct, 4-bit. Higher quality (~4.6 GB), needs a bit more RAM/VRAM.",
+		repo: "ggml-org/gemma-4-E4B-it-GGUF",
+		filename: "gemma-4-E4B-it-Q4_0.gguf",
+		size_bytes: 4_590_807_392,
+	},
+];
+
+pub const STT_MODELS: [ModelSpec; 2] = [
+	ModelSpec {
+		id: "whisper-base-en",
+		kind: ModelKind::Stt,
+		label: "Whisper base (English)",
+		description: "whisper.cpp ggml base English model (~148 MB). Fast and light.",
+		repo: "ggerganov/whisper.cpp",
+		filename: "ggml-base.en.bin",
+		size_bytes: 147_951_485,
+	},
+	ModelSpec {
+		id: "whisper-small-en",
+		kind: ModelKind::Stt,
+		label: "Whisper small (English)",
+		description: "whisper.cpp ggml small English model (~466 MB). Better accuracy.",
+		repo: "ggerganov/whisper.cpp",
+		filename: "ggml-small.bin",
+		size_bytes: 465_766_335,
+	},
+];
+
+pub fn find_model(id: &str, kind: ModelKind) -> Option<&'static ModelSpec> {
+	let list: &[ModelSpec] = match kind {
+		ModelKind::Llm => &LLM_MODELS,
+		ModelKind::Stt => &STT_MODELS,
+	};
+	list.iter().find(|m| m.id == id)
+}
+
+/// AI-related settings resolved from the settings table.
+#[derive(Debug, Clone)]
+pub struct AiSettings {
+	pub llm_mode: String,
+	pub llm_model: String,
+	pub stt_model: String,
+	pub ext_llm_base_url: String,
+	pub ext_llm_api_key: String,
+	pub ext_llm_model: String,
+	pub ext_stt_base_url: String,
+	pub ext_stt_api_key: String,
+	pub ext_stt_model: String,
+}
+
+impl AiSettings {
+	pub fn load(db: &Db) -> Self {
+		let get = |k: &str| db.get_setting(k).unwrap_or_default();
+		Self {
+			llm_mode: {
+				let m = get("ai_llm_mode");
+				if m.is_empty() { "local".into() } else { m }
+			},
+			llm_model: {
+				let m = get("ai_llm_model");
+				if m.is_empty() { LLM_MODELS[0].id.to_string() } else { m }
+			},
+			stt_model: {
+				let m = get("ai_stt_model");
+				if m.is_empty() { STT_MODELS[0].id.to_string() } else { m }
+			},
+			ext_llm_base_url: get("ext_llm_base_url"),
+			ext_llm_api_key: get("ext_llm_api_key"),
+			ext_llm_model: get("ext_llm_model"),
+			ext_stt_base_url: get("ext_stt_base_url"),
+			ext_stt_api_key: get("ext_stt_api_key"),
+			ext_stt_model: get("ext_stt_model"),
+		}
+	}
+
+	pub fn save(&self, db: &Db) {
+		db.set_settings(&[
+			("ai_llm_mode", self.llm_mode.clone()),
+			("ai_llm_model", self.llm_model.clone()),
+			("ai_stt_model", self.stt_model.clone()),
+			("ext_llm_base_url", self.ext_llm_base_url.clone()),
+			("ext_llm_api_key", self.ext_llm_api_key.clone()),
+			("ext_llm_model", self.ext_llm_model.clone()),
+			("ext_stt_base_url", self.ext_stt_base_url.clone()),
+			("ext_stt_api_key", self.ext_stt_api_key.clone()),
+			("ext_stt_model", self.ext_stt_model.clone()),
+		]);
+	}
+}
+
+pub struct Runtime {
+	pub backend: Option<Arc<llama_cpp_2::llama_backend::LlamaBackend>>,
+	pub llm: Option<Arc<LocalLlm>>,
+	pub stt: Option<Arc<SttEngine>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EngineStatus {
+	pub state: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub model_id: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub error: Option<String>,
+}
+
+impl EngineStatus {
+	pub fn new(state: &str, model_id: Option<&str>, error: Option<&str>) -> Self {
+		Self { state: state.into(), model_id: model_id.map(|s| s.into()), error: error.map(|s| s.into()) }
+	}
+}
+
+pub struct AppState {
+	pub db: Db,
+	pub data_dir: PathBuf,
+	pub runtime: std::sync::Mutex<Runtime>,
+	pub llm_status: std::sync::Mutex<EngineStatus>,
+	pub stt_status: std::sync::Mutex<EngineStatus>,
+	pub generation_cancel: std::sync::Mutex<Arc<AtomicBool>>,
+	pub downloading: std::sync::Mutex<Vec<String>>,
+}
+
+impl AppState {
+	pub fn new(db: Db, data_dir: PathBuf) -> Self {
+		Self {
+			db,
+			data_dir,
+			runtime: std::sync::Mutex::new(Runtime { backend: None, llm: None, stt: None }),
+			llm_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
+			stt_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
+			generation_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
+			downloading: std::sync::Mutex::new(Vec::new()),
+		}
+	}
+
+	pub fn models_dir(&self) -> PathBuf {
+		self.data_dir.join("models")
+	}
+
+	pub fn model_path(&self, spec: &ModelSpec) -> PathBuf {
+		self.models_dir().join(spec.filename)
+	}
+
+	pub fn is_model_downloaded(&self, spec: &ModelSpec) -> bool {
+		self.model_path(spec).is_file()
+	}
+
+	pub fn emit_llm_status(&self, app: &AppHandle) {
+		let status = self.llm_status.lock().unwrap().clone();
+		let _ = app.emit("llm-status", status);
+	}
+
+	pub fn emit_stt_status(&self, app: &AppHandle) {
+		let status = self.stt_status.lock().unwrap().clone();
+		let _ = app.emit("stt-status", status);
+	}
+
+	/// Load the given LLM model file into the runtime. Blocking; call from a
+	/// background thread.
+	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) {
+		{
+			let mut s = self.llm_status.lock().unwrap();
+			*s = EngineStatus::new("loading", Some(spec.id), None);
+		}
+		self.emit_llm_status(app);
+
+		let path = self.model_path(spec);
+		let result = (|| -> Result<LocalLlm, String> {
+			let mut runtime = self.runtime.lock().unwrap();
+			if runtime.backend.is_none() {
+				let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+					.map_err(|e| format!("failed to init llama backend: {e}"))?;
+				runtime.backend = Some(Arc::new(backend));
+			}
+			let backend = runtime.backend.clone().unwrap();
+			drop(runtime);
+			LocalLlm::load(backend, &path, spec.id)
+		})();
+
+		match result {
+			Ok(engine) => {
+				let mut runtime = self.runtime.lock().unwrap();
+				runtime.llm = Some(Arc::new(engine));
+				drop(runtime);
+				let mut s = self.llm_status.lock().unwrap();
+				*s = EngineStatus::new("ready", Some(spec.id), None);
+			}
+			Err(e) => {
+				log::error!("llm load failed: {e}");
+				let mut s = self.llm_status.lock().unwrap();
+				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
+			}
+		}
+		self.emit_llm_status(app);
+	}
+
+	/// Load the given whisper model file. Blocking; call from a background thread.
+	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) {
+		{
+			let mut s = self.stt_status.lock().unwrap();
+			*s = EngineStatus::new("loading", Some(spec.id), None);
+		}
+		self.emit_stt_status(app);
+
+		let path = self.model_path(spec);
+		match SttEngine::load(&path, spec.id) {
+			Ok(engine) => {
+				let mut runtime = self.runtime.lock().unwrap();
+				runtime.stt = Some(Arc::new(engine));
+				drop(runtime);
+				let mut s = self.stt_status.lock().unwrap();
+				*s = EngineStatus::new("ready", Some(spec.id), None);
+			}
+			Err(e) => {
+				log::error!("stt load failed: {e}");
+				let mut s = self.stt_status.lock().unwrap();
+				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
+			}
+		}
+		self.emit_stt_status(app);
+	}
+}
+
+pub fn model_url(spec: &ModelSpec) -> String {
+	format!("https://huggingface.co/{}/resolve/main/{}", spec.repo, spec.filename)
+}
+
+/// Stream a model file to disk, reporting progress through `on_progress`
+/// (percentage 0-100). Returns Ok(()) when done.
+pub async fn download_model_file(
+	url: &str,
+	dest: &Path,
+	cancel: &AtomicBool,
+	on_progress: &mut (impl FnMut(f64) + Send),
+) -> Result<(), String> {
+	let tmp = dest.with_extension("part");
+	if tmp.exists() {
+		tokio::fs::remove_file(&tmp).await.map_err(|e| e.to_string())?;
+	}
+
+	let client = reqwest::Client::new();
+	let response = client
+		.get(url)
+		.header("User-Agent", "brainstory-desktop/0.1")
+		.send()
+		.await
+		.map_err(|e| format!("download request failed: {e}"))?;
+	if !response.status().is_success() {
+		return Err(format!("download failed with status {}", response.status()));
+	}
+
+	let total = response.content_length().unwrap_or(0);
+	use futures_util::StreamExt;
+	let mut stream = response.bytes_stream();
+	let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+	use tokio::io::AsyncWriteExt;
+
+	let mut downloaded: u64 = 0;
+	let mut last_report: u64 = 0;
+	while let Some(chunk) = stream.next().await {
+		if cancel.load(Ordering::Relaxed) {
+			let _ = tokio::fs::remove_file(&tmp).await;
+			return Err("download cancelled".into());
+		}
+		let chunk = chunk.map_err(|e| format!("download interrupted: {e}"))?;
+		file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+		downloaded += chunk.len() as u64;
+		if downloaded - last_report > 2_000_000 || downloaded == total {
+			last_report = downloaded;
+			let pct = if total > 0 {
+				(downloaded as f64 / total as f64) * 100.0
+			} else {
+				0.0
+			};
+			on_progress(pct);
+		}
+	}
+	file.flush().await.map_err(|e| e.to_string())?;
+	drop(file);
+	tokio::fs::rename(&tmp, dest).await.map_err(|e| e.to_string())?;
+	Ok(())
+}

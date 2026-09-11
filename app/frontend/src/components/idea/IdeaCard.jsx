@@ -1,13 +1,12 @@
-import { formatISO8601ToHumanReadable, getGravatarUrl } from "@helpers/helpers";
+import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 export default function IdeaCard({
 	id,
 	title,
 	createdAt,
-	creatorEmail,
+	creatorName,
 	sharedWithUsers = [],
 	shared = false,
-	currentUserEmail = null,
 	feedback,
 	isFeedback = false
 }) {
@@ -39,61 +38,19 @@ export default function IdeaCard({
 						<p className="mb-3 text-xs text-stone-400">{humanReadableDate}</p>
 
 						<div className="group mb-4 flex items-center">
-							<img
-								key={creatorEmail + "-creator-gravatar"}
-								className="inline-block h-8 w-8 rounded-full ring-2 ring-white mr-2"
-								src={getGravatarUrl(creatorEmail)}
-								alt={`${creatorEmail}'s Gravatar `}
-							/>
+							<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">
+								{(creatorName || "You").trim().charAt(0).toUpperCase()}
+							</div>
 							<div className="width-full truncate">
 								<p className="text-xs font-medium text-stone-800">Created by</p>
 								<p className="text-xs font-medium text-stone-800 truncate">
-									{currentUserEmail === creatorEmail ? "You" : creatorEmail}
+									{creatorName || "You"}
 								</p>
 							</div>
 						</div>
 					</div>
 					{!isFeedback && (
 						<div>
-							<div className="width-full truncate">
-								<p className="my-2 text-xs font-medium text-stone-700 truncate">
-									Shared with
-								</p>
-							</div>
-							<div className="flex -space-x-2">
-								{sharedWithUsers.map((user, index) => {
-									if (index > 9) {
-										return null;
-									}
-
-									return (
-										<div
-											className={`group/userName h-[32px] overflow:hidden`}
-											key={user + "-gravatar-div"}
-										>
-											<img
-												data-tooltip-target={`tooltip-animation-${index}`}
-												className="inline-block h-8 w-8 rounded-full ring-2 ring-white"
-												src={getGravatarUrl(user)}
-												alt={`${user}'s Gravatar`}
-											/>
-											<span
-												className={`group-hover/userName:opacity-100 pointer-events-none transition-opacity bg-pink-500 px-2 text-sm text-stone-100 rounded-md absolute left-1/2 -translate-x-1/2 translate-y-full opacity-0 m-4 mx-auto`}
-											>
-												{user}
-											</span>
-										</div>
-									);
-								})}
-								{sharedWithUsers.length > 10 && (
-									<span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-stone-100 ring-2 ring-stone-200">
-										<span className="font-medium text-stone-500 leading-none">
-											+{sharedWithUsers.length - 9}
-										</span>
-									</span>
-								)}
-								{sharedWithUsers.length === 0 && <div className="h-[32px]" />}
-							</div>
 							{feedback.length > 0 ? (
 								<div className="flex justify-end mt-4 mt-max">
 									<button

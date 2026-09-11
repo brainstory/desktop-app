@@ -1,14 +1,7 @@
-const PUBLIC_API_URL = import.meta.env.PUBLIC_API_URL;
-import { authRedirect, getDefaultAPIHeaders } from "@helpers/api/auth";
+import { invoke } from "@tauri-apps/api/core";
 
 export async function getDailyLogQuestionsApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/form/log`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("get_log_questions");
 
 	return response.log.map((question) => ({
 		id: question.id,
@@ -23,32 +16,12 @@ export async function getDailyLogQuestionsApi() {
  * @returns
  */
 export async function submitDailyLogQuestionsApi(logItems) {
-	const body = {
-		log: logItems
-	};
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/form/log`, {
-			method: "POST",
-			credentials: "include",
-			body: JSON.stringify(body),
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
-	console.log("body", body);
-	console.log("create log", response.id);
+	const response = await invoke("submit_log", { log: logItems });
 	return response.id;
 }
 
 export async function getSurveyFieldsApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/form/survey`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
+	const response = await invoke("get_survey_fields");
 	return { labels: response.ids, range: response.range };
 }
 
@@ -59,21 +32,7 @@ export async function getSurveyFieldsApi() {
  * @returns
  */
 export async function submitSurveyResponseApi(surveyItems, ideaId) {
-	const body = {
-		survey: surveyItems,
-		idea_id: ideaId
-	};
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/form/survey`, {
-			method: "POST",
-			credentials: "include",
-			body: JSON.stringify(body),
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
-	console.log("body", body);
-	console.log("create log", response.id);
+	const response = await invoke("submit_survey", { survey: surveyItems, ideaId });
 	return response.id;
 }
 

@@ -2,13 +2,8 @@ import { useEffect } from "react";
 import IdeaCard from "@components/idea/IdeaCard.jsx";
 import IdeaPlaceholder from "@components/idea/IdeaPlaceholder.jsx";
 import DraftIdeaCard from "@components/idea/DraftIdeaCard.jsx";
-import { useStore } from "@nanostores/react";
-import { $userState } from "@components/global/userStore.js";
 
 export default function IdeaGrid({ userIdeas }) {
-	const userState = useStore($userState);
-	const { userEmail } = userState || {};
-
 	useEffect(() => {}, [userIdeas]);
 
 	if (userIdeas === null) {
@@ -40,10 +35,8 @@ export default function IdeaGrid({ userIdeas }) {
 								id={idea.id}
 								title={idea.title}
 								createdAt={idea.createdAt}
-								creatorEmail={idea.creatorEmail}
-								sharedWithUsers={idea.sharedWithUsers}
+								creatorName={idea.creatorName}
 								isUnread={idea.isUnread}
-								currentUserEmail={userEmail}
 								feedback={idea.feedback}
 								index={index}
 							/>

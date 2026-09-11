@@ -193,7 +193,14 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 	const handleGetResponse = () => {
 		setConversationState(CONVERSATION_STATE.WaitingForCoach);
 		try {
-			const apiCall = () => generateResponseApi(currConversation, parentIdea?.summary);
+			const apiCall = () =>
+				generateResponseApi(
+					currConversation,
+					parentIdea?.summary,
+					parentIdea?.creatorName ?? null,
+					parentIdea ? parentIdea?.creatorName == null : false,
+					chatType
+				);
 			callApiWithRetry(apiCall)
 				.then((message) => {
 					const isUser = false;
@@ -232,16 +239,24 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 	const handleGetResult = () => {
 		conversationEndCallbacks();
 		setConversationState(CONVERSATION_STATE.FinishWithResult);
-		const resultFinishedCallbacks = (result) => {
+		const resultFinishedCallbacks = (result, structuredResult) => {
 			setReadyToSave(true);
 			// final update with saving result
-			updateIdeaApi(ideaId, currConversation, result);
+			updateIdeaApi(ideaId, currConversation, result, structuredResult);
 			if (isFromGuide) {
 				setCookie("has_done_getting_started", true);
 			}
 		};
 		handleWebsocketStreamResult(
-			() => generateResponseStreamApi(currConversation, true, parentIdea?.summary),
+			() =>
+				generateResponseStreamApi(
+					currConversation,
+					true,
+					parentIdea?.summary,
+					parentIdea?.creatorName ?? null,
+					parentIdea ? parentIdea?.creatorName == null : false,
+					chatType
+				),
 			setResult,
 			resultFinishedCallbacks
 		);

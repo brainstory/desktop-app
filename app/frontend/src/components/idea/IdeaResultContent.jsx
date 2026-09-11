@@ -22,7 +22,6 @@ export default function IdeaResultContent() {
 	};
 
 	const userState = useStore($userState);
-	const { userEmail } = userState || {};
 	const [activeTab, setActiveTab] = useState(tabs.summary);
 	const [isLoading, setIsLoading] = useState(true);
 	const [idea, setIdea] = useState({});
@@ -32,6 +31,9 @@ export default function IdeaResultContent() {
 	const [headingIdxToComments, setHeadingIdxToComments] = useState({});
 	const [isMdSizeOrLess, setIsMdSizeOrLess] = useState(window.innerWidth <= 768);
 	const [feedbackDraftId, setFeedbackDraftId] = useState();
+
+	// own ideas have no creator attribution; imported ones carry creator info
+	const isOwnIdea = !idea.creatorEmail && !idea.creatorName;
 
 	useEffect(() => {
 		// Event listener to keep track of screen size
@@ -66,7 +68,7 @@ export default function IdeaResultContent() {
 						summary: res.summary,
 						transcript: res.transcript,
 						isUnread: res.isUnread,
-						numOfShares: res.sharedWithUsers.length,
+						numOfShares: res.sharedWithUsers?.length ?? 0,
 						creatorEmail: res.creatorEmail,
 						creatorName: res.creatorName,
 						resultJson: res.resultJson
@@ -118,7 +120,7 @@ export default function IdeaResultContent() {
 								resultSections={idea.resultJson}
 								ideaFeedbackChildren={ideaChildren}
 								headingIdxToComments={headingIdxToComments}
-								canShare={userEmail === idea.creatorEmail}
+								canShare={isOwnIdea}
 							/>
 						)
 					},
@@ -130,16 +132,14 @@ export default function IdeaResultContent() {
 
 	if (!parentIdea) {
 		if (ideaChildren && ideaChildren.length > 0) {
-			console.log(ideaChildren);
 			const feedbackCount = ideaChildren.length;
 			tabData.push({
 				label: feedbackCount > 0 ? `Feedback (${feedbackCount})` : "Feedback",
 				content: <IdeaBranches kids={ideaChildren} />
 			});
 		} else {
-			const isOwner = userEmail === idea.creatorEmail;
-			const tooltipText = isOwner
-				? "Share your idea for feedback"
+			const tooltipText = isOwnIdea
+				? "Export your idea and send it to someone for feedback"
 				: "No feedback on this idea yet";
 			tabData.push({
 				label: "Feedback",
@@ -159,21 +159,12 @@ export default function IdeaResultContent() {
 			</div>
 		);
 	} else {
-		const feedbackGiven =
-			!ideaChildren ||
-			ideaChildren.reduce(
-				(acc, childIdea) => acc || userEmail === childIdea.creatorEmail,
-				false
-			);
-		const canShare = userEmail && userEmail === idea.creatorEmail && !parentIdea;
-		const isFeedbackMissing = userEmail !== idea.creatorEmail && !parentIdea && !feedbackGiven;
 		return (
 			<div className="h-full">
 				<IdeaTitleBar
 					idea={idea}
-					userEmail={userEmail}
-					canShare={canShare}
-					isFeedbackMissing={isFeedbackMissing}
+					isOwnIdea={isOwnIdea}
+					isFeedbackMissing={!parentIdea}
 					requestedDraftId={feedbackDraftId}
 					parentId={parentIdea?.id}
 				/>

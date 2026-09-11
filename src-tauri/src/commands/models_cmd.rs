@@ -1,0 +1,170 @@
+use serde_json::json;
+use tauri::ipc::Channel;
+use tauri::{Manager, State};
+
+use crate::models::{download_model_file, find_model, model_url, AiSettings, ModelKind};
+use crate::types::ModelStatus;
+use crate::AppState;
+
+#[tauri::command]
+pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
+	let settings = AiSettings::load(&state.db);
+	let build = |kind: ModelKind| -> Vec<ModelStatus> {
+		let list: &[crate::models::ModelSpec] = match kind {
+			ModelKind::Llm => &crate::models::LLM_MODELS,
+			ModelKind::Stt => &crate::models::STT_MODELS,
+		};
+		list.iter()
+			.map(|spec| ModelStatus {
+				id: spec.id.to_string(),
+				label: spec.label.to_string(),
+				description: spec.description.to_string(),
+				kind: match kind {
+					ModelKind::Llm => "llm",
+					ModelKind::Stt => "stt",
+				}
+				.to_string(),
+				size_bytes: spec.size_bytes,
+				downloaded: state.is_model_downloaded(spec),
+				active: match kind {
+					ModelKind::Llm => settings.llm_mode == "local" && settings.llm_model == spec.id,
+					ModelKind::Stt => settings.stt_model == spec.id,
+				},
+				filename: Some(spec.filename.to_string()),
+			})
+			.collect()
+	};
+
+	json!({
+		"llm": build(ModelKind::Llm),
+		"stt": build(ModelKind::Stt),
+	})
+}
+
+#[tauri::command]
+pub fn get_runtime_status(state: State<'_, AppState>) -> serde_json::Value {
+	json!({
+		"llm": state.llm_status.lock().unwrap().clone(),
+		"stt": state.stt_status.lock().unwrap().clone(),
+	})
+}
+
+#[tauri::command]
+pub async fn download_model(
+	app: tauri::AppHandle,
+	state: State<'_, AppState>,
+	model_id: String,
+	on_event: Channel<serde_json::Value>,
+) -> Result<(), String> {
+	let spec = find_model(&model_id, ModelKind::Llm)
+		.or_else(|| find_model(&model_id, ModelKind::Stt))
+		.ok_or_else(|| format!("unknown model {model_id}"))?
+		.clone();
+
+	{
+		let mut downloading = state.downloading.lock().unwrap();
+		if downloading.contains(&model_id) {
+			return Err("model is already downloading".into());
+		}
+		downloading.push(model_id.clone());
+	}
+
+	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
+
+	let cancel = state.generation_cancel.lock().unwrap().clone();
+	let app_handle = app.clone();
+	let dest = state.model_path(&spec);
+	let url = model_url(&spec);
+
+	tauri::async_runtime::spawn(async move {
+		let mut on_progress = |pct: f64| {
+			let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
+		};
+		let result = download_model_file(&url, &dest, &cancel, &mut on_progress).await;
+
+		let state = app_handle.state::<AppState>();
+		{
+			let mut downloading = state.downloading.lock().unwrap();
+			downloading.retain(|id| id != &model_id);
+		}
+
+		match result {
+			Ok(()) => {
+				let _ = on_event.send(json!({ "kind": "done" }));
+				// If this model is the active one, load it right away.
+				let settings = AiSettings::load(&state.db);
+				let is_active_llm =
+					spec.kind == ModelKind::Llm && settings.llm_mode == "local" && settings.llm_model == spec.id;
+				let is_active_stt = spec.kind == ModelKind::Stt && settings.stt_model == spec.id;
+				if is_active_llm || is_active_stt {
+					let app2 = app_handle.clone();
+					tauri::async_runtime::spawn_blocking(move || {
+						let state = app2.state::<AppState>();
+						let spec = find_model(&model_id, ModelKind::Llm)
+							.or_else(|| find_model(&model_id, ModelKind::Stt))
+							.unwrap();
+						match spec.kind {
+							ModelKind::Llm => state.load_llm(&app2, spec),
+							ModelKind::Stt => state.load_stt(&app2, spec),
+						}
+					});
+				}
+			}
+			Err(e) => {
+				let _ = on_event.send(json!({ "kind": "error", "message": e }));
+			}
+		}
+	});
+
+	Ok(())
+}
+
+#[tauri::command]
+pub fn delete_model(state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+	let spec = find_model(&model_id, ModelKind::Llm)
+		.or_else(|| find_model(&model_id, ModelKind::Stt))
+		.ok_or_else(|| format!("unknown model {model_id}"))?;
+	let path = state.model_path(spec);
+	if path.exists() {
+		std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+	}
+	Ok(())
+}
+
+/// Explicitly activate (and load if needed) a downloaded model.
+#[tauri::command]
+pub async fn activate_model(
+	app: tauri::AppHandle,
+	state: State<'_, AppState>,
+	model_id: String,
+) -> Result<(), String> {
+	let spec = find_model(&model_id, ModelKind::Llm)
+		.or_else(|| find_model(&model_id, ModelKind::Stt))
+		.ok_or_else(|| format!("unknown model {model_id}"))?
+		.clone();
+	if !state.is_model_downloaded(&spec) {
+		return Err("model is not downloaded".into());
+	}
+
+	let mut settings = AiSettings::load(&state.db);
+	match spec.kind {
+		ModelKind::Llm => {
+			settings.llm_mode = "local".into();
+			settings.llm_model = spec.id.to_string();
+		}
+		ModelKind::Stt => {
+			settings.stt_model = spec.id.to_string();
+		}
+	}
+	settings.save(&state.db);
+
+	let app_handle = app.clone();
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app_handle.state::<AppState>();
+		match spec.kind {
+			ModelKind::Llm => state.load_llm(&app_handle, &spec),
+			ModelKind::Stt => state.load_stt(&app_handle, &spec),
+		}
+	});
+	Ok(())
+}

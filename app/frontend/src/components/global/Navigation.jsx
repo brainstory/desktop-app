@@ -1,53 +1,17 @@
 import React, { useState } from "react";
-import SubscriptionCTA from "@components/global/SubscribeCTA";
 import PinkButton from "@ds/PinkButton";
 import TransparentButton from "@ds/TransparentButton";
 
-import { $userState } from "@components/global/userStore.js";
-
-const PUBLIC_API_URL = import.meta.env.PUBLIC_API_URL;
 const buttons = [
 	{ icon: "add", text: "New", href: "/chat", label: "", id: "new-idea" },
 	{ icon: "home", text: "Dashboard", href: "/dashboard", label: "", id: "dashboard" },
-	{ icon: "person", text: "My Profile", href: "/profile", label: "", id: "profile" },
-	{
-		icon: "log-out-outline",
-		text: "Sign Out",
-		href: `${PUBLIC_API_URL}auth-brainstory/v1/flow/logout`,
-		label: "",
-		id: "sign-out-button"
-	}
+	{ icon: "person", text: "My Profile", href: "/profile", label: "", id: "profile" }
 ];
 
-const loggedOutButtons = [
-	{
-		icon: "flash",
-		text: "Log in or Sign up",
-		href: "https://app.brainstory.ai/",
-		label: "",
-		id: "login"
-	},
-	{
-		icon: "bulb-outline",
-		text: "Brainstory blog",
-		href: "https://blog.brainstory.ai/",
-		label: "",
-		id: "blog"
-	},
-	{
-		icon: "mail-outline",
-		text: "Contact us",
-		href: "https://www.brainstory.ai/support",
-		label: "",
-		id: "contact"
-	}
-];
-// console.log(window.location.href);
-
-function Navigation({ loggedOut = false }) {
+function Navigation() {
 	const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-	let navButtons = loggedOut ? loggedOutButtons : buttons;
+	let navButtons = buttons;
 
 	const handleOpenSidebar = () => {
 		setIsSidebarOpen(true);
@@ -59,11 +23,6 @@ function Navigation({ loggedOut = false }) {
 
 	const handleNavigate = (href) => {
 		window.location.href = href;
-	};
-
-	const handleSignOut = () => {
-		localStorage.removeItem("csrf_verify");
-		window.location.href = buttons.find((button) => button.id === "sign-out-button").href;
 	};
 
 	return (
@@ -93,12 +52,9 @@ function Navigation({ loggedOut = false }) {
 				/>
 				<ul className="space-y-2 font-medium">
 					{navButtons.map((button) => {
-						if (button.id === "new-idea" || button.id === "login") {
+						if (button.id === "new-idea") {
 							return (
-								<li
-									key="new-idea-pink"
-									className={button.id === "new-idea" && "mx-5"}
-								>
+								<li key="new-idea-pink" className="mx-5">
 									<PinkButton
 										icon={button.icon}
 										iconClasses="mr-0.5"
@@ -132,11 +88,7 @@ function Navigation({ loggedOut = false }) {
 									icon={button.icon}
 									role="link"
 									onClick={() => {
-										if (button.id === "sign-out-button") {
-											handleSignOut();
-										} else {
-											handleNavigate(button.href);
-										}
+										handleNavigate(button.href);
 									}}
 									left
 									full
@@ -147,7 +99,6 @@ function Navigation({ loggedOut = false }) {
 						);
 					})}
 				</ul>
-				{!loggedOut && $userState !== undefined && <SubscriptionCTA />}
 			</aside>
 		</div>
 	);

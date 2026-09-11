@@ -1,16 +1,8 @@
-const PUBLIC_API_URL = import.meta.env.PUBLIC_API_URL;
-import { authRedirect, getDefaultAPIHeaders } from "@helpers/api/auth";
+import { invoke } from "@tauri-apps/api/core";
 
-/** Get user email, name, and mail verified status */
+/** Get user name, timezone and account creation date (all local) */
 export async function getUserApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
+	const response = await invoke("get_user");
 	return {
 		email: response.email,
 		name: response?.name,
@@ -20,16 +12,9 @@ export async function getUserApi() {
 	};
 }
 
-/** Get user free trial */
+/** Kept for compatibility; the desktop app has no trials */
 export async function getUserTrial() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/trial`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
+	const response = await invoke("get_user_trial");
 	return {
 		trialEndAt: response.trial_end,
 		isPaid: response.is_paid
@@ -37,14 +22,7 @@ export async function getUserTrial() {
 }
 
 export async function getUserDailyStatusApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/daily`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
+	const response = await invoke("get_daily_status");
 	return {
 		logId: response.log_id,
 		intentIdeaId: response.intent_idea_id,
@@ -56,13 +34,7 @@ export async function getUserDailyStatusApi() {
 
 /** Get all ideas that the user created */
 export async function getAllIdeasApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/idea/list`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("get_all_ideas");
 
 	const strip = (str) => {
 		// remove the first line before the first \n\n,
@@ -91,6 +63,7 @@ export async function getAllIdeasApi() {
 		summaryPreview: strip(idea?.result),
 		createdAt: idea?.created_at,
 		creatorEmail: idea?.creator_email,
+		creatorName: idea?.creator_name,
 		isUnread: idea?.is_unread,
 		sharedWithUsers: idea?.shared_with_users,
 		feedback: idea?.feedback,
@@ -98,28 +71,8 @@ export async function getAllIdeasApi() {
 	}));
 }
 
-/** Get all notifications for user*/
+/** Get all notifications for the user (none in the desktop app) */
 export async function getAllUserNotifications() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/notifications`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
+	const response = await invoke("get_notifications");
 	return response.notifications;
-}
-
-/** Get all emails the user has shared with recently */
-export async function getUserShareRecents() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/share/recents`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
-
-	return response.recents.map((person) => ({ name: person?.name, email: person.email }));
 }

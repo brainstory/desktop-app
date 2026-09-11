@@ -1,0 +1,16 @@
+{
+	"name": "brainstory-desktop",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "npm -C app/frontend run dev",
+		"build": "npm -C app/frontend run build",
+		"preview": "npm -C app/frontend run preview",
+		"tauri": "tauri",
+		"tauri:dev": "tauri dev",
+		"tauri:build": "tauri build"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "^2.11.4"
+	}
+}

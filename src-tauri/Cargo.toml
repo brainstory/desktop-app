@@ -1,0 +1,55 @@
+[package]
+name = "brainstory"
+version = "0.1.0"
+description = "Brainstory - think out loud, locally"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "brainstory_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+# storage
+rusqlite = { version = "0.40", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+# model downloads + external endpoint clients
+reqwest = { version = "0.12", default-features = false, features = [
+	"rustls-tls",
+	"stream",
+	"json",
+	"multipart",
+] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "macros"] }
+
+# local inference
+llama-cpp-2 = "0.1.156"
+hound = "3"
+
+thiserror = "2"
+encoding_rs = "0.8"
+tauri-plugin-dialog = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = "0.16"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

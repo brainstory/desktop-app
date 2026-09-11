@@ -1,15 +1,8 @@
-const PUBLIC_API_URL = import.meta.env.PUBLIC_API_URL;
-import { authRedirect, getDefaultAPIHeaders } from "@helpers/api/auth";
+import { invoke } from "@tauri-apps/api/core";
 
 /** Get user settings */
 export async function getUserSettingsApi() {
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/settings`, {
-			method: "GET",
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("get_user_settings");
 
 	const user = {
 		name: response.user?.name,
@@ -60,13 +53,6 @@ export async function saveUserSettingsApi(
 	if (notifications) {
 		body.notifications = notifications;
 	}
-	const response = await authRedirect(() =>
-		fetch(`${PUBLIC_API_URL}api/story/user/settings`, {
-			method: "PUT",
-			body: JSON.stringify(body),
-			credentials: "include",
-			headers: getDefaultAPIHeaders()
-		})
-	);
+	const response = await invoke("save_user_settings", body);
 	return response.id;
 }
