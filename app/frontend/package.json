@@ -1,0 +1,40 @@
+{
+	"name": "brainstory",
+	"version": "0.0.1",
+	"private": true,
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"scripts": {
+		"dev": "astro dev --port 5173",
+		"start": "astro dev --port 5173",
+		"build": "astro build",
+		"preview": "astro preview",
+		"astro": "astro"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.2.1",
+		"astro": "^5.17.3"
+	},
+	"dependencies": {
+		"@astrojs/react": "^4.4.2",
+		"@astrojs/sitemap": "^3.7.0",
+		"@nanostores/react": "^1.0.0",
+		"@rive-app/react-canvas": "^4.27.0",
+		"@tailwindcss/forms": "^0.5.11",
+		"@tailwindcss/typography": "^0.5.19",
+		"class-variance-authority": "^0.7.1",
+		"clsx": "^2.1.1",
+		"md5": "^2.3.0",
+		"nanostores": "^1.1.0",
+		"react": "^19.2.4",
+		"react-dom": "^19.2.4",
+		"react-markdown": "^10.1.0",
+		"react-media-recorder": "^1.7.2",
+		"react-select": "^5.10.2",
+		"react-timezone-select": "^3.3.2",
+		"tailwind-merge": "^3.5.0",
+		"tailwindcss": "^4.2.1",
+		"uuid": "^13.0.0"
+	}
+}

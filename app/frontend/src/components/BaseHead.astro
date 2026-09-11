@@ -1,0 +1,46 @@
+---
+import "../styles/global.css";
+
+const { title, metaImage } = Astro.props;
+const metaImageLink = metaImage ? metaImage : "https://app.brainstory.ai/og.png"
+---
+
+<meta charset="UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="author" content="Brainstory" />
+<meta name="keywords" content="brainstorm ai" />
+
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+<link rel="manifest" href="/site.webmanifest" />
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#ff54a0" />
+<meta name="msapplication-TileColor" content="#ffffff" />
+<meta name="theme-color" content="#ffffff" />
+
+<meta property="og:title" content="Brainstory" />
+<meta property="og:url" content="https://brainstory.ai/" />
+<meta property="og:description" content="Find your moments of brilliance without the slump" />
+<meta property="og:site_name" content="Brainstory" />
+<meta property="og:image" content={metaImageLink} />
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+
+<meta name="twitter:title" content="Brainstory">
+<meta name="twitter:description" content="Find your moments of brilliance without the slump">
+<meta name="twitter:image:src" content={metaImageLink}>
+<meta name="twitter:card" content="summary_large_image">
+
+<!--Ionicons -->
+<script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
+
+<link rel="preconnect" href="https://rsms.me/" />
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+
+<!---- Alpine  -->
+<script defer src="https://unpkg.com/alpinejs@3.10.5/dist/cdn.min.js"></script>
+<!-- Analytics   -->
+
+<title>{title && `${title} | `} Brainstory</title>
