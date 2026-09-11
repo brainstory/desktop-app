@@ -43,6 +43,7 @@ pub fn run() {
 			commands::ai::send_test_notification,
 			commands::settings::get_user_settings,
 			commands::settings::save_user_settings,
+			commands::settings::set_app_presence,
 			commands::settings::get_ai_settings,
 			commands::settings::save_ai_settings,
 			commands::settings::test_llm_endpoint,
@@ -72,17 +73,44 @@ pub fn run() {
 			app.manage(AppState::new(db, data_dir));
 
 			setup_tray(app)?;
+
+			// Apply the dock/tray visibility preferences from settings.
+			{
+				let state = app.state::<AppState>();
+				let dock = state
+					.db
+					.get_setting("show_in_dock")
+					.map(|v| v == "true")
+					.unwrap_or(true);
+				let tray = state
+					.db
+					.get_setting("show_in_tray")
+					.map(|v| v == "true")
+					.unwrap_or(true);
+				apply_presence(app.handle(), dock, tray);
+			}
+
 			reminders::spawn(app.handle().clone());
 			spawn_model_loader(app.handle().clone(), AiSettings::load(&app.state::<AppState>().db));
 
 			Ok(())
 		})
 		.on_window_event(|window, event| {
-			// Closing the window hides it to the tray so daily reminders
-			// keep working; quit via the tray menu.
 			if let WindowEvent::CloseRequested { api, .. } = event {
-				window.hide().ok();
-				api.prevent_close();
+				let app = window.app_handle();
+				let quit_on_close = app
+					.state::<AppState>()
+					.quit_on_close
+					.load(std::sync::atomic::Ordering::Relaxed);
+				if quit_on_close {
+					// tray hidden: closing the window is the way out
+					app.exit(0);
+				} else {
+					// Closing the window hides it to the tray so daily
+					// reminders keep working; quit via the tray menu.
+					window.hide().ok();
+					api.prevent_close();
+				}
 			}
 		})
 		.run(tauri::generate_context!())
@@ -134,6 +162,32 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 	}
 	tray.build(app)?;
 	Ok(())
+}
+
+/// Show/hide the dock icon and tray icon per user settings. When the tray is
+/// hidden, closing the window quits the app so it can't get stranded running
+/// invisibly in the background.
+pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
+	let state = app.state::<AppState>();
+	state
+		.quit_on_close
+		.store(!tray, std::sync::atomic::Ordering::Relaxed);
+	drop(state);
+
+	#[cfg(target_os = "macos")]
+	{
+		if let Err(e) = app.set_dock_visibility(dock) {
+			log::warn!("failed to set dock visibility: {e}");
+		}
+	}
+	#[cfg(not(target_os = "macos"))]
+	let _ = dock;
+
+	if let Some(tray_icon) = app.tray_by_id("main-tray") {
+		if let Err(e) = tray_icon.set_visible(tray) {
+			log::warn!("failed to set tray visibility: {e}");
+		}
+	}
 }
 
 fn show_main_window(app: &AppHandle) {

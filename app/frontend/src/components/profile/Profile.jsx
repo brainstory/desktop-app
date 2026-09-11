@@ -9,6 +9,7 @@ import { PhotoNameCard, GeneralCard } from "./ProfileCards";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
+import AppPresenceCard from "./AppPresenceCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
@@ -29,6 +30,7 @@ export default function Profile() {
 	const [userTimezone, setUserTimezone] = useState("");
 	const [notifications, setNotifications] = useState([]);
 	const [dailyLogSettings, setDailyLogSettings] = useState();
+	const [presence, setPresence] = useState({ dock: true, tray: true });
 	// TODO stupid snack bar makes component rerender way too much
 	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
 	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
@@ -51,6 +53,7 @@ export default function Profile() {
 				setUserTimezone(res.user.timezone ? res.user.timezone : "Etc/GMT");
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
+				setPresence(res.presence);
 				setIsLoading(false);
 			})
 			.catch((e) => console.log("error getting user settings", e));
@@ -133,6 +136,11 @@ export default function Profile() {
 						key={userTimezone} // rerender when timezone changes
 						notificationsData={notifications}
 						saveSettings={handleNotificationsSave}
+					/>
+					<AppPresenceCard
+						key={`${presence.dock}-${presence.tray}`}
+						presence={presence}
+						openSnackbar={openSnackbar}
 					/>
 				</div>
 			)

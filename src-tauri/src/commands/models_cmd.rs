@@ -1,6 +1,6 @@
 use serde_json::json;
 use tauri::ipc::Channel;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::models::{download_model_file, find_model, model_url, AiSettings, ModelKind};
 use crate::types::ModelStatus;
@@ -14,6 +14,7 @@ pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
 			ModelKind::Llm => &crate::models::LLM_MODELS,
 			ModelKind::Stt => &crate::models::STT_MODELS,
 		};
+		let progress = state.download_progress.lock().unwrap();
 		list.iter()
 			.map(|spec| ModelStatus {
 				id: spec.id.to_string(),
@@ -30,6 +31,8 @@ pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
 					ModelKind::Llm => settings.llm_mode == "local" && settings.llm_model == spec.id,
 					ModelKind::Stt => settings.stt_model == spec.id,
 				},
+				downloading: progress.contains_key(spec.id),
+				progress: progress.get(spec.id).copied(),
 				filename: Some(spec.filename.to_string()),
 			})
 			.collect()
@@ -62,11 +65,11 @@ pub async fn download_model(
 		.clone();
 
 	{
-		let mut downloading = state.downloading.lock().unwrap();
-		if downloading.contains(&model_id) {
+		let mut progress = state.download_progress.lock().unwrap();
+		if progress.contains_key(&model_id) {
 			return Err("model is already downloading".into());
 		}
-		downloading.push(model_id.clone());
+		progress.insert(model_id.clone(), 0.0);
 	}
 
 	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
@@ -77,41 +80,56 @@ pub async fn download_model(
 	let url = model_url(&spec);
 
 	tauri::async_runtime::spawn(async move {
-		let mut on_progress = |pct: f64| {
-			let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
-		};
-		let result = download_model_file(&url, &dest, &cancel, &mut on_progress).await;
-
-		let state = app_handle.state::<AppState>();
 		{
-			let mut downloading = state.downloading.lock().unwrap();
-			downloading.retain(|id| id != &model_id);
-		}
+			let state = app_handle.state::<AppState>();
+			let mut on_progress = |pct: f64| {
+				state.download_progress.lock().unwrap().insert(model_id.clone(), pct);
+				let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
+				let _ = app_handle.emit(
+					"model-download",
+					json!({ "modelId": model_id, "kind": "progress", "pct": pct }),
+				);
+			};
+			let result = download_model_file(&url, &dest, &cancel, &mut on_progress).await;
 
-		match result {
-			Ok(()) => {
-				let _ = on_event.send(json!({ "kind": "done" }));
-				// If this model is the active one, load it right away.
-				let settings = AiSettings::load(&state.db);
-				let is_active_llm =
-					spec.kind == ModelKind::Llm && settings.llm_mode == "local" && settings.llm_model == spec.id;
-				let is_active_stt = spec.kind == ModelKind::Stt && settings.stt_model == spec.id;
-				if is_active_llm || is_active_stt {
-					let app2 = app_handle.clone();
-					tauri::async_runtime::spawn_blocking(move || {
-						let state = app2.state::<AppState>();
-						let spec = find_model(&model_id, ModelKind::Llm)
-							.or_else(|| find_model(&model_id, ModelKind::Stt))
-							.unwrap();
-						match spec.kind {
-							ModelKind::Llm => state.load_llm(&app2, spec),
-							ModelKind::Stt => state.load_stt(&app2, spec),
-						}
-					});
+			let state = app_handle.state::<AppState>();
+			state.download_progress.lock().unwrap().remove(&model_id);
+
+			match result {
+				Ok(()) => {
+					let _ = on_event.send(json!({ "kind": "done" }));
+					let _ = app_handle.emit(
+						"model-download",
+						json!({ "modelId": model_id, "kind": "done" }),
+					);
+					// If this model is the active one, load it right away.
+					let settings = AiSettings::load(&state.db);
+					let is_active_llm = spec.kind == ModelKind::Llm
+						&& settings.llm_mode == "local"
+						&& settings.llm_model == spec.id;
+					let is_active_stt =
+						spec.kind == ModelKind::Stt && settings.stt_model == spec.id;
+					if is_active_llm || is_active_stt {
+						let app2 = app_handle.clone();
+						tauri::async_runtime::spawn_blocking(move || {
+							let state = app2.state::<AppState>();
+							let spec = find_model(&model_id, ModelKind::Llm)
+								.or_else(|| find_model(&model_id, ModelKind::Stt))
+								.unwrap();
+							match spec.kind {
+								ModelKind::Llm => state.load_llm(&app2, spec),
+								ModelKind::Stt => state.load_stt(&app2, spec),
+							}
+						});
+					}
 				}
-			}
-			Err(e) => {
-				let _ = on_event.send(json!({ "kind": "error", "message": e }));
+				Err(e) => {
+					let _ = on_event.send(json!({ "kind": "error", "message": e }));
+					let _ = app_handle.emit(
+						"model-download",
+						json!({ "modelId": model_id, "kind": "error", "message": e }),
+					);
+				}
 			}
 		}
 	});

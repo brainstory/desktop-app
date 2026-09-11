@@ -40,7 +40,23 @@ export function AiModelsCard({ openSnackbar }) {
 	const [downloadProgress, setDownloadProgress] = useState({});
 
 	const refresh = () => {
-		listModelsApi().then(setModels).catch((e) => console.log("list models failed", e));
+		listModelsApi()
+			.then((data) => {
+				setModels(data);
+				// rehydrate in-flight downloads (e.g. after navigating away and back)
+				setDownloadProgress((prev) => {
+					const next = {};
+					for (const list of [data.llm, data.stt]) {
+						for (const model of list) {
+							if (model.downloading) {
+								next[model.id] = model.progress ?? 0;
+							}
+						}
+					}
+					return next;
+				});
+			})
+			.catch((e) => console.log("list models failed", e));
 		getRuntimeStatusApi().then(setRuntime).catch((e) => console.log("status failed", e));
 	};
 
@@ -50,11 +66,34 @@ export function AiModelsCard({ openSnackbar }) {
 
 		const unlisteners = [
 			listen("llm-status", refresh),
-			listen("stt-status", refresh)
+			listen("stt-status", refresh),
+			// downloads continue in the backend across page navigation
+			listen("model-download", (event) => {
+				const { modelId, kind, pct, message } = event.payload ?? {};
+				if (kind === "progress") {
+					setDownloadProgress((prev) => ({ ...prev, [modelId]: pct }));
+				} else if (kind === "done") {
+					setDownloadProgress((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					});
+					openSnackbar(true, "Model downloaded");
+					refresh();
+				} else if (kind === "error") {
+					setDownloadProgress((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					});
+					openSnackbar(false, `Download failed: ${message}`);
+				}
+			})
 		];
 		return () => {
 			unlisteners.forEach((p) => p.then((fn) => fn()));
 		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	if (!settings) {
@@ -66,29 +105,12 @@ export function AiModelsCard({ openSnackbar }) {
 	}
 
 	const download = (modelId) => {
-		const { channel, invokePromise } = downloadModelApi(modelId);
-		channel.onmessage = (event) => {
-			if (event.kind === "progress") {
-				setDownloadProgress((prev) => ({ ...prev, [modelId]: event.pct }));
-			} else if (event.kind === "done") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
-				refresh();
-				openSnackbar(true, "Model downloaded");
-			} else if (event.kind === "error") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
-				openSnackbar(false, `Download failed: ${event.message}`);
+		downloadModelApi(modelId).invokePromise.catch((e) => {
+			// starting a download that's already running is harmless - the
+			// progress bar is already driven by backend events
+			if (!String(e).includes("already downloading")) {
+				openSnackbar(false, e);
 			}
-		};
-		invokePromise.catch((e) => {
-			openSnackbar(false, e);
 			refresh();
 		});
 	};

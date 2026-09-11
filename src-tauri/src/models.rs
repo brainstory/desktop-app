@@ -162,7 +162,11 @@ pub struct AppState {
 	pub llm_status: std::sync::Mutex<EngineStatus>,
 	pub stt_status: std::sync::Mutex<EngineStatus>,
 	pub generation_cancel: std::sync::Mutex<Arc<AtomicBool>>,
-	pub downloading: std::sync::Mutex<Vec<String>>,
+	/// model id -> progress percentage for in-flight downloads
+	pub download_progress: std::sync::Mutex<std::collections::HashMap<String, f64>>,
+	/// when the tray icon is hidden, closing the window quits the app
+	/// (otherwise it would keep running with no way to reach it)
+	pub quit_on_close: AtomicBool,
 }
 
 impl AppState {
@@ -174,7 +178,8 @@ impl AppState {
 			llm_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
 			stt_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
 			generation_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
-			downloading: std::sync::Mutex::new(Vec::new()),
+			download_progress: std::sync::Mutex::new(std::collections::HashMap::new()),
+			quit_on_close: AtomicBool::new(false),
 		}
 	}
 

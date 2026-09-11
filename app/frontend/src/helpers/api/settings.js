@@ -27,8 +27,17 @@ export async function getUserSettingsApi() {
 	return {
 		user: user,
 		dailyLog: dailyLogQuestions,
-		notifications: notifications
+		notifications: notifications,
+		presence: {
+			dock: response.presence?.dock ?? true,
+			tray: response.presence?.tray ?? true
+		}
 	};
+}
+
+/** Toggle dock / menu-bar (tray) icon visibility */
+export async function setAppPresenceApi(dock, tray) {
+	return invoke("set_app_presence", { dock, tray });
 }
 
 /** Save user settings */

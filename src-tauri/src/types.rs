@@ -105,11 +105,20 @@ pub struct NotificationSettingsItem {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct UserSettings {
 	pub user: UserSettingsUser,
 	pub log: Vec<LogSettingsItem>,
 	pub notifications: Vec<NotificationSettingsItem>,
+	pub presence: AppPresence,
+}
+
+/// Where the app shows up on the desktop (macOS).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPresence {
+	pub dock: bool,
+	pub tray: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -151,6 +160,11 @@ pub struct ModelStatus {
 	pub size_bytes: u64,
 	pub downloaded: bool,
 	pub active: bool,
+	/// true while a download is in flight
+	pub downloading: bool,
+	/// download progress 0-100, only meaningful while downloading
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub progress: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub filename: Option<String>,
 }

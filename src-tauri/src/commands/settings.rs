@@ -1,8 +1,10 @@
-use tauri::State;
+	use tauri::{Manager, State};
 
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::models::AiSettings;
-use crate::types::{LogSettingsItem, NotificationSettingsItem, UserSettings, UserSettingsUser};
+use crate::types::{
+	AppPresence, LogSettingsItem, NotificationSettingsItem, UserSettings, UserSettingsUser,
+};
 use crate::AppState;
 
 #[tauri::command]
@@ -19,6 +21,18 @@ pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
 		.get_setting("reminder_time")
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| "09:00".into());
+	let presence = AppPresence {
+		dock: state
+			.db
+			.get_setting("show_in_dock")
+			.map(|v| v == "true")
+			.unwrap_or(true),
+		tray: state
+			.db
+			.get_setting("show_in_tray")
+			.map(|v| v == "true")
+			.unwrap_or(true),
+	};
 
 	let enabled_ids = crate::commands::data::enabled_log_ids(&state);
 	let log: Vec<LogSettingsItem> = DEFAULT_LOG_QUESTIONS
@@ -46,6 +60,7 @@ pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
 		user: UserSettingsUser { name, timezone },
 		log,
 		notifications,
+		presence,
 	}
 }
 
@@ -223,4 +238,19 @@ fn encode_tiny_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
 		out.extend_from_slice(&sample.to_le_bytes());
 	}
 	out
+}
+
+/// Toggle dock / menu-bar (tray) icon visibility. Applied immediately and
+/// persisted for future launches.
+#[tauri::command]
+pub fn set_app_presence(
+	app: tauri::AppHandle,
+	state: State<'_, AppState>,
+	dock: bool,
+	tray: bool,
+) -> Result<(), String> {
+	state.db.set_setting("show_in_dock", if dock { "true" } else { "false" });
+	state.db.set_setting("show_in_tray", if tray { "true" } else { "false" });
+	crate::apply_presence(app.app_handle(), dock, tray);
+	Ok(())
 }
