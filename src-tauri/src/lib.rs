@@ -1,11 +1,12 @@
 mod commands;
-pub mod db;
+mod db;
 pub mod llm;
 pub mod models;
 pub mod prompts;
 mod reminders;
 pub mod stt;
-pub mod types;
+mod types;
+pub mod voice;
 
 use chrono::Utc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
@@ -42,6 +43,8 @@ pub fn run() {
 			commands::ai::generate_streaming_response,
 			commands::ai::cancel_generation,
 			commands::ai::send_test_notification,
+			commands::ai::start_voice_capture,
+			commands::ai::stop_voice_capture,
 			commands::settings::get_user_settings,
 			commands::settings::save_user_settings,
 			commands::settings::set_app_presence,

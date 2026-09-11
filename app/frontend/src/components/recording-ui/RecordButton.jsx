@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useContext } from "react";
+import { useState, useEffect, useContext } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
 import { ICON } from "./RecordIcons";
@@ -51,109 +52,31 @@ function RecordButton({
 		}
 	}, [readyToSend]);
 
-	// ---- WAV capture (16 kHz mono PCM, what whisper expects) ----
-
-	// refs so the audio graph survives re-renders
-	const audioContextRef = useRef(null);
-	const mediaStreamRef = useRef(null);
-	const sourceNodeRef = useRef(null);
-	const workletNodeRef = useRef(null);
-	const pcmChunksRef = useRef([]);
+	// ---- Audio capture happens in the Rust process (cpal): the webview's
+	// getUserMedia delivers silent audio in some permission states. ----
 
 	const startWavCapture = async () => {
-		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-		mediaStreamRef.current = stream;
-
-		// requesting 16 kHz avoids resampling in most cases; browsers that
-		// can't honor it will still deliver a resampleable rate
-		const context = new AudioContext({ sampleRate: 16000 });
-		await context.audioWorklet.addModule("/wav-recorder-worklet.js");
-
-		pcmChunksRef.current = [];
-		const worklet = new AudioWorkletNode(context, "pcm-collector");
-		worklet.port.onmessage = (event) => {
-			pcmChunksRef.current.push(event.data);
-		};
-
-		const source = context.createMediaStreamSource(stream);
-		// connect through a muted gain so the graph is pulled but silent
-		const mute = context.createGain();
-		mute.gain.value = 0;
-		source.connect(worklet);
-		worklet.connect(mute);
-		mute.connect(context.destination);
-
-		audioContextRef.current = context;
-		sourceNodeRef.current = source;
-		workletNodeRef.current = worklet;
-	};
-
-	const stopWavCapture = () => {
-		const context = audioContextRef.current;
-		const chunks = pcmChunksRef.current;
-		try {
-			workletNodeRef.current?.disconnect();
-			sourceNodeRef.current?.disconnect();
-			mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-			context?.close();
-		} catch (e) {
-			console.log("error tearing down audio graph", e);
-		}
-		audioContextRef.current = null;
-		sourceNodeRef.current = null;
-		workletNodeRef.current = null;
-		mediaStreamRef.current = null;
-
-		if (!chunks.length) {
+		await invoke("start_voice_capture");
+	};	const stopWavCapture = async () => {
+		const wav = await invoke("stop_voice_capture"); // ArrayBuffer
+		if (!wav || wav.byteLength <= 44) {
 			handleError("no audio captured");
 			return;
 		}
-		const sampleRate = context?.sampleRate || 16000;
-		const blob = encodeWav(chunks, sampleRate);
-		generateTranscript(blob);
-	};
-
-	const encodeWav = (chunks, sampleRate) => {
-		const totalSamples = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-		const buffer = new ArrayBuffer(44 + totalSamples * 2);
-		const view = new DataView(buffer);
-
-		const writeString = (offset, str) => {
-			for (let i = 0; i < str.length; i++) {
-				view.setUint8(offset + i, str.charCodeAt(i));
-			}
-		};
-
-		writeString(0, "RIFF");
-		view.setUint32(4, 36 + totalSamples * 2, true);
-		writeString(8, "WAVE");
-		writeString(12, "fmt ");
-		view.setUint32(16, 16, true);
-		view.setUint16(20, 1, true); // PCM
-		view.setUint16(22, 1, true); // mono
-		view.setUint32(24, sampleRate, true);
-		view.setUint32(28, sampleRate * 2, true);
-		view.setUint16(32, 2, true);
-		view.setUint16(34, 16, true);
-		writeString(36, "data");
-		view.setUint32(40, totalSamples * 2, true);
-
-		let offset = 44;
-		for (const chunk of chunks) {
-			for (let i = 0; i < chunk.length; i++, offset += 2) {
-				const sample = Math.max(-1, Math.min(1, chunk[i]));
-				view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-			}
-		}
-		return new Blob([buffer], { type: "audio/wav" });
+		generateTranscript(new Blob([wav], { type: "audio/wav" }));
 	};
 
 	const handleToggleRecording = async () => {
 		if (isRecording) {
-			stopWavCapture();
 			setIsRecording(false);
 			setWarningType(null);
 			clearTimeout(timer);
+			setStatus("idle");
+			try {
+				await stopWavCapture();
+			} catch (error) {
+				handleError(error);
+			}
 		} else {
 			setStatus("recording");
 			setWarningType(null);
@@ -162,13 +85,14 @@ function RecordButton({
 				setIsRecording(true);
 			} catch (error) {
 				console.error("Error accessing microphone:", error);
+				setErrorMessage(String(error?.message ?? error));
 				setMicPermissionDenied(true);
 				setStatus("idle");
 				return;
 			}
 
 			const recordingTimeout = setTimeout(() => {
-				stopWavCapture();
+				stopWavCapture().catch((error) => handleError(error));
 				setIsRecording(false);
 				setWarningType("timer"); // Set warning when time limit is exceeded
 			}, RECORDING_MAX_DURATION);
@@ -255,8 +179,13 @@ function RecordButton({
 					<div className="text-black text-base">
 						<p>Brainstory can't hear you without your mic!</p>
 						<p>
-							<b>Allow microphone</b> in your system settings{" "}
-							{"and try again"}
+							{errorMessage ? (
+							errorMessage
+						) : (
+							<>
+								<b>Allow microphone</b> in your system settings and try again
+							</>
+						)}
 						</p>
 					</div>
 				</div>

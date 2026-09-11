@@ -83,16 +83,18 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 		// perhaps to the same value but the useEffect is triggered since array variables are pointers to memory
 		// WARNING: this is a bandiad as it doesn't help debug why currConversation might be set twice to the same value
 		if (readyToCreateIdea) {
-			createIdeaApi(result, currConversation, chatType, parentId, dailyLogId).then(
-				(createdIdeaId) => {
+			createIdeaApi(result, currConversation, chatType, parentId, dailyLogId)
+				.then((createdIdeaId) => {
 					console.log("NEW IDEA CREATED", createdIdeaId);
 					setIdeaId(createdIdeaId);
 					let url = new URL(window.location.href);
 					let params = new URLSearchParams(url.search);
 					params.set("id", createdIdeaId);
 					history.pushState(null, null, "?" + params.toString());
-				}
-			);
+				})
+				.catch((err) => {
+					setAiError(`Could not save this session: ${err?.message ?? err}`);
+				});
 		}
 	}, [readyToCreateIdea]);
 
@@ -111,6 +113,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					.catch((e) => {
 						console.log("save failed", e);
 						setSaveState(CHAT_SAVE_STATE.FAILED);
+						setAiError(`Autosave failed: ${e?.message ?? e}`);
 					});
 			} else {
 				console.log("Meets requirements for creating idea to database", currConversation);
@@ -135,8 +138,11 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					// 	chatType = res.type;
 					// }
 					const savedConversation = [...res.transcript];
-					// only set if values are different from db in order to not trigger an extra update to the db
-					if (JSON.stringify(savedConversation) !== JSON.stringify(currConversation)) {
+					// Only adopt the saved transcript if it has more messages than
+					// what we hold locally: restores a resumed draft, but never
+					// clobbers newer messages with a stale fetch (which made
+					// messages visibly vanish mid-session).
+					if (savedConversation.length > currConversation.length) {
 						setCurrConversation(savedConversation);
 						const lastMessage = savedConversation.at(-1);
 						if (lastMessage?.role === "user") {

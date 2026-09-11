@@ -41,6 +41,7 @@ hound = "3"
 thiserror = "2"
 encoding_rs = "0.8"
 libc = "0.2"
+cpal = "0.18"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

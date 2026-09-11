@@ -203,6 +203,19 @@ pub fn cancel_generation(state: State<'_, AppState>) {
 	state.generation_cancel.lock().unwrap().store(true, Ordering::Relaxed);
 }
 
+/// Start capturing microphone audio (Rust-side, bypasses the webview).
+#[tauri::command]
+pub fn start_voice_capture() -> Result<(), String> {
+	crate::voice::start_capture()
+}
+
+/// Stop capturing and return the recording as a 16 kHz mono WAV (raw bytes).
+#[tauri::command]
+pub fn stop_voice_capture() -> Result<tauri::ipc::Response, String> {
+	let wav = crate::voice::stop_capture()?;
+	Ok(tauri::ipc::Response::new(wav))
+}
+
 /// Test notification command, also used to trigger the daily reminder
 /// manually from settings.
 #[tauri::command]

@@ -65,7 +65,7 @@ pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 	};
 
 	// fold channels to mono
-	let mut mono: Vec<f32> = if channels > 1 {
+	let mono: Vec<f32> = if channels > 1 {
 		samples
 			.chunks(channels)
 			.map(|frame| frame.iter().sum::<f32>() / channels as f32)
@@ -74,25 +74,28 @@ pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 		samples
 	};
 
-	// resample to 16 kHz
-	const TARGET_RATE: u32 = 16_000;
-	if sample_rate != TARGET_RATE {
-		let ratio = sample_rate as f64 / TARGET_RATE as f64;
-		let out_len = (mono.len() as f64 / ratio) as usize;
-		let mut resampled = Vec::with_capacity(out_len);
-		let mut src_pos = 0.0f64;
-		for _ in 0..out_len {
-			let i = src_pos.floor() as usize;
-			let frac = src_pos - i as f64;
-			let a = mono.get(i).copied().unwrap_or(0.0);
-			let b = mono.get(i + 1).copied().unwrap_or(a);
-			resampled.push(a + (b - a) * frac as f32);
-			src_pos += ratio;
-		}
-		mono = resampled;
-	}
+	Ok(resample_to_16k(mono, sample_rate))
+}
 
-	Ok(mono)
+/// Naive linear resampling to 16 kHz.
+pub(crate) fn resample_to_16k(mono: Vec<f32>, sample_rate: u32) -> Vec<f32> {
+	const TARGET_RATE: u32 = 16_000;
+	if sample_rate == TARGET_RATE || mono.is_empty() {
+		return mono;
+	}
+	let ratio = f64::from(sample_rate) / f64::from(TARGET_RATE);
+	let out_len = (mono.len() as f64 / ratio) as usize;
+	let mut resampled = Vec::with_capacity(out_len);
+	let mut src_pos = 0.0f64;
+	for _ in 0..out_len {
+		let i = src_pos.floor() as usize;
+		let frac = src_pos - i as f64;
+		let a = mono.get(i).copied().unwrap_or(0.0);
+		let b = mono.get(i + 1).copied().unwrap_or(a);
+		resampled.push(a + (b - a) * frac as f32);
+		src_pos += ratio;
+	}
+	resampled
 }
 
 /// OpenAI-compatible audio transcription endpoint
