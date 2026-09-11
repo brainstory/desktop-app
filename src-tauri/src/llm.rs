@@ -275,6 +275,7 @@ impl ExternalLlm {
 		let mut request = self
 			.client
 			.post(self.completions_url())
+			.header("User-Agent", "brainstory-desktop/0.1")
 			.json(&serde_json::json!({
 				"model": self.model,
 				"messages": body_messages,

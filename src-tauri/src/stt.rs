@@ -120,7 +120,10 @@ pub async fn transcribe_external(
 		.text("response_format", "json")
 		.part("file", part);
 
-	let mut request = reqwest::Client::new().post(url).multipart(form);
+	let mut request = reqwest::Client::new()
+		.post(url)
+		.header("User-Agent", "brainstory-desktop/0.1")
+		.multipart(form);
 	if !api_key.is_empty() {
 		request = request.bearer_auth(api_key);
 	}

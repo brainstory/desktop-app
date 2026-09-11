@@ -1,5 +1,5 @@
 mod commands;
-mod db;
+pub mod db;
 pub mod llm;
 pub mod models;
 pub mod prompts;

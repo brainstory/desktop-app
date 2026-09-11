@@ -139,7 +139,7 @@ impl Db {
 	}
 
 	const IDEA_COLS: &'static str =
-		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, created_at";
+		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";
 
 	pub fn insert_idea(
 		&self,
