@@ -35,7 +35,7 @@ pub fn start_capture() -> Result<(), String> {
 	// coreaudio errors, so fall back through every supported config.
 	let mut build_error: Option<String> = None;
 	let mut built: Option<(cpal::Stream, u32, u16)> = None;
-	let mut candidates: Vec<(cpal::SampleFormat, cpal::StreamConfig)> =
+	let candidates: Vec<(cpal::SampleFormat, cpal::StreamConfig)> =
 		match device.default_input_config() {
 			Ok(default) => {
 				let mut v = vec![(default.sample_format(), default.config())];
