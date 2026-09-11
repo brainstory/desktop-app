@@ -64,14 +64,13 @@ menu.
 ## Development
 
 ```sh
-npm install            # tauri CLI
-npm -C app/frontend install
+pnpm install          # installs the tauri CLI + frontend deps (workspace)
 
-npm run tauri:dev      # dev: astro dev server + debug build
-npm run tauri:build    # release build + bundle (Brainstory.app / dmg)
+pnpm tauri:dev        # dev: astro dev server + debug build
+pnpm tauri:build      # release build + bundle (Brainstory.app / dmg)
 ```
 
-Requirements: Rust, Node >= 24, cmake (brew install cmake ninja), macOS 12+.
+Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12+.
 The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
 `src-tauri/.cargo/config.toml`.
 

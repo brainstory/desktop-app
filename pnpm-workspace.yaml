@@ -1,0 +1,7 @@
+packages:
+  - app/frontend
+
+# esbuild and sharp ship postinstall scripts that pnpm blocks by default
+allowBuilds:
+  esbuild: true
+  sharp: true
