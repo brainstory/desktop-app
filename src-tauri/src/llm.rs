@@ -23,6 +23,10 @@ const GENERATION_IDLE_TIMEOUT_SECS: u64 = 120;
 /// Hard ceiling for one generation as a backstop; large enough that a
 /// healthy max-length result on a slow machine still finishes.
 const GENERATION_MAX_TOTAL_SECS: u64 = 900;
+/// Thinking models (MiniCPM5) emit `<think>` reasoning before the answer;
+/// reasoning tokens don't count against the answer budget but get this
+/// separate allowance so a model reasoning forever can't stall a chat.
+const MAX_THINK_TOKENS: u32 = 4096;
 /// Prompt tokens are decoded in chunks of this size so cancel/timeout
 /// checks stay responsive during long prompts.
 const PROMPT_DECODE_CHUNK: usize = 512;
@@ -259,7 +263,14 @@ impl LocalLlm {
 
 		let mut decoder = encoding_rs::UTF_8.new_decoder();
 		let mut output = String::new();
+		let mut think_filter = ThinkFilter::new();
 		let mut generated: u32 = 0;
+		let mut answer_tokens: u32 = 0;
+		// Absolute backstop across answer + reasoning tokens; can never
+		// overflow the context window regardless of prompt length.
+		let total_cap = max_new
+			.saturating_add(MAX_THINK_TOKENS)
+			.min((N_CTX - 1).saturating_sub(tokens.len() as u32));
 		let mut pos = tokens.len() as i32;
 
 		loop {
@@ -285,12 +296,19 @@ impl LocalLlm {
 				Err(e) => return Err(e.to_string()),
 			};
 			if !piece.is_empty() {
-				on_chunk(piece.clone());
-				output.push_str(&piece);
+				let safe = think_filter.push(&piece);
+				if !safe.is_empty() {
+					// `output` only ever holds think-stripped text, so every
+					// caller (UI stream, stored history, result documents)
+					// sees the final response, never reasoning blocks.
+					output.push_str(&safe);
+					on_chunk(safe);
+					answer_tokens += 1;
+				}
 			}
 			generated += 1;
 			last_progress = std::time::Instant::now();
-			if generated >= max_new {
+			if answer_tokens >= max_new || generated >= total_cap {
 				break;
 			}
 
@@ -303,7 +321,93 @@ impl LocalLlm {
 			pos += 1;
 		}
 
+		let tail = think_filter.finish();
+		if !tail.is_empty() {
+			output.push_str(&tail);
+			on_chunk(tail);
+		}
+
 		Ok(output)
+	}
+}
+
+/// Streaming filter that removes `<think>...</think>` reasoning blocks.
+/// Thinking models (e.g. MiniCPM5) emit their reasoning before the answer;
+/// only the final response should be displayed or stored. Tags can split
+/// across token pieces, so the filter buffers until a tag is confirmed.
+struct ThinkFilter {
+	buffer: String,
+	in_think: bool,
+}
+
+const THINK_OPEN: &str = "<think>";
+const THINK_CLOSE: &str = "</think>";
+
+impl ThinkFilter {
+	fn new() -> Self {
+		Self {
+			buffer: String::new(),
+			in_think: false,
+		}
+	}
+
+	/// Feed one decoded piece; returns whatever is now safe to emit.
+	fn push(&mut self, piece: &str) -> String {
+		self.buffer.push_str(piece);
+		let mut out = String::new();
+		loop {
+			if self.in_think {
+				let Some(i) = self.buffer.find(THINK_CLOSE) else {
+					// Reasoning so far; keep only a tail large enough to
+					// still catch a closing tag split across pieces.
+					let mut cut = self.buffer.len().saturating_sub(THINK_CLOSE.len() - 1);
+					while !self.buffer.is_char_boundary(cut) {
+						cut -= 1;
+					}
+					self.buffer.drain(..cut);
+					break;
+				};
+				self.buffer.drain(..i + THINK_CLOSE.len());
+				self.in_think = false;
+				// The answer starts after the whitespace following the tag.
+				let ws = self.buffer.len() - self.buffer.trim_start().len();
+				self.buffer.drain(..ws);
+				continue;
+			}
+			if let Some(i) = self.buffer.find(THINK_OPEN) {
+				out.push_str(&self.buffer[..i]);
+				self.buffer.drain(..i + THINK_OPEN.len());
+				self.in_think = true;
+				continue;
+			}
+			// Hold back a suffix that could be the start of `<think>`; the
+			// matched bytes are ASCII, so the split point is a boundary.
+			let mut hold = 0;
+			for n in 1..=THINK_OPEN.len().min(self.buffer.len()) {
+				if THINK_OPEN.as_bytes()[..n]
+					== self.buffer.as_bytes()[self.buffer.len() - n..]
+				{
+					hold = n;
+					break;
+				}
+			}
+			let emit_end = self.buffer.len() - hold;
+			out.push_str(&self.buffer[..emit_end]);
+			self.buffer.drain(..emit_end);
+			break;
+		}
+		out
+	}
+
+	/// Flush at end of generation. An unterminated think block was all
+	/// reasoning; a dangling partial open tag stays as literal text.
+	fn finish(&mut self) -> String {
+		if self.in_think {
+			self.buffer.clear();
+			String::new()
+		} else {
+			std::mem::take(&mut self.buffer)
+		}
 	}
 }
 
@@ -507,3 +611,49 @@ fn truncate_body(body: &str) -> String {
 		body.to_string()
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::ThinkFilter;
+
+	fn run(pieces: &[&str]) -> String {
+		let mut filter = ThinkFilter::new();
+		let mut out = String::new();
+		for piece in pieces {
+			out.push_str(&filter.push(piece));
+		}
+		out.push_str(&filter.finish());
+		out
+	}
+
+	#[test]
+	fn plain_text_passes_through() {
+		assert_eq!(run(&["hello ", "world"]), "hello world");
+	}
+
+	#[test]
+	fn leading_think_block_is_stripped() {
+		assert_eq!(run(&["<think>\nplan\n</think>\n\nHello!"]), "Hello!");
+	}
+
+	#[test]
+	fn tags_split_across_pieces() {
+		assert_eq!(run(&["<th", "ink>reasoning</thi", "nk>ans", "wer"]), "answer");
+	}
+
+	#[test]
+	fn unterminated_think_is_dropped() {
+		assert_eq!(run(&["<think>half a thought, genera"]), "");
+	}
+
+	#[test]
+	fn partial_open_tag_stays_literal() {
+		assert_eq!(run(&["a < b", " and c"]), "a < b and c");
+	}
+
+	#[test]
+	fn think_mid_answer_is_stripped() {
+		assert_eq!(run(&["Wait. <think>reconsider</think> Done."]), "Wait. Done.");
+	}
+}
+

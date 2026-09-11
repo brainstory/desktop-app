@@ -143,6 +143,7 @@ pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
 		"llmMode": s.llm_mode,
 		"llmModel": s.llm_model,
 		"sttModel": s.stt_model,
+		"hfToken": s.hf_token,
 		"extLlmBaseUrl": s.ext_llm_base_url,
 		"extLlmApiKey": s.ext_llm_api_key,
 		"extLlmModel": s.ext_llm_model,
@@ -171,6 +172,7 @@ pub fn save_ai_settings(
 		settings.stt_model = v;
 	}
 	for key in [
+		"hfToken",
 		"extLlmBaseUrl",
 		"extLlmApiKey",
 		"extLlmModel",
@@ -180,6 +182,7 @@ pub fn save_ai_settings(
 	] {
 		if let Some(v) = get_str(key) {
 			match key {
+				"hfToken" => settings.hf_token = v,
 				"extLlmBaseUrl" => settings.ext_llm_base_url = v,
 				"extLlmApiKey" => settings.ext_llm_api_key = v,
 				"extLlmModel" => settings.ext_llm_model = v,

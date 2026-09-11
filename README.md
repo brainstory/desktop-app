@@ -28,12 +28,16 @@ desktop-app/
 
 First launch (or from **Profile → AI Models**), download:
 
-- **LLM** — Google Gemma 4 E2B (QAT 4-bit GGUF, ~3.3 GB, default) or Gemma 4 E4B (~4.6 GB).
+- **LLM** — Google Gemma 4 E2B (QAT 4-bit GGUF, ~3.3 GB, default), Gemma 4 E4B
+  (QAT 4-bit, ~5.2 GB), or MiniCPM5 2B (~1.6 GB) for lighter machines.
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
-- **STT** — whisper.cpp base.en (~148 MB, default) or small.en (~488 MB).
+- **STT** — whisper.cpp tiny.en (~78 MB), base.en (~148 MB, default), small.en
+  (~488 MB), or large-v3-turbo (~1.6 GB).
 
 Downloads are verified against pinned file sizes and SHA-256 hashes before
 being activated, so a truncated or corrupted transfer can't brick a model slot.
+Optionally paste a HuggingFace access token (Profile → AI Models) —
+authenticated downloads are faster and never hit anonymous rate limits.
 
 Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 

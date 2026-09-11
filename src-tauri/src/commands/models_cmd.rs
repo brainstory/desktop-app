@@ -118,6 +118,7 @@ pub async fn download_model(
 	let app_handle = app.clone();
 	let dest = state.model_path(&spec);
 	let url = model_url(&spec);
+	let hf_token = AiSettings::load(&state.db).hf_token;
 
 	tauri::async_runtime::spawn(async move {
 		let _guard = DownloadGuard {
@@ -144,6 +145,7 @@ pub async fn download_model(
 				&dest,
 				spec.size_bytes,
 				spec.sha256,
+				&hf_token,
 				&cancel,
 				&mut on_progress,
 			)

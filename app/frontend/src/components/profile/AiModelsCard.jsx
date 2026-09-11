@@ -275,6 +275,34 @@ export function AiModelsCard({ openSnackbar }) {
 					/>
 				</div>
 				{settings.llmMode !== "external" && models.llm.map(renderModelRow)}
+				{settings.llmMode !== "external" && (
+					<div className="border border-stone-200 rounded-lg p-4 text-sm">
+						<p className="font-semibold mb-1">HuggingFace access token (optional)</p>
+						<p className="text-stone-500 mb-2">
+							Authenticated downloads are faster and never hit HuggingFace's
+							anonymous rate limits. Create a free read token at
+							huggingface.co/settings/tokens.
+						</p>
+						<div className="flex gap-2">
+							<input
+								type="password"
+								value={settings.hfToken ?? ""}
+								onChange={updateField("hfToken")}
+								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 p-2"
+								placeholder="hf_..."
+							/>
+							<PinkButton
+								onClick={() =>
+									saveAiSettingsApi(settings)
+										.then(() => openSnackbar(true, "Token saved"))
+										.catch((e) => openSnackbar(false, e))
+								}
+							>
+								Save Token
+							</PinkButton>
+						</div>
+					</div>
+				)}
 			</div>
 
 			<hr className="my-6 border-stone-200" />
