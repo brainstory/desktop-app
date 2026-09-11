@@ -30,7 +30,10 @@ First launch (or from **Profile → AI Models**), download:
 
 - **LLM** — Google Gemma 4 E2B (QAT 4-bit GGUF, ~3.3 GB, default) or Gemma 4 E4B (~4.6 GB).
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
-- **STT** — whisper.cpp base.en (~148 MB, default) or small.en (~466 MB).
+- **STT** — whisper.cpp base.en (~148 MB, default) or small.en (~488 MB).
+
+Downloads are verified against pinned file sizes and SHA-256 hashes before
+being activated, so a truncated or corrupted transfer can't brick a model slot.
 
 Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 

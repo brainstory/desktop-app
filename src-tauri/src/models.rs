@@ -25,6 +25,9 @@ pub struct ModelSpec {
 	pub repo: &'static str,
 	pub filename: &'static str,
 	pub size_bytes: u64,
+	/// Pinned sha256 of the downloadable file, verified after download so a
+	/// corrupted or silently-replaced upstream file can't brick a model slot.
+	pub sha256: &'static str,
 }
 
 /// Known-good open model builds. The local LLM catalog defaults to Google's
@@ -39,6 +42,7 @@ pub const LLM_MODELS: [ModelSpec; 2] = [
 		repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
 		filename: "gemma-4-E2B_q4_0-it.gguf",
 		size_bytes: 3_349_516_256,
+		sha256: "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
 	},
 	ModelSpec {
 		id: "gemma-4-E4B",
@@ -48,6 +52,7 @@ pub const LLM_MODELS: [ModelSpec; 2] = [
 		repo: "ggml-org/gemma-4-E4B-it-GGUF",
 		filename: "gemma-4-E4B-it-Q4_0.gguf",
 		size_bytes: 4_590_807_392,
+		sha256: "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
 	},
 ];
 
@@ -59,7 +64,8 @@ pub const STT_MODELS: [ModelSpec; 2] = [
 		description: "whisper.cpp ggml base English model (~148 MB). Fast and light.",
 		repo: "ggerganov/whisper.cpp",
 		filename: "ggml-base.en.bin",
-		size_bytes: 147_951_485,
+		size_bytes: 147_964_211,
+		sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
 	},
 	ModelSpec {
 		id: "whisper-small-en",
@@ -69,6 +75,7 @@ pub const STT_MODELS: [ModelSpec; 2] = [
 		repo: "ggerganov/whisper.cpp",
 		filename: "ggml-small.en.bin",
 		size_bytes: 487_614_201,
+		sha256: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
 	},
 ];
 
@@ -361,13 +368,20 @@ pub fn model_url(spec: &ModelSpec) -> String {
 /// Stream a model file to disk, reporting progress through `on_progress`
 /// (percentage 0-100). Verifies the download completed fully before moving
 /// it into place; the `.part` file is removed on any failure.
+/// Stream a model file to disk, reporting progress through `on_progress`
+/// (percentage 0-100). Verifies the download completed fully and matches
+/// the pinned sha256 before moving it into place; the `.part` file is
+/// removed on any failure.
 pub async fn download_model_file(
 	url: &str,
 	dest: &Path,
 	expected_size: u64,
+	expected_sha256: &str,
 	cancel: &AtomicBool,
 	on_progress: &mut (impl FnMut(f64) + Send),
 ) -> Result<(), String> {
+	use sha2::{Digest, Sha256};
+
 	let tmp = dest.with_extension("part");
 	if tmp.exists() {
 		tokio::fs::remove_file(&tmp)
@@ -396,6 +410,9 @@ pub async fn download_model_file(
 		.await
 		.map_err(|e| e.to_string())?;
 	use tokio::io::AsyncWriteExt;
+	// Hash chunks as they are written so verification costs no extra pass
+	// over a multi-gigabyte file.
+	let mut hasher = (!expected_sha256.is_empty()).then(Sha256::new);
 
 	// Every failure path below removes the partial file, so a retry starts
 	// clean instead of leaving gigabytes of junk behind.
@@ -413,6 +430,9 @@ pub async fn download_model_file(
 				Ok(Some(Err(e))) => return Err(format!("download interrupted: {e}")),
 				Ok(None) => break,
 			};
+			if let Some(hasher) = hasher.as_mut() {
+				hasher.update(&chunk);
+			}
 			file.write_all(&chunk).await.map_err(|e| e.to_string())?;
 			downloaded += chunk.len() as u64;
 			if downloaded - last_report > 2_000_000 || downloaded == total {
@@ -437,6 +457,14 @@ pub async fn download_model_file(
 			return Err(format!(
 				"download size mismatch (got {downloaded} bytes, expected {expected_size}) - please retry"
 			));
+		}
+		if let Some(hasher) = hasher.take() {
+			let actual = format!("{:x}", hasher.finalize());
+			if !actual.eq_ignore_ascii_case(expected_sha256) {
+				return Err(format!(
+					"download failed its integrity check (sha256 {actual}) - the file was corrupted in transit or changed upstream; please retry"
+				));
+			}
 		}
 		Ok(())
 	}

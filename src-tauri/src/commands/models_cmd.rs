@@ -139,8 +139,15 @@ pub async fn download_model(
 					json!({ "modelId": model_id, "kind": "progress", "pct": pct }),
 				);
 			};
-			let result =
-				download_model_file(&url, &dest, spec.size_bytes, &cancel, &mut on_progress).await;
+			let result = download_model_file(
+				&url,
+				&dest,
+				spec.size_bytes,
+				spec.sha256,
+				&cancel,
+				&mut on_progress,
+			)
+			.await;
 
 			match result {
 				Ok(()) => {

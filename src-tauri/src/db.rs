@@ -41,6 +41,21 @@ fn today_local() -> NaiveDate {
 	NaiveDate::from_ymd_opt(local.year(), local.month(), local.day()).unwrap()
 }
 
+/// The local calendar day a UTC timestamp falls on. Computed at write time
+/// so each activity's day is frozen under the timezone it happened in
+/// (traveling later must not rewrite history).
+fn local_date_for(utc: &str) -> String {
+	let date = chrono::NaiveDateTime::parse_from_str(utc, "%Y-%m-%dT%H:%M:%S")
+		.ok()
+		.map(|naive| {
+			chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+				.with_timezone(&chrono::Local)
+				.date_naive()
+		})
+		.unwrap_or_else(today_local);
+	date.format("%Y-%m-%d").to_string()
+}
+
 const BASELINE_SCHEMA: &str = "
 	CREATE TABLE IF NOT EXISTS settings (
 		key TEXT PRIMARY KEY,
@@ -84,10 +99,12 @@ const BASELINE_SCHEMA: &str = "
 /// Schema history, tracked via `PRAGMA user_version`:
 ///   1: baseline tables + one-time strip of legacy trailing-Z timestamps
 ///   2: `daily.created_at` column + lookup indexes
+///   3: `local_date` columns on ideas/log_entries/surveys, freezing each
+///      activity's local calendar day at write time
 /// A database created before this framework exists reports version 0 and is
 /// brought forward through every step (the CREATE IF NOT EXISTS statements
 /// make step 1 a no-op for its tables).
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 impl Db {
 	pub fn open(path: &Path) -> rusqlite::Result<Self> {
@@ -120,6 +137,22 @@ impl Db {
 				 CREATE INDEX IF NOT EXISTS idx_ideas_share ON ideas(share_id);
 				 CREATE INDEX IF NOT EXISTS idx_daily_intent ON daily(intent_idea_id);",
 			)?;
+		}
+		if version < 3 {
+			// Activity days used to be re-derived from UTC timestamps at
+			// read time, so history silently shifted after a timezone
+			// change while `daily.date` rows stayed frozen. Freeze the
+			// local day at write time instead; the backfill freezes
+			// existing rows using the current zone (the best guess
+			// available for historical data).
+			for table in ["ideas", "log_entries", "surveys"] {
+				if !Self::table_has_column(&conn, table, "local_date")? {
+					conn.execute_batch(&format!(
+						"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';
+						 UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime'));"
+					))?;
+				}
+			}
 		}
 		conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 		Ok(Self {
@@ -294,9 +327,11 @@ impl Db {
 	) -> Result<(), String> {
 		let transcript_json = serde_json::to_string(transcript).unwrap_or_else(|_| "[]".into());
 		let structured_json = structured_result.map(|v| v.to_string());
+		let now = now_iso();
+		let created_at = created_at.unwrap_or(&now);
 		conn.execute(
-			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13)",
+			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at, local_date)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14)",
 			params![
 				id,
 				title,
@@ -310,7 +345,8 @@ impl Db {
 				creator_name,
 				creator_email,
 				share_id,
-				created_at.unwrap_or(&now_iso()),
+				created_at,
+				local_date_for(created_at),
 			],
 		)
 		.map_err(|e| format!("failed to save idea: {e}"))?;
@@ -612,8 +648,8 @@ impl Db {
 		let today = today_local().format("%Y-%m-%d").to_string();
 		self.with_tx(|conn| {
 			conn.execute(
-				"INSERT INTO log_entries (id, answers, created_at) VALUES (?1, ?2, ?3)",
-				params![id, json, now_iso()],
+				"INSERT INTO log_entries (id, answers, created_at, local_date) VALUES (?1, ?2, ?3, ?4)",
+				params![id, json, now_iso(), today],
 			)
 			.map_err(|e| format!("failed to save daily log: {e}"))?;
 			conn.execute(
@@ -660,15 +696,17 @@ impl Db {
 		let today = today_local().format("%Y-%m-%d").to_string();
 		self.with_tx(|conn| {
 			conn.execute(
-				"INSERT INTO surveys (id, idea_id, answers, created_at) VALUES (?1, ?2, ?3, ?4)",
-				params![id, idea_id, answers.to_string(), now_iso()],
+				"INSERT INTO surveys (id, idea_id, answers, created_at, local_date) VALUES (?1, ?2, ?3, ?4, ?5)",
+				params![id, idea_id, answers.to_string(), now_iso(), today],
 			)
 			.map_err(|e| format!("failed to save survey: {e}"))?;
-			// Note: submitting the end-of-day survey marks the day completed.
-			// This is deliberate - reflecting on the day closes it out.
+			// Note: a survey does NOT complete the day. is_completed means
+			// "today's daily intent was finished" (the dashboard's intent
+			// status card reads it); reflecting on the day is recorded via
+			// survey_id and counts toward the streak on its own.
 			conn.execute(
-				"INSERT INTO daily (date, survey_id, is_completed) VALUES (?1, ?2, 1)
-				 ON CONFLICT(date) DO UPDATE SET survey_id = ?2, is_completed = 1",
+				"INSERT INTO daily (date, survey_id) VALUES (?1, ?2)
+				 ON CONFLICT(date) DO UPDATE SET survey_id = ?2",
 				params![today, id],
 			)
 			.map_err(|e| format!("failed to save survey: {e}"))?;
@@ -702,12 +740,11 @@ impl Db {
 	/// True if any idea, log or survey was recorded today (local time) -
 	/// used to skip the daily reminder on already-active days.
 	pub fn has_activity_today(&self) -> bool {
+		let today = today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		for table in ["ideas", "log_entries", "surveys"] {
-			let sql = format!(
-				"SELECT EXISTS(SELECT 1 FROM {table} WHERE date(created_at, 'localtime') = date('now', 'localtime'))"
-			);
-			if let Ok(1) = conn.query_row(&sql, [], |row| row.get::<_, i64>(0)) {
+			let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE local_date = ?1)");
+			if let Ok(1) = conn.query_row(&sql, params![today], |row| row.get::<_, i64>(0)) {
 				return true;
 			}
 		}
@@ -737,13 +774,12 @@ impl Db {
 			row.unwrap_or((None, None, None, false));
 
 		// Streak = consecutive days with any activity (an idea created, a log
-		// or survey submitted, or a completed daily intent). Timestamps are
-		// stored in UTC; SQLite's 'localtime' modifier converts them to the
-		// local calendar day (same tz database chrono::Local uses), so late
-		// evening sessions land on the correct day.
+		// or survey submitted, or a completed daily intent). Each activity's
+		// local calendar day was frozen at write time (local_date), so the
+		// history is stable across timezone changes.
 		let mut activity: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
 		for table in ["ideas", "log_entries", "surveys"] {
-			let sql = format!("SELECT DISTINCT date(created_at, 'localtime') FROM {table}");
+			let sql = format!("SELECT DISTINCT local_date FROM {table} WHERE local_date != ''");
 			let mut stmt = match conn.prepare(&sql) {
 				Ok(s) => s,
 				Err(_) => continue,
@@ -805,5 +841,86 @@ impl Db {
 			is_completed,
 			streak,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn temp_db_path() -> std::path::PathBuf {
+		std::env::temp_dir().join(format!("brainstory-db-test-{}.db", uuid::Uuid::new_v4()))
+	}
+
+	#[test]
+	fn survey_does_not_complete_the_daily_intent() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.insert_survey("s1", None, &serde_json::json!({ "focused": 3 }))
+			.unwrap();
+		let status = db.get_daily_status();
+		assert!(
+			!status.is_completed,
+			"a survey alone must not complete the daily intent"
+		);
+		assert_eq!(status.survey_id.as_deref(), Some("s1"));
+		assert_eq!(status.streak, 1, "the survey still counts as activity");
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn generating_the_intent_result_completes_the_day() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		// draft intent: recorded but not completed
+		db.create_daily_intent_idea("i1", "T", "", &[], &serde_json::json!({}))
+			.unwrap();
+		assert!(!db.get_daily_status().is_completed);
+		// an intent created with its result already present completes the day
+		db.create_daily_intent_idea("i2", "T", "## Result", &[], &serde_json::json!({}))
+			.unwrap();
+		assert!(db.get_daily_status().is_completed);
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn migrates_v2_database_and_backfills_local_date() {
+		let path = temp_db_path();
+		{
+			// a database exactly as schema version 2 left it: daily has
+			// created_at, activity tables have no local_date
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(BASELINE_SCHEMA).unwrap();
+			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+				.unwrap();
+			conn.execute_batch(
+				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
+			)
+			.unwrap();
+			conn.pragma_update(None, "user_version", 2).unwrap();
+		}
+		let db = Db::open(&path).expect("migrate v2 -> v3");
+		{
+			let conn = db.lock();
+			let version: i64 = conn
+				.query_row("PRAGMA user_version", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(version, SCHEMA_VERSION);
+			let local_date: String = conn
+				.query_row("SELECT local_date FROM ideas WHERE id = 'old'", [], |r| {
+					r.get(0)
+				})
+				.unwrap();
+			assert_eq!(
+				local_date.len(),
+				10,
+				"backfilled as YYYY-MM-DD: {local_date}"
+			);
+			assert_ne!(local_date, "", "backfill is not empty");
+		}
+		// yesterday's idea counts via its frozen local date; today without
+		// activity doesn't break the streak
+		assert!(db.get_daily_status().streak >= 1);
+		std::fs::remove_file(path).ok();
 	}
 }
