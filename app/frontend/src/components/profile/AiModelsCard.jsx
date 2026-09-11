@@ -184,12 +184,40 @@ export function AiModelsCard({ openSnackbar }) {
 		!settings.extLlmBaseUrl;
 	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl;
 
+	const usingExternalLlm = settings.llmMode === "external";
+	const usingExternalStt = !!settings.extSttBaseUrl;
+	const activeLlmLabel = usingExternalLlm
+		? `External endpoint ${settings.extLlmBaseUrl} (${settings.extLlmModel || "default model"})`
+		: (() => {
+				const active = models.llm.find((m) => m.active);
+				if (active?.downloaded) return `Local ${active.label} (ready)`;
+				if (active) return `Local ${active.label} (not downloaded yet)`;
+				return "Local model (none selected)";
+		  })();
+	const activeSttLabel = usingExternalStt
+		? `External endpoint ${settings.extSttBaseUrl}`
+		: (() => {
+				const active = models.stt.find((m) => m.active);
+				if (active?.downloaded) return `Local ${active.label} (ready)`;
+				if (active) return `Local ${active.label} (not downloaded yet)`;
+				return "Local model (none selected)";
+		  })();
+
 	return (
 		<Card
 			title="AI Models"
 			subtitle="Everything runs locally on this machine. You can also offload to an external OpenAI-compatible endpoint."
 			columns={3}
 		>
+			<div className="mb-4 bg-stone-100 border border-stone-200 rounded-lg p-4 text-sm">
+				<p className="font-semibold mb-1">What's being used right now</p>
+				<p>
+					<span className="font-medium">Brainstorming:</span> {activeLlmLabel}
+				</p>
+				<p>
+					<span className="font-medium">Speech-to-text:</span> {activeSttLabel}
+				</p>
+			</div>
 			{needsLlm && (
 				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
 					<p className="font-semibold mb-1">No language model is set up yet</p>

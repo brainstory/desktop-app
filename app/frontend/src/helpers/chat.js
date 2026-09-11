@@ -62,7 +62,8 @@ export const removeLastConversationMessage = (conversation, setConversation) => 
 export const handleWebsocketStreamResult = async (
 	generateResultStream,
 	updateMessage,
-	successCallbacks
+	successCallbacks,
+	onError
 ) => {
 	const { channel, invokePromise } = generateResultStream();
 	let message = "";
@@ -85,6 +86,9 @@ export const handleWebsocketStreamResult = async (
 		successCallbacks(message, result?.structured_result ?? null);
 	} catch (err) {
 		console.log("streaming result failed", err);
+		if (onError) {
+			onError(err);
+		}
 	}
 };
 

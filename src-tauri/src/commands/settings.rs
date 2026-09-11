@@ -196,6 +196,12 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	if output.trim().is_empty() && !got_any {
 		return Err("endpoint responded with an empty reply".into());
 	}
+	if settings.llm_mode != "external" {
+		return Ok(format!(
+			"endpoint OK ({}) - but chats still use the local model. Turn on 'Use external LLM endpoint' above to route chats here.",
+			settings.ext_llm_base_url
+		));
+	}
 	Ok(format!("endpoint OK ({})", settings.ext_llm_base_url))
 }
 
