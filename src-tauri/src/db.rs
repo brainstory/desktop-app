@@ -517,32 +517,69 @@ impl Db {
 			.flatten();
 		let (log_id, intent_idea_id, survey_id, is_completed) =
 			row.unwrap_or((None, None, None, false));
+		drop(conn);
 
-		// streak: count consecutive completed days walking back from today.
-		// today not being complete yet doesn't break the streak.
-		let mut streak = 0i64;
-		let mut day = today_local();
-		if !is_completed {
-			day = day.pred_opt().unwrap_or(day);
-		}
-		for _ in 0..3660 {
-			let key = day.format("%Y-%m-%d").to_string();
-			let done: Option<bool> = conn
-				.query_row(
-					"SELECT is_completed FROM daily WHERE date = ?1",
-					params![key],
-					|row| Ok(row.get::<_, i64>(0)? != 0),
-				)
-				.optional()
-				.ok()
-				.flatten();
-			match done {
-				Some(true) => {
-					streak += 1;
-					day = day.pred_opt().unwrap_or(day);
+		// Streak = consecutive days with any activity (an idea created, a log
+		// or survey submitted, or a completed daily intent). Timestamps are
+		// stored in UTC, so convert to the local calendar day before
+		// comparing - otherwise late-evening sessions land on the wrong day.
+		let mut activity: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
+		{
+			let conn = self.conn.lock().unwrap();
+			for table in ["ideas", "log_entries", "surveys"] {
+				let mut stmt = match conn.prepare(&format!("SELECT created_at FROM {table}")) {
+					Ok(s) => s,
+					Err(_) => continue,
+				};
+				let dates: Vec<String> = stmt
+					.query_map([], |row| row.get(0))
+					.map(|rows| rows.filter_map(|r| r.ok()).collect())
+					.unwrap_or_default();
+				for ts in dates {
+					if let Ok(utc) =
+						chrono::NaiveDateTime::parse_from_str(&ts, "%Y-%m-%dT%H:%M:%S")
+					{
+						activity.insert(
+							chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+								utc,
+								chrono::Utc,
+							)
+							.with_timezone(&chrono::Local)
+							.date_naive(),
+						);
+					}
 				}
-				_ => break,
 			}
+			let mut stmt = match conn
+				.prepare("SELECT date FROM daily WHERE is_completed = 1")
+			{
+				Ok(s) => s,
+				Err(_) => return DailyStatus { log_id, intent_idea_id, survey_id, is_completed, streak: 0 },
+			};
+			let days: Vec<String> = stmt
+				.query_map([], |row| row.get(0))
+				.map(|rows| rows.filter_map(|r| r.ok()).collect())
+				.unwrap_or_default();
+			for day in days {
+				if let Some(d) = NaiveDate::parse_from_str(&day, "%Y-%m-%d").ok() {
+					activity.insert(d);
+				}
+			}
+		}
+
+		// Walk back from today; if today has no activity yet the streak
+		// isn't broken (it continues from yesterday).
+		let mut streak = 0i64;
+		let mut day = Some(today_local());
+		if day.map(|d| !activity.contains(&d)).unwrap_or(true) {
+			day = day.and_then(|d| d.pred_opt());
+		}
+		while let Some(d) = day {
+			if !activity.contains(&d) {
+				break;
+			}
+			streak += 1;
+			day = d.pred_opt();
 		}
 
 		DailyStatus { log_id, intent_idea_id, survey_id, is_completed, streak }

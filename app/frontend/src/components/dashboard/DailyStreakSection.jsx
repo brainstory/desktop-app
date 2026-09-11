@@ -48,9 +48,11 @@ export default function DailyStreakSection() {
 						class="w-6 h-6 hydrated pointer-events-none fill-red-500"
 						name="flame"
 					></ion-icon>
-					<p className="font-bold tracking-wide text-xl text-nowrap">{streakCount} day</p>
+					<p className="font-bold tracking-wide text-xl text-nowrap">
+						{streakCount} {streakCount === 1 ? "day" : "days"}
+					</p>
 				</div>
-				<p className="text-stone-500 text-sm text-nowrap">Daily Intent Streak</p>
+				<p className="text-stone-500 text-sm text-nowrap">Streak</p>
 			</div>
 			<div className="hidden lg:block h-8 w-[1px] bg-stone-400" />
 			<div className="">{renderTodayStatus()}</div>
