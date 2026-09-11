@@ -20,7 +20,9 @@ pub struct Db {
 }
 
 fn now_iso() -> String {
-	Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+	// naive UTC without a trailing Z, matching what the frontend expects
+	// (helpers/formatISO8601ToHumanReadable appends the Z itself)
+	Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
 fn today_local() -> NaiveDate {
@@ -71,6 +73,14 @@ impl Db {
 				survey_id TEXT,
 				is_completed INTEGER NOT NULL DEFAULT 0
 			);",
+		)?;
+		// Earlier builds stored timestamps with a trailing Z; the frontend
+		// appends the Z itself, so strip it from anything already stored.
+		conn.execute_batch(
+			"UPDATE ideas SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
+			 UPDATE log_entries SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
+			 UPDATE surveys SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
+			 UPDATE settings SET value = substr(value, 1, 19) WHERE key = 'created_at' AND value LIKE '%Z';",
 		)?;
 		Ok(Self { conn: Mutex::new(conn) })
 	}

@@ -1,7 +1,23 @@
+import { useState } from "react";
 import { formatISO8601ToHumanReadable } from "../../helpers/helpers";
+import { deleteIdeaApi } from "@helpers/api/idea";
 
 export default function DraftIdeaCard({ id, createdAt, draftSummary }) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt);
+	const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+	const handleDelete = (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (!confirmingDelete) {
+			setConfirmingDelete(true);
+			setTimeout(() => setConfirmingDelete(false), 5000);
+			return;
+		}
+		deleteIdeaApi(id)
+			.then(() => window.location.reload())
+			.catch((err) => console.log("delete failed", err));
+	};
 
 	return (
 		<div className="relative h-auto w-80 sm:w-[275px] max-w-sm p-6 bg-white border-2 border-pink-200 rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform">
@@ -29,6 +45,21 @@ export default function DraftIdeaCard({ id, createdAt, draftSummary }) {
 					{draftSummary}
 				</p>
 			</a>
+			<button
+				onClick={handleDelete}
+				aria-label="Delete draft"
+				className={`absolute top-2 right-2 p-1.5 rounded-full text-xs font-semibold ${
+					confirmingDelete
+						? "text-red-600 bg-red-50"
+						: "text-stone-300 hover:text-red-500 hover:bg-stone-50"
+				}`}
+			>
+				{confirmingDelete ? (
+					"Really delete?"
+				) : (
+					<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
+				)}
+			</button>
 		</div>
 	);
 }
