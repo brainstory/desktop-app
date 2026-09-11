@@ -6,7 +6,7 @@ use std::sync::Arc;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::llama_backend::LlamaBackend;
 
@@ -36,10 +36,24 @@ impl LocalLlm {
 	}
 
 	fn apply_template(&self, system: &str, messages: &[ChatMessage]) -> Result<String, String> {
-		let template: LlamaChatTemplate = self
-			.model
-			.chat_template(None)
-			.map_err(|e| format!("model has no chat template: {e}"))?;
+		// Models without a built-in chat template (e.g. tiny test models) fall
+		// back to plain concatenation.
+		let template = match self.model.chat_template(None) {
+			Ok(t) => t,
+			Err(_) => {
+				let mut prompt = String::new();
+				if !system.trim().is_empty() {
+					prompt.push_str(system.trim());
+					prompt.push_str("\n\n");
+				}
+				for msg in messages {
+					let role = if msg.role == "assistant" { "Assistant" } else { "User" };
+					prompt.push_str(&format!("{role}: {}\n", msg.content));
+				}
+				prompt.push_str("Assistant:");
+				return Ok(prompt);
+			}
+		};
 
 		let mut chat: Vec<LlamaChatMessage> = Vec::new();
 		if !system.trim().is_empty() {
@@ -149,10 +163,17 @@ impl LocalLlm {
 			if self.model.is_eog_token(token) {
 				break;
 			}
-			let piece = self
+			let piece = match self
 				.model
 				.token_to_piece(token, &mut decoder, false, None)
-				.map_err(|e| e.to_string())?;
+			{
+				Ok(piece) => piece,
+				// a token with no text piece is not an error; feed it back
+				Err(llama_cpp_2::TokenToStringError::UnknownTokenType) => {
+					String::new()
+				}
+				Err(e) => return Err(e.to_string()),
+			};
 			if !piece.is_empty() {
 				on_chunk(piece.clone());
 				output.push_str(&piece);

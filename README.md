@@ -67,7 +67,9 @@ menu.
 pnpm install          # installs the tauri CLI + frontend deps (workspace)
 
 pnpm tauri:dev        # dev: astro dev server + debug build
-pnpm tauri:build      # release build + bundle (Brainstory.app / dmg)
+pnpm tauri:build      # release build + .app + DMG (via scripts/make-dmg.sh,
+                      # using plain hdiutil - tauri's own dmg bundler needs
+                      # AppleScript control of Finder and fails headless)
 ```
 
 Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12+.
@@ -79,6 +81,11 @@ Data locations (macOS): `~/Library/Application Support/ai.brainstory.desktop/`
 
 ## Notes / shortcuts taken
 
+- whisper.cpp and llama.cpp each vendor their own ggml, so the link emits
+  duplicate-symbol warnings; this is verified harmless by the
+  `engine_smoke` integration test (`WHISPER_MODEL_PATH=... LLM_MODEL_PATH=...
+  cargo test --release --test engine_smoke`), which runs both engines in one
+  process. The lint is suppressed in the binary.
 - HTTP 469 ("inappropriate input") moderation from the original backend is not
   implemented locally; some external providers' content-filter errors map to it.
 - The daily-intent/context interview prompt is the original one; the other prompts

@@ -1,11 +1,11 @@
 mod commands;
 mod db;
-mod llm;
-mod models;
-mod prompts;
+pub mod llm;
+pub mod models;
+pub mod prompts;
 mod reminders;
-mod stt;
-mod types;
+pub mod stt;
+pub mod types;
 
 use chrono::Utc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};

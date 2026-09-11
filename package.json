@@ -8,7 +8,7 @@
 		"preview": "pnpm -C app/frontend preview",
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
-		"tauri:build": "tauri build"
+		"tauri:build": "tauri build --bundles app && bash scripts/make-dmg.sh"
 	},
 	"devDependencies": {
 		"@tauri-apps/cli": "^2"
