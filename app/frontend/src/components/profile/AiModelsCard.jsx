@@ -156,6 +156,11 @@ export function AiModelsCard({ openSnackbar }) {
 
 	const llmStatus = runtime.llm ?? {};
 	const sttStatus = runtime.stt ?? {};
+	const needsLlm =
+		llmStatus.state === "missing" &&
+		settings.llmMode !== "external" &&
+		!settings.extLlmBaseUrl;
+	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl;
 
 	return (
 		<Card
@@ -163,6 +168,26 @@ export function AiModelsCard({ openSnackbar }) {
 			subtitle="Everything runs locally on this machine. You can also offload to an external OpenAI-compatible endpoint."
 			columns={3}
 		>
+			{needsLlm && (
+				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
+					<p className="font-semibold mb-1">No language model is set up yet</p>
+					<p>
+						Brainstorming needs an AI brain: download one of the models below
+						(recommended: the light Gemma 4), or point at an external endpoint at
+						the bottom of this page.
+					</p>
+				</div>
+			)}
+			{needsStt && (
+				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
+					<p className="font-semibold mb-1">No speech-to-text model is set up yet</p>
+					<p>
+						Download a whisper model below (or configure an external STT endpoint)
+						to talk out loud. Until then you can still use Brainstory by typing
+						your responses with the text button in a session.
+					</p>
+				</div>
+			)}
 			<div className="flex flex-col gap-3">
 				<div className="flex justify-between items-center">
 					<h3 className="font-semibold">Language model (brainstorming & writeups)</h3>

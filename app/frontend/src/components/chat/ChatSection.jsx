@@ -59,6 +59,8 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 	const [saveState, setSaveState] = useState(CHAT_SAVE_STATE.WAITING);
 	/** true if close mic permissions modal */
 	const [isMicPermissionModalClose, setIsMicPermissionModalClose] = useState(false);
+	/** error from the AI layer that is not the 469 resend case (e.g. no model downloaded) */
+	const [aiError, setAiError] = useState(null);
 
 	let firstPrompt = getFirstPrompt(chatType);
 	const localStoreConversation = JSON.parse(localStorage.getItem(`currConversation+${parentId}`));
@@ -224,6 +226,8 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 							setCurrConversation
 						);
 						setInappropriateUserTranscript(removedMessage);
+					} else {
+						setAiError(String(err?.message ?? err));
 					}
 				})
 				.finally(() => {
@@ -258,7 +262,8 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					chatType
 				),
 			setResult,
-			resultFinishedCallbacks
+			resultFinishedCallbacks,
+			(err) => setAiError(String(err?.message ?? err))
 		);
 	};
 
@@ -294,7 +299,6 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 			: findMostRecentAssistantContent(currConversation);
 		const enableSkip =
 			currConversation.length > 1 && conversationState === CONVERSATION_STATE.Idle;
-
 		const mainSectionChildren = [
 			<AssistantResponseText
 				styleSetting={parentIdea && "feedback"}
@@ -321,6 +325,27 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 
 		return (
 			<section className="wow">
+				{aiError && (
+					<div className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm">
+						<span>
+							<b>Hmm, the AI couldn't respond:</b> {aiError}
+						</span>
+						<span className="flex gap-2 shrink-0">
+							<a
+								className="underline font-semibold whitespace-nowrap"
+								href="/profile?tab=aiModels"
+							>
+								Open AI settings
+							</a>
+							<button
+								className="underline text-stone-500 whitespace-nowrap"
+								onClick={() => setAiError(null)}
+							>
+								Dismiss
+							</button>
+						</span>
+					</div>
+				)}
 				{!isMicPermissionModalClose && (
 					<MicPermissionModal setIsClose={setIsMicPermissionModalClose} />
 				)}

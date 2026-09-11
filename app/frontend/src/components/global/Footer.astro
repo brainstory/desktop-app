@@ -1,11 +1,7 @@
 ---
 const { hasSideNavbar } = Astro.props;
-const year = new Date().getFullYear();
 ---
 
-<footer class={`flex place-content-between pt-0 p-4 text-stone-400 text-sm ${hasSideNavbar && "sm:ml-64"}`}>
-	<div>
-		<p>&copy; {year} Brainstory. All rights reserved.</p>
-		<a href="/terms">Terms</a> • <a href="/privacy">Privacy</a>
-	</div>
+<footer class={`flex pt-0 p-4 text-stone-400 text-sm ${hasSideNavbar && "sm:ml-64"}`}>
+	<p>Brainstory</p>
 </footer>

@@ -98,16 +98,17 @@ pub fn save_user_settings(
 #[tauri::command]
 pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
 	let s = AiSettings::load(&state.db);
+	// camelCase to match the frontend's field access
 	serde_json::json!({
-		"llm_mode": s.llm_mode,
-		"llm_model": s.llm_model,
-		"stt_model": s.stt_model,
-		"ext_llm_base_url": s.ext_llm_base_url,
-		"ext_llm_api_key": s.ext_llm_api_key,
-		"ext_llm_model": s.ext_llm_model,
-		"ext_stt_base_url": s.ext_stt_base_url,
-		"ext_stt_api_key": s.ext_stt_api_key,
-		"ext_stt_model": s.ext_stt_model,
+		"llmMode": s.llm_mode,
+		"llmModel": s.llm_model,
+		"sttModel": s.stt_model,
+		"extLlmBaseUrl": s.ext_llm_base_url,
+		"extLlmApiKey": s.ext_llm_api_key,
+		"extLlmModel": s.ext_llm_model,
+		"extSttBaseUrl": s.ext_stt_base_url,
+		"extSttApiKey": s.ext_stt_api_key,
+		"extSttModel": s.ext_stt_model,
 	})
 }
 
@@ -120,31 +121,31 @@ pub fn save_ai_settings(
 	let mut settings = AiSettings::load(&state.db);
 	let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
 
-	if let Some(v) = get_str("llm_mode") {
+	if let Some(v) = get_str("llmMode") {
 		settings.llm_mode = v;
 	}
-	if let Some(v) = get_str("llm_model") {
+	if let Some(v) = get_str("llmModel") {
 		settings.llm_model = v;
 	}
-	if let Some(v) = get_str("stt_model") {
+	if let Some(v) = get_str("sttModel") {
 		settings.stt_model = v;
 	}
 	for key in [
-		"ext_llm_base_url",
-		"ext_llm_api_key",
-		"ext_llm_model",
-		"ext_stt_base_url",
-		"ext_stt_api_key",
-		"ext_stt_model",
+		"extLlmBaseUrl",
+		"extLlmApiKey",
+		"extLlmModel",
+		"extSttBaseUrl",
+		"extSttApiKey",
+		"extSttModel",
 	] {
 		if let Some(v) = get_str(key) {
 			match key {
-				"ext_llm_base_url" => settings.ext_llm_base_url = v,
-				"ext_llm_api_key" => settings.ext_llm_api_key = v,
-				"ext_llm_model" => settings.ext_llm_model = v,
-				"ext_stt_base_url" => settings.ext_stt_base_url = v,
-				"ext_stt_api_key" => settings.ext_stt_api_key = v,
-				"ext_stt_model" => settings.ext_stt_model = v,
+				"extLlmBaseUrl" => settings.ext_llm_base_url = v,
+				"extLlmApiKey" => settings.ext_llm_api_key = v,
+				"extLlmModel" => settings.ext_llm_model = v,
+				"extSttBaseUrl" => settings.ext_stt_base_url = v,
+				"extSttApiKey" => settings.ext_stt_api_key = v,
+				"extSttModel" => settings.ext_stt_model = v,
 				_ => {}
 			}
 		}

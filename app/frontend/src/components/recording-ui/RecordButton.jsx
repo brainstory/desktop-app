@@ -28,6 +28,7 @@ function RecordButton({
 	const [isTextInput, setIsTextInput] = useState(false);
 	const [userTextInput, setUserTextInput] = useState("");
 	const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+	const [errorMessage, setErrorMessage] = useState(null);
 	const context = useContext(AppContext);
 
 	const buttonSizing = isCompressed ? "w-[54px] h-[54px]" : "w-[96px] h-[96px]";
@@ -181,6 +182,7 @@ function RecordButton({
 		setTranscript("");
 		console.log(error);
 		setReadyToSend(false);
+		setErrorMessage(String(error?.message ?? error));
 		setWarningType("error");
 	}
 
@@ -325,7 +327,8 @@ function RecordButton({
 				<div className={warningBoxStyle}>
 					<p className="text-sm font-semibold">
 						{warningType === "error"
-							? "An error occurred. Please contact help@brainstory.ai for help"
+							? (errorMessage ??
+								"An error occurred while transcribing. Please try again.")
 							: "Maximum recording time 4 minutes reached. Send message to continue."}
 					</p>
 				</div>
