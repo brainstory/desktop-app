@@ -80,24 +80,25 @@ function RecordButton({
 		} else {
 			setStatus("recording");
 			setWarningType(null);
+			// flip immediately - the first start in a session can take a
+			// moment (CoreAudio device init), and the button should respond
+			// instantly; reverted if the mic can't start
+			setIsRecording(true);
 			try {
 				await startWavCapture();
-				setIsRecording(true);
+				const recordingTimeout = setTimeout(() => {
+					stopWavCapture().catch((error) => handleError(error));
+					setIsRecording(false);
+					setWarningType("timer"); // Set warning when time limit is exceeded
+				}, RECORDING_MAX_DURATION);
+				setTimer(recordingTimeout);
 			} catch (error) {
 				console.error("Error accessing microphone:", error);
+				setIsRecording(false);
+				setStatus("idle");
 				setErrorMessage(String(error?.message ?? error));
 				setMicPermissionDenied(true);
-				setStatus("idle");
-				return;
 			}
-
-			const recordingTimeout = setTimeout(() => {
-				stopWavCapture().catch((error) => handleError(error));
-				setIsRecording(false);
-				setWarningType("timer"); // Set warning when time limit is exceeded
-			}, RECORDING_MAX_DURATION);
-
-			setTimer(recordingTimeout);
 		}
 	};
 

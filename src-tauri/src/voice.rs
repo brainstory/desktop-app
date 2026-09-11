@@ -20,7 +20,9 @@ static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
 pub fn start_capture() -> Result<(), String> {
 	let mut guard = CAPTURE.lock().unwrap();
 	if guard.is_some() {
-		return Err("already recording".into());
+		// Already recording - treat as success so a double-press of the
+		// record button (first press still starting the stream) is harmless.
+		return Ok(());
 	}
 
 	let host = cpal::default_host();
