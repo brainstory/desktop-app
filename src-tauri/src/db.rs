@@ -127,13 +127,52 @@ impl Db {
 
 	// ---- ideas ----
 
+	/// Split a markdown result into {heading, body} sections for the idea
+	/// page's document view (index 0 is the document title, so the feedback
+	/// JSON's 1-based heading ordinals line up with array indices).
+	fn result_to_json(result: &str) -> serde_json::Value {
+		let mut items: Vec<(String, String)> = Vec::new();
+		let mut current_heading = String::new();
+		let mut current_body = String::new();
+
+		for line in result.lines() {
+			let trimmed = line.trim_start();
+			let is_heading = (trimmed.starts_with("# ") && !trimmed.starts_with("##"))
+				|| trimmed.starts_with("## ");
+			if is_heading {
+				if !current_heading.is_empty() || !current_body.trim().is_empty() {
+					items.push((current_heading.clone(), current_body.trim().to_string()));
+				}
+				current_heading = trimmed.to_string();
+				current_body.clear();
+			} else {
+				current_body.push_str(line);
+				current_body.push('\n');
+			}
+		}
+		if !current_heading.is_empty() || !current_body.trim().is_empty() {
+			items.push((current_heading, current_body.trim().to_string()));
+		}
+
+		serde_json::to_value(items.into_iter().map(|(heading, body)| {
+			serde_json::json!({ "heading": heading, "body": body })
+		}).collect::<Vec<_>>())
+		.unwrap_or_else(|_| serde_json::json!([]))
+	}
+
 	fn row_to_idea(row: &rusqlite::Row) -> rusqlite::Result<IdeaItem> {
 		let transcript: String = row.get("transcript")?;
 		let structured: Option<String> = row.get("structured_result")?;
+		let result: String = row.get("result")?;
+		let result_json = if result.is_empty() {
+			None
+		} else {
+			Some(Self::result_to_json(&result))
+		};
 		Ok(IdeaItem {
 			id: row.get("id")?,
 			title: row.get("title")?,
-			result: Some(row.get::<_, String>("result")?),
+			result: Some(result),
 			r#type: Some(row.get::<_, String>("idea_type")?),
 			created_at: row.get("created_at")?,
 			creator_email: row.get("creator_email")?,
@@ -142,7 +181,7 @@ impl Db {
 			transcript: serde_json::from_str::<Vec<ChatMessage>>(&transcript).ok(),
 			shared_with_users: None,
 			structured_result: structured.and_then(|s| serde_json::from_str(&s).ok()),
-			result_json: None,
+			result_json,
 			parent_idea: None,
 			feedback: None,
 		})

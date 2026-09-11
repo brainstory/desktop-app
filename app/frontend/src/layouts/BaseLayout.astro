@@ -5,9 +5,9 @@ import Footer from "@components/global/Footer.astro";
 
 const { title, hidePadding, showFooter } = Astro.props;
 
-// 6rem (desktop) = 4 (footer) + 2 (top and bottom padding are 1rem)
-// 8rem (mobile)  = 4 (footer) + 3 (hamburger menu) + 1 (only bottom padding)
-const mainSectionStyle = `min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] bg-white shadow rounded-lg ${hidePadding ? "" : "p-4"}`
+// The footer is an empty spacer now: 2rem footer + 1rem top padding on
+// desktop (2rem footer + 3rem hamburger nav on mobile)
+const mainSectionStyle = `min-h-[calc(100vh-5rem)] sm:min-h-[calc(100vh-3rem)] bg-white shadow rounded-lg ${hidePadding ? "" : "p-4"}`
 ---
 
 <html

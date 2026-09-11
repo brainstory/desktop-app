@@ -28,7 +28,7 @@ export default function IdeaDocument({
 			}
 			ref={containerRef}
 		>
-			{resultSections.map((section, outerIndex) => (
+			{(resultSections ?? []).map((section, outerIndex) => (
 				<div key={outerIndex} id={`heading-${outerIndex}`}>
 					<ReactMarkdown>{section.heading}</ReactMarkdown>
 					<ReactMarkdown>{section.body}</ReactMarkdown>
