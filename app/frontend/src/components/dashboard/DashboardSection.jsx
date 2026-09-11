@@ -10,6 +10,7 @@ import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
 
 import IdeaGrid from "./IdeaGrid.jsx";
 import FeedbackGrid from "./FeedbackGrid.jsx";
+import AiSetupNeeded from "./AiSetupNeeded.jsx";
 
 export default function DashboardSection() {
 	let [userIdeas, setUserIdeas] = useState();
@@ -81,6 +82,7 @@ export default function DashboardSection() {
 					Import
 				</TransparentButton>
 			</div>
+			<AiSetupNeeded />
 			{isLoading ? (
 				<LoadingAnimation />
 			) : showGetStarted ? (

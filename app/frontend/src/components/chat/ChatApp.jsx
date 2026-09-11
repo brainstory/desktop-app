@@ -7,6 +7,7 @@ import { CHAT_TYPE } from "@src/const";
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
 import DailyIntentModal from "@components/form/DailyIntentModal";
+import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 
 const isDailyIntent = getQueryParam("dailyIntent");
 
@@ -49,6 +50,7 @@ export default function ChatApp() {
 
 	return (
 		<AppWrapper>
+			<AiSetupNeeded />
 			{isOpen && (
 				<DailyIntentModal
 					logId={logId}
