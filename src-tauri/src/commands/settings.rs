@@ -255,6 +255,12 @@ pub fn set_app_presence(
 	dock: bool,
 	tray: bool,
 ) -> Result<(), String> {
+	if !dock && !tray {
+		return Err(
+			"Brainstory can't be hidden from both the Dock and the menu bar - keep at least one visible."
+				.into(),
+		);
+	}
 	state.db.set_setting("show_in_dock", if dock { "true" } else { "false" });
 	state.db.set_setting("show_in_tray", if tray { "true" } else { "false" });
 	crate::apply_presence(app.app_handle(), dock, tray);

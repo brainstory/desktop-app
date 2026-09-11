@@ -191,6 +191,13 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 		if let Err(e) = app.set_dock_visibility(dock) {
 			log::warn!("failed to set dock visibility: {e}");
 		}
+		if !dock {
+			// Resigning the regular activation policy can bounce focus to
+			// Finder; take it back so the app stays front and center.
+			let mtm = objc2::MainThreadMarker::new()
+				.expect("apply_presence must run on the main thread");
+			objc2_app_kit::NSApplication::sharedApplication(mtm).activate();
+		}
 	}
 	#[cfg(not(target_os = "macos"))]
 	let _ = dock;
