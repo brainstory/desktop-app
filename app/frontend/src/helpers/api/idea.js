@@ -135,10 +135,16 @@ export async function markIdeaReadApi(idea_id) {
 	return response;
 }
 
+/** Permanently delete an idea (and its feedback children). */
+export async function deleteIdeaApi(idea_id) {
+	return invoke("delete_idea", { ideaId: idea_id });
+}
+
 export default {
 	getIdeaApi,
 	getIdeaChildrenApi,
 	createIdeaApi,
 	markIdeaReadApi,
-	updateIdeaTitleApi
+	updateIdeaTitleApi,
+	deleteIdeaApi
 };

@@ -160,6 +160,12 @@ pub fn mark_idea_read(state: State<'_, AppState>, idea_id: String) -> serde_json
 }
 
 #[tauri::command]
+pub fn delete_idea(state: State<'_, AppState>, idea_id: String) -> serde_json::Value {
+	let deleted = state.db.delete_idea(&idea_id);
+	serde_json::json!({ "id": idea_id, "deleted": deleted })
+}
+
+#[tauri::command]
 pub fn get_log_questions(state: State<'_, AppState>) -> serde_json::Value {
 	let enabled_ids = enabled_log_ids(&state);
 	let answers = state.db.get_log_answers_today();

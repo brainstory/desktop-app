@@ -320,6 +320,7 @@ dependencies = [
  "encoding_rs",
  "futures-util",
  "hound",
+ "libc",
  "llama-cpp-2",
  "log",
  "reqwest 0.12.28",

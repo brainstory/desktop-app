@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { updateIdeaTitleApi } from "@helpers/api/idea";
+import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
 import { exportIdeaApi } from "@helpers/api/share";
 import PinkButton from "@ds/PinkButton.jsx";
+import BorderedButton from "@ds/BorderedButton.jsx";
 
 export default function IdeaTitleBar({
 	idea,
@@ -12,6 +13,7 @@ export default function IdeaTitleBar({
 }) {
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [exportState, setExportState] = useState(null);
+	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedTitle, setEditedTitle] = useState(idea.title);
 	const textarea = useRef(null);
@@ -75,6 +77,23 @@ export default function IdeaTitleBar({
 			});
 	};
 
+	const handleDelete = () => {
+		if (!confirmingDelete) {
+			setConfirmingDelete(true);
+			// require a fresh confirmation click; reset if they wander off
+			setTimeout(() => setConfirmingDelete(false), 5000);
+			return;
+		}
+		deleteIdeaApi(idea.id)
+			.then(() => {
+				window.location.href = "/dashboard";
+			})
+			.catch((err) => {
+				console.log("delete failed", err);
+				setConfirmingDelete(false);
+			});
+	};
+
 	const renderActionButtons = () => {
 		const buttons = [];
 		if (!parentId) {
@@ -107,6 +126,15 @@ export default function IdeaTitleBar({
 				</PinkButton>
 			);
 		}
+		buttons.push(
+			<BorderedButton
+				key="delete"
+				onClick={handleDelete}
+				classes={confirmingDelete ? "border-red-400 text-red-600" : ""}
+			>
+				{confirmingDelete ? "Really delete?" : "Delete"}
+			</BorderedButton>
+		);
 		return buttons;
 	};
 

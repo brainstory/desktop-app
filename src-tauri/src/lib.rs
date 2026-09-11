@@ -31,6 +31,7 @@ pub fn run() {
 			commands::data::create_idea,
 			commands::data::update_idea,
 			commands::data::mark_idea_read,
+			commands::data::delete_idea,
 			commands::data::get_log_questions,
 			commands::data::submit_log,
 			commands::data::get_survey_fields,
@@ -104,7 +105,7 @@ pub fn run() {
 					.load(std::sync::atomic::Ordering::Relaxed);
 				if quit_on_close {
 					// tray hidden: closing the window is the way out
-					app.exit(0);
+					crate::force_exit();
 				} else {
 					// Closing the window hides it to the tray so daily
 					// reminders keep working; quit via the tray menu.
@@ -113,8 +114,16 @@ pub fn run() {
 				}
 			}
 		})
-		.run(tauri::generate_context!())
-		.expect("error while running brainstory");
+		.build(tauri::generate_context!())
+		.expect("error while building brainstory")
+		.run(|_app, event| {
+			// Every quit path (tray menu, Cmd+Q, dock quit, logout) funnels
+			// through here before AppKit calls exit(). _exit() skips C++
+			// static destructors, which abort on the vendored ggml teardown.
+			if let tauri::RunEvent::Exit = event {
+				crate::force_exit();
+			}
+		});
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -147,7 +156,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 				state.db.set_setting("reminder_enabled", if enabled { "true" } else { "false" });
 			}
 			"quit" => {
-				app.exit(0);
+				crate::force_exit();
 			}
 			_ => {}
 		})
@@ -188,6 +197,14 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 			log::warn!("failed to set tray visibility: {e}");
 		}
 	}
+}
+
+/// Terminate without running C++ static destructors. whisper.cpp and
+/// llama.cpp each vendor a ggml copy; their atexit teardown aborts
+/// (SIGABRT, the macOS "crashed" dialog). SQLite is WAL-durable, so
+/// skipping finalization is safe.
+pub fn force_exit() -> ! {
+	unsafe { libc::_exit(0) }
 }
 
 fn show_main_window(app: &AppHandle) {

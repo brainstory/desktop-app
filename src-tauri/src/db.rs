@@ -219,6 +219,25 @@ impl Db {
 			.ok();
 	}
 
+	/// Delete an idea and its feedback children; also clear any daily-intent
+	/// reference so the dashboard doesn't link to a missing idea.
+	pub fn delete_idea(&self, id: &str) -> bool {
+		let conn = self.conn.lock().unwrap();
+		conn.execute(
+			"UPDATE daily SET intent_idea_id = NULL WHERE intent_idea_id = ?1",
+			params![id],
+		)
+		.ok();
+		conn.execute(
+			"DELETE FROM ideas WHERE parent_idea_id = ?1",
+			params![id],
+		)
+		.ok();
+		conn.execute("DELETE FROM ideas WHERE id = ?1", params![id])
+			.map(|n| n > 0)
+			.unwrap_or(false)
+	}
+
 	pub fn set_idea_unread(&self, id: &str, unread: bool) {
 		self.conn
 			.lock()
