@@ -34,8 +34,8 @@ export default function StickyLoadingSection({ isFinishedGenerating, ideaId }) {
 						classes="ml-auto"
 						title="Submit survey"
 					>
-						See more -->
-					</BorderedButton>
+					See more &rarr;
+				</BorderedButton>
 				</div>
 			) : (
 				<LoadingAnimation text="Saving. Don't close this tab." />
