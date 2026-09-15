@@ -49,6 +49,8 @@ thiserror = "2"
 encoding_rs = "0.8"
 libc = "0.2"
 cpal = "0.18"
+# secrets (HF token, external endpoint API keys) in the OS keychain
+keyring = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "=0.16.0", features = ["metal"] }

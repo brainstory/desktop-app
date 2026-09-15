@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { CONVERSATION_STATE } from "../../const";
 import RecordButton from "./RecordButton";
 

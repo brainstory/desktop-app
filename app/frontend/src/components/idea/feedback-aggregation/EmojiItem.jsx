@@ -2,7 +2,6 @@ import Avatar from "@ds/Avatar.jsx";
 import Tooltip from "@ds/Tooltip";
 
 export default function EmojiItem({
-	ideaId,
 	labels,
 	creatorEmail,
 	onReactionClick = () => null,
@@ -33,8 +32,8 @@ export default function EmojiItem({
 						labelsHasBorder && "border rounded-md p-1"
 					}`}
 				>
-					{labels.map((label) => (
-						<Tooltip text={label.name} position="left">
+					{labels.map((label, idx) => (
+						<Tooltip key={label.name ?? idx} text={label.name} position="left">
 							{label.emoji}
 						</Tooltip>
 					))}

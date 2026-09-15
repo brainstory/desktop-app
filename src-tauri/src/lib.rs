@@ -4,6 +4,7 @@ pub mod llm;
 pub mod models;
 pub mod prompts;
 mod reminders;
+pub mod secrets;
 pub mod stt;
 pub mod types;
 pub mod voice;
@@ -99,11 +100,44 @@ pub fn run() {
 			commands::share::export_idea,
 			commands::share::import_share,
 		])
+		.on_page_load(|webview, payload| {
+			match payload.event() {
+				tauri::webview::PageLoadEvent::Started => {
+					log::info!("page load started: {}", payload.url());
+				}
+				tauri::webview::PageLoadEvent::Finished => {
+					log::info!("page load finished: {}", payload.url());
+				}
+			}
+			// Surface webview JS errors in the window title so a crashed
+			// page is diagnosable from the log instead of being just a
+			// white rectangle.
+			let _ = webview.eval(
+				"window.addEventListener('error', function(e){ document.title = 'JSERR: ' + e.message; });\n\
+				 window.addEventListener('unhandledrejection', function(e){ document.title = 'PROMISE-REJ: ' + e.reason; });",
+			);
+		})
 		.setup(|app| {
-			let data_dir = app
-				.path()
-				.app_data_dir()
-				.expect("failed to resolve app data dir");
+			let data_dir = match app.path().app_data_dir() {
+				Ok(dir) => dir,
+				Err(e) => {
+					// Without the data dir there is nowhere to open (or
+					// quarantine) the database; tell the user instead of
+					// panicking invisibly behind a GUI launch.
+					log::error!("failed to resolve app data dir: {e}");
+					{
+						use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+						app.dialog()
+							.message(format!(
+								"Brainstory could not locate its data directory and cannot start.\n\n{e}"
+							))
+							.title("Brainstory")
+							.kind(MessageDialogKind::Error)
+							.blocking_show();
+					}
+					return Err(format!("failed to resolve app data dir: {e}").into());
+				}
+			};
 			std::fs::create_dir_all(data_dir.join("models")).ok();
 			sweep_stale_part_files(&data_dir.join("models"));
 
@@ -128,6 +162,8 @@ pub fn run() {
 					return Err(message.into());
 				}
 			};
+			// Move any plaintext secrets from early builds into the keychain.
+			secrets::migrate_from_db(&db);
 			if db.get_setting("created_at").is_none() {
 				// naive UTC, no trailing Z (the frontend appends it itself)
 				let now = Utc::now()
@@ -160,6 +196,21 @@ pub fn run() {
 			}
 
 			reminders::spawn(app.handle().clone());
+
+			// Temporary startup diagnostic: after the onboarding redirect
+			// settles, a JS error would have renamed the window title
+			// (see the on_page_load error hook).
+			if let Some(window) = app.get_webview_window("main") {
+				std::thread::spawn(move || {
+					std::thread::sleep(std::time::Duration::from_secs(6));
+					let url = window
+						.url()
+						.map(|u| u.to_string())
+						.unwrap_or_else(|e| format!("<url err: {e}>"));
+					let title = window.title().unwrap_or_else(|e| format!("<title err: {e}>"));
+					log::info!("[startup check] url={url} title={title}");
+				});
+			}
 			spawn_model_loader(
 				app.handle().clone(),
 				AiSettings::load(&app.state::<AppState>().db),
@@ -186,7 +237,12 @@ pub fn run() {
 			}
 		})
 		.build(tauri::generate_context!())
-		.expect("error while building brainstory")
+		.unwrap_or_else(|e| {
+			// No app exists yet, so there is no window or dialog to show;
+			// exit cleanly with the reason on stderr instead of panicking.
+			eprintln!("error while building brainstory: {e}");
+			std::process::exit(1);
+		})
 		.run(|_app, event| {
 			// Every quit path (tray menu, Cmd+Q, dock quit, logout) funnels
 			// through here before AppKit calls exit(). _exit() skips C++

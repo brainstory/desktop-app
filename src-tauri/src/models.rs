@@ -138,6 +138,9 @@ pub struct AiSettings {
 impl AiSettings {
 	pub fn load(db: &Db) -> Self {
 		let get = |k: &str| db.get_setting(k).unwrap_or_default();
+		let secret = |s: crate::secrets::Secret| {
+			crate::secrets::load(s, db).unwrap_or_default()
+		};
 		Self {
 			llm_mode: {
 				let m = get("ai_llm_mode");
@@ -163,31 +166,42 @@ impl AiSettings {
 					m
 				}
 			},
-		hf_token: get("hf_token"),
+		hf_token: secret(crate::secrets::Secret::HfToken),
 		ext_llm_base_url: get("ext_llm_base_url"),
-		ext_llm_api_key: get("ext_llm_api_key"),
+		ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
 		ext_llm_model: get("ext_llm_model"),
 		ext_stt_base_url: get("ext_stt_base_url"),
-		ext_stt_api_key: get("ext_stt_api_key"),
+		ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
 		ext_stt_model: get("ext_stt_model"),
 	}
 	}
 
 	pub fn save(&self, db: &Db) {
+		let set_secret = |secret: crate::secrets::Secret, value: &str| {
+			let result = if value.is_empty() {
+				crate::secrets::clear(secret, db);
+				Ok(())
+			} else {
+				crate::secrets::store(secret, value, db)
+			};
+			if let Err(e) = result {
+				log::error!("failed to store {}: {e}", secret.db_key());
+			}
+		};
 		if let Err(e) = db.set_settings(&[
 			("ai_llm_mode", self.llm_mode.clone()),
 			("ai_llm_model", self.llm_model.clone()),
 			("ai_stt_model", self.stt_model.clone()),
-			("hf_token", self.hf_token.clone()),
 			("ext_llm_base_url", self.ext_llm_base_url.clone()),
-			("ext_llm_api_key", self.ext_llm_api_key.clone()),
 			("ext_llm_model", self.ext_llm_model.clone()),
 			("ext_stt_base_url", self.ext_stt_base_url.clone()),
-			("ext_stt_api_key", self.ext_stt_api_key.clone()),
 			("ext_stt_model", self.ext_stt_model.clone()),
 		]) {
 			log::error!("failed to save AI settings: {e}");
 		}
+		set_secret(crate::secrets::Secret::HfToken, &self.hf_token);
+		set_secret(crate::secrets::Secret::ExtLlmApiKey, &self.ext_llm_api_key);
+		set_secret(crate::secrets::Secret::ExtSttApiKey, &self.ext_stt_api_key);
 	}
 }
 
@@ -611,7 +625,9 @@ pub async fn download_model_file(
 				let pct = if total > 0 {
 					(downloaded as f64 / total as f64) * 100.0
 				} else {
-					0.0
+					// Content-length unknown (chunked transfer): report the
+					// indeterminate sentinel; the UI shows a busy bar.
+					-1.0
 				};
 				on_progress(pct);
 			}

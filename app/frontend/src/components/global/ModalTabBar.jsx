@@ -12,6 +12,7 @@ export default function ModalTabBar({
 }) {
 	return (
 		<div
+			role="tablist"
 			className={`flex text-sm sm:text-base rounded-lg border border-stone-300 p-0.5 bg-stone-200 ${classes}`}
 		>
 			{allTabs.map((tabItem) => {
@@ -25,6 +26,8 @@ export default function ModalTabBar({
 				return (
 					<button
 						key={tabItem}
+						role="tab"
+						aria-selected={currentTab === tabItem}
 						disabled={isDisabled}
 						className={tabStyle}
 						onClick={() => {
@@ -36,13 +39,12 @@ export default function ModalTabBar({
 								text="Finish setting daily log and intent"
 								classes="justify-center items-center gap-2"
 							>
-								<ion-icon name="lock-closed-outline"></ion-icon>
+								<ion-icon aria-hidden="true" name="lock-closed-outline"></ion-icon>
 								<p>{tabItem}</p>
 							</Tooltip>
 						) : (
 							<p>{tabItem}</p>
 						)}
-						{/* <div className="h-0 w-0 border-[20px] border-r-0 border-transparent border-l-black"></div> */}
 					</button>
 				);
 			})}

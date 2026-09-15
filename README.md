@@ -89,6 +89,12 @@ Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12
 The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
 `src-tauri/.cargo/config.toml`.
 
+Platform support: macOS (Apple Silicon) is the only tested target. The code
+is mostly portable (the mic capture accepts F32/I16/U16 devices, and
+notifications/dialogs use cross-platform Tauri plugins), but Dock/tray
+presence handling and the release build are macOS-specific and
+Windows/Linux builds are unverified.
+
 Data locations (macOS): `~/Library/Application Support/ai.brainstory.desktop/`
 (`brainstory.db` + `models/`).
 

@@ -1,4 +1,3 @@
-import React from "react";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import { CONVERSATION_STATE } from "@src/const";
 

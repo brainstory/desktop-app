@@ -174,7 +174,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					title: res.title,
 					summary: res.summary
 				};
-				document.title = `Feedback for \"${res.title}\"`;
+				document.title = `Feedback for "${res.title}"`;
 				setParentIdea(ideaContent);
 			})
 			.catch((err) => {
@@ -338,7 +338,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 				{aiError && (
 					<div className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm">
 						<span>
-							<b>Hmm, the AI couldn't respond:</b> {aiError}
+							<b>Hmm, the AI couldn&rsquo;t respond:</b> {aiError}
 						</span>
 						<span className="flex gap-2 shrink-0">
 							<a

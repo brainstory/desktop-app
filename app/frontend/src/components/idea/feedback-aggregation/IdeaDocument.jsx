@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import EmojiList from "@components/idea/feedback-aggregation/EmojiList.jsx";
 

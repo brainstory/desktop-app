@@ -5,7 +5,6 @@ export default function IdeaCard({
 	title,
 	createdAt,
 	creatorName,
-	sharedWithUsers = [],
 	shared = false,
 	feedback,
 	isFeedback = false
@@ -18,9 +17,10 @@ export default function IdeaCard({
 		<a
 			href={`/idea?id=${id}`}
 			target={isFeedback ? "_blank" : "_self"}
+			rel={isFeedback ? "noreferrer" : undefined}
 			className={`relative w-80 sm:w-[275px] ${cardHeight} group cursor-pointer bg-white rounded-lg border border-stone-200 shadow hover:shadow-lg hover:-translate-y-1 transition-transform`}
 		>
-			<FeedbackStack feedback={feedback} />
+			<FeedbackStack ideaId={id} feedback={feedback} />
 			<div className="relative bg-white border border-stone-200 rounded-lg">
 				<div className={`${cardHeight} p-6 rounded-lg`}>
 					<div>
@@ -79,7 +79,7 @@ export default function IdeaCard({
 	);
 }
 
-function FeedbackStack({ feedback }) {
+function FeedbackStack({ ideaId, feedback }) {
 	return (
 		<>
 			{feedback &&
@@ -108,7 +108,7 @@ function FeedbackStack({ feedback }) {
 							className={classNameBasedOnIndex[index]}
 							onClick={(e) => {
 								e.stopPropagation();
-								window.location.href = `/idea?id=${id}&tab=feedback`;
+								window.location.href = `/idea?id=${ideaId}&tab=feedback`;
 							}}
 						>
 							<div className="rounded-lg"></div>

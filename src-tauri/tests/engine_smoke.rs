@@ -32,7 +32,7 @@ fn whisper_and_llama_coexist() {
 		.expect("failed to load llama model");
 	let cancel = Arc::new(AtomicBool::new(false));
 	let mut chunks = Vec::new();
-	let output = llm
+	let (output, prompt_tokens) = llm
 		.generate(
 			"",
 			&[brainstory_lib::types::ChatMessage {
@@ -45,5 +45,6 @@ fn whisper_and_llama_coexist() {
 		)
 		.expect("llama generation failed");
 	// sanity: generation produced something and did not crash
+	println!("prompt tokenized to {prompt_tokens} tokens");
 	assert!(!output.is_empty() || !chunks.is_empty());
 }

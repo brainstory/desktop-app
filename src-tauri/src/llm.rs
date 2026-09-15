@@ -38,6 +38,11 @@ pub struct LocalLlm {
 	pub model_id: String,
 	/// general.architecture from the GGUF metadata
 	architecture: String,
+	/// The model's trained context length (`{arch}.context_length` GGUF
+	/// metadata), when present. The effective context is clamped to this so
+	/// a small-trained-context model isn't run with a silently-degrading
+	/// oversized window.
+	trained_ctx: Option<u32>,
 }
 
 impl LocalLlm {
@@ -50,12 +55,32 @@ impl LocalLlm {
 		let architecture = model
 			.meta_val_str("general.architecture")
 			.unwrap_or_default();
+		let trained_ctx = model
+			.meta_val_str(&format!("{architecture}.context_length"))
+			.ok()
+			.and_then(|v| v.trim().parse::<u64>().ok())
+			.filter(|v| *v > 0)
+			.map(|v| v.min(u32::MAX as u64) as u32);
+		if let Some(trained) = trained_ctx {
+			log::info!(
+				"model {model_id} ({architecture}) trained context: {trained} tokens; \
+				 effective context: {}",
+				trained.min(N_CTX)
+			);
+		}
 		Ok(Self {
 			backend,
 			model: Arc::new(model),
 			model_id: model_id.to_string(),
 			architecture,
+			trained_ctx,
 		})
+	}
+
+	/// Context window actually used: the default, clamped to what the
+	/// model was trained for.
+	fn effective_ctx(&self) -> u32 {
+		self.trained_ctx.map_or(N_CTX, |trained| trained.min(N_CTX))
 	}
 
 	fn apply_llama_template(
@@ -170,7 +195,8 @@ impl LocalLlm {
 		messages: &[ChatMessage],
 		max_new_tokens: u32,
 	) -> Result<String, String> {
-		let budget = (N_CTX as usize).saturating_sub(max_new_tokens as usize + 64);
+		let n_ctx = self.effective_ctx() as usize;
+		let budget = n_ctx.saturating_sub(max_new_tokens as usize + 64);
 		let mut msgs: Vec<ChatMessage> = messages.to_vec();
 		let mut prompt = self.apply_template(system, &msgs)?;
 		let mut n_tokens = self.count_tokens(&prompt)?;
@@ -220,7 +246,9 @@ impl LocalLlm {
 	}
 
 	/// Run generation, streaming pieces through `on_chunk`. Blocking and
-	/// CPU/GPU heavy; run on a dedicated thread.
+	/// CPU/GPU heavy; run on a dedicated thread. Returns the final text
+	/// together with the prompt token count (for the telemetry fields the
+	/// command layer reports).
 	pub fn generate(
 		&self,
 		system: &str,
@@ -228,7 +256,7 @@ impl LocalLlm {
 		summarize: bool,
 		cancel: &AtomicBool,
 		mut on_chunk: impl FnMut(String),
-	) -> Result<String, String> {
+	) -> Result<(String, usize), String> {
 		let max_new = if summarize {
 			MAX_NEW_TOKENS_RESULT
 		} else {
@@ -242,10 +270,14 @@ impl LocalLlm {
 		if tokens.is_empty() {
 			return Err("the model produced no tokens for this conversation; please try again".into());
 		}
+		let n_prompt = tokens.len();
 
 		// The context borrows the model, so it lives only within this call.
+		let n_ctx = self.effective_ctx();
 		let ctx_params = LlamaContextParams::default()
-			.with_n_ctx(NonZeroU32::new(N_CTX))
+			.with_n_ctx(Some(
+				NonZeroU32::new(n_ctx).expect("context size is never zero"),
+			))
 			.with_n_batch(PROMPT_DECODE_CHUNK as u32);
 		let mut ctx = self
 			.model
@@ -261,7 +293,6 @@ impl LocalLlm {
 		// Decode the prompt in chunks: cancel stays responsive and a stalled
 		// decode aborts instead of hanging the whole budget.
 		let mut batch = LlamaBatch::new(PROMPT_DECODE_CHUNK, 1);
-		let n_prompt = tokens.len();
 		for (offset, chunk) in tokens.chunks(PROMPT_DECODE_CHUNK).enumerate() {
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
@@ -313,7 +344,7 @@ impl LocalLlm {
 		// overflow the context window regardless of prompt length.
 		let total_cap = max_new
 			.saturating_add(MAX_THINK_TOKENS)
-			.min((N_CTX - 1).saturating_sub(tokens.len() as u32));
+			.min((n_ctx - 1).saturating_sub(tokens.len() as u32));
 		let mut pos = tokens.len() as i32;
 
 		loop {
@@ -370,7 +401,7 @@ impl LocalLlm {
 			on_chunk(tail);
 		}
 
-		Ok(output)
+		Ok((output, n_prompt))
 	}
 }
 
@@ -497,7 +528,9 @@ impl ExternalLlm {
 		cancel: &AtomicBool,
 		max_tokens: u32,
 		mut on_chunk: impl FnMut(String) + Send,
-	) -> Result<String, String> {
+	) -> Result<(String, Option<usize>), String> {
+		// (text, prompt-token count). External endpoints don't report their
+		// prompt tokenization, hence the None.
 		let mut body_messages = vec![];
 		if !system.trim().is_empty() {
 			body_messages.push(serde_json::json!({"role": "system", "content": system}));
@@ -583,32 +616,54 @@ impl ExternalLlm {
 			}
 
 			while let Some(pos) = find_event_end(&buffer) {
-				let line_bytes: Vec<u8> = buffer.drain(..pos).collect();
-				let line = String::from_utf8_lossy(&line_bytes);
-				for line in line.lines() {
-					let line = line.trim();
-					if let Some(data) = line.strip_prefix("data:") {
-						let data = data.trim();
-						if data == "[DONE]" {
-							return Ok(output);
-						}
-						if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-							if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
-								if !delta.is_empty() {
-									output.push_str(delta);
-									on_chunk(delta.to_string());
-								}
-							}
-							if let Some(err) = value["error"]["message"].as_str() {
-								return Err(map_provider_error(0, err));
-							}
-						}
-					}
+				let event_bytes: Vec<u8> = buffer.drain(..pos).collect();
+				let event = String::from_utf8_lossy(&event_bytes);
+				if consume_sse_event(&event, &mut output, &mut on_chunk)? {
+					return Ok((output, None));
 				}
 			}
 		}
-		Ok(output)
+
+		// A stream may legitimately end without a trailing blank line;
+		// don't drop the final buffered event.
+		if !buffer.is_empty() {
+			let tail = String::from_utf8_lossy(&buffer);
+			if consume_sse_event(&tail, &mut output, &mut on_chunk)? {
+				return Ok((output, None));
+			}
+		}
+		Ok((output, None))
 	}
+}
+
+/// Parse one SSE event's `data:` lines, appending content deltas. Returns
+/// `Ok(true)` when the endpoint signalled `[DONE]`.
+fn consume_sse_event(
+	event: &str,
+	output: &mut String,
+	on_chunk: &mut impl FnMut(String),
+) -> Result<bool, String> {
+	for line in event.lines() {
+		let line = line.trim();
+		if let Some(data) = line.strip_prefix("data:") {
+			let data = data.trim();
+			if data == "[DONE]" {
+				return Ok(true);
+			}
+			if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+				if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
+					if !delta.is_empty() {
+						output.push_str(delta);
+						on_chunk(delta.to_string());
+					}
+				}
+				if let Some(err) = value["error"]["message"].as_str() {
+					return Err(map_provider_error(0, err));
+				}
+			}
+		}
+	}
+	Ok(false)
 }
 
 /// Find the end of the next SSE event, tolerating both `\n\n` and

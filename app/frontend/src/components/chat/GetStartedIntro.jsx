@@ -7,7 +7,7 @@ import { useAppContext } from "@components/chat/reusable/AppWrapper";
 import RivePencil from "@components/global/RivePencil";
 import TextsFadeIn from "./reusable/TextsFadeIn";
 
-export default function GetStartedIntro({}) {
+export default function GetStartedIntro() {
 	const [isTextLoading, setIsTextLoading] = useState(true);
 	const { sludgeman } = useAppContext();
 
@@ -16,25 +16,27 @@ export default function GetStartedIntro({}) {
 	let introTextComponents;
 	if (hasDone) {
 		introTextComponents = [
-			<p className="text-accent-900 font-semibold">
+			<p key="intro-hi" className="text-accent-900 font-semibold">
 				Hey there!{" "}
-				<span className="hidden lg:inline">It's your favorite pencil, Mark.</span>
+				<span className="hidden lg:inline">It&rsquo;s your favorite pencil, Mark.</span>
 			</p>,
-			<p>Need some inspiration? Here are some things we can start with! Do you want to:</p>
+			<p key="intro-inspire">
+				Need some inspiration? Here are some things we can start with! Do you want to:
+			</p>
 		];
 	} else {
 		introTextComponents = [
-			<p className="text-accent-900 font-semibold">
+			<p key="intro-hi" className="text-accent-900 font-semibold">
 				Hey there! <span className="hidden lg:inline">My name is Mark.</span>
 			</p>,
-			<p>
+			<p key="intro-welcome">
 				Welcome to Brainstory, your{" "}
-				<p className="underline decoration-accent-900 inline font-semibold">
+				<span className="underline decoration-accent-900 inline font-semibold">
 					think-out-loud tool
-				</p>{" "}
+				</span>{" "}
 				for quick insights and creative boosts.
 			</p>,
-			<p>Here are some things we can start with! Do you want to:</p>
+			<p key="intro-start">Here are some things we can start with! Do you want to:</p>
 		];
 	}
 

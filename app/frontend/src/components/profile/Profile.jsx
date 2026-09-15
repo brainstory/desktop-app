@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "@nanostores/react";
 import { $userState } from "@components/global/userStore.js";
 

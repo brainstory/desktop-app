@@ -16,7 +16,7 @@ export const ICON = {
 	),
 	// mic off
 	MicOff: (
-		<ion-icon class="w-6 h-8 md hydrated" name="mic-off" role="img" aria-label="record mic" />
+		<ion-icon class="w-6 h-8 md hydrated" name="mic-off" role="img" aria-label="microphone unavailable" />
 	)
 };
 

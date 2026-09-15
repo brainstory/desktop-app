@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import TimezoneSelect from "react-timezone-select";
 
 import PinkButton from "@ds/PinkButton";
@@ -75,7 +75,7 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 	};
 
 	const handleSaveClick = () => {
-		if (editedName.length > 0 || input.length <= 70) {
+		if (editedName.trim().length > 0 && editedName.length <= 70) {
 			saveSettings(editedName, selectedTimezone);
 			setHasChanged(false);
 		}
@@ -109,7 +109,7 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 							`timezone-select-option${state.isFocused ? " timezone-select-option--focused" : ""}${state.isSelected ? " timezone-select-option--selected" : ""}`
 					}}
 					styles={{
-						control: (baseStyles, state) => ({
+						control: (baseStyles, _) => ({
 							...baseStyles,
 							backgroundColor: "#ffffff",
 							border: "1px solid #d6d3d1",
@@ -123,16 +123,16 @@ export function GeneralCard({ userName, timezone, saveSettings }) {
 								borderColor: "#a8a29e"
 							}
 						}),
-						input: (baseStyles, state) => ({
+						input: (baseStyles, _) => ({
 							...baseStyles,
 							margin: "0"
 						}),
-						valueContainer: (baseStyles, state) => ({
+						valueContainer: (baseStyles, _) => ({
 							...baseStyles,
 							padding: "0.375rem",
 							margin: "0"
 						}),
-						menu: (baseStyles, state) => ({
+						menu: (baseStyles, _) => ({
 							...baseStyles,
 							fontSize: "0.875rem",
 							lineHeight: "1.5rem",

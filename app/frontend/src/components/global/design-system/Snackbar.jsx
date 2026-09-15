@@ -17,7 +17,7 @@ export function Snackbar({ isSuccess, message, closeAfterTime }) {
 	closeAfterTime();
 
 	return (
-		<div className={style}>
+		<div role="status" aria-live="polite" className={style}>
 			<p className="text-white">{message}</p>
 		</div>
 	);

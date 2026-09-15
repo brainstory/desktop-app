@@ -13,11 +13,21 @@
 		"preview": "astro preview",
 		"astro": "astro",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"lint": "eslint src scripts",
+		"lint:fix": "eslint src scripts --fix",
+		"format": "prettier --write src scripts",
+		"format:check": "prettier --check src scripts"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.5",
 		"@tailwindcss/vite": "^4.3.3",
 		"astro": "^7.3.2",
+		"eslint": "^9.39.5",
+		"eslint-plugin-react": "^7.37.5",
+		"eslint-plugin-react-hooks": "^5.2.0",
+		"globals": "^17.12.0",
+		"prettier": "^3.9.6",
 		"vitest": "^3.2.4"
 	},
 	"dependencies": {

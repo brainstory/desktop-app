@@ -179,6 +179,7 @@ function RecordButton({
 					<textarea
 						className="w-full max-w-[500px] text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-blue-500 resize-none md:resize-y"
 						placeholder="Type something..."
+						aria-label="Type your response"
 						rows="5"
 						value={userTextInput}
 						onChange={handleTextareaChange}
@@ -186,10 +187,11 @@ function RecordButton({
 					></textarea>
 					<button
 						className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring focus:border-blue-300"
+						aria-label="Send message"
 						onClick={handleTextSend}
 						onKeyDown={handleKeyDown}
 					>
-						<ion-icon class="w-8 h-8 hydrated" name="send"></ion-icon>
+						<ion-icon class="w-8 h-8 hydrated" name="send" aria-hidden="true"></ion-icon>
 					</button>
 				</div>
 			);
@@ -213,7 +215,7 @@ function RecordButton({
 						</button>
 					</div>
 				<div className="text-black text-base">
-					<p>Couldn't start the microphone.</p>
+					<p>Couldn&rsquo;t start the microphone.</p>
 					<p>
 						{errorMessage ? (
 						errorMessage

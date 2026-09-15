@@ -23,7 +23,7 @@ export function NotificationsCard({ notificationsData = [], saveSettings }) {
 
 	const renderNotificationFields = () => {
 		return notificationFields.map((field, i) => {
-			const handleEnabledToggle = (e) => {
+			const handleEnabledToggle = () => {
 				let updatedNotificationFields = [...notificationFields];
 				updatedNotificationFields[i].enabled = !updatedNotificationFields[i].enabled;
 				setNotificationFields(updatedNotificationFields);

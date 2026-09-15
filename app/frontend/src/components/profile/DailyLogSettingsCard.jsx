@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 import { Card } from "./ProfileCards";
 import LogEntry from "@components/form/LogEntryInput";
@@ -62,7 +62,7 @@ const renderlogFields = (logFieldsApiData, enabledLogQids, handleToggle) => {
 	// First, format api array data to an object with key as label
 	let fieldLabels = [];
 	let labelToFields = {};
-	logFieldsApiData.forEach((field, i) => {
+	logFieldsApiData.forEach((field) => {
 		const label = field.label;
 		const fieldData = {
 			id: field.id,

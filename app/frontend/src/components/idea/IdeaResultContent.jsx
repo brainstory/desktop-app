@@ -10,8 +10,6 @@ import IdeaTranscript from "./IdeaTranscript.jsx";
 import IdeaBranches from "./IdeaBranches.jsx";
 import { getQueryParam } from "@helpers/helpers.js";
 import ErrorSection from "../error/ErrorSection.jsx";
-import { useStore } from "@nanostores/react";
-import { $userState } from "@components/global/userStore.js";
 
 export default function IdeaResultContent() {
 	const tabs = {
@@ -20,7 +18,7 @@ export default function IdeaResultContent() {
 		feedback: 2
 	};
 
-	const userState = useStore($userState);
+	const ideaId = getQueryParam("id");
 	const [activeTab, setActiveTab] = useState(tabs.summary);
 	const [isLoading, setIsLoading] = useState(true);
 	const [idea, setIdea] = useState({});
@@ -29,7 +27,10 @@ export default function IdeaResultContent() {
 	const [ideaChildren, setIdeaChildren] = useState(null);
 	const [headingIdxToComments, setHeadingIdxToComments] = useState({});
 	const [isMdSizeOrLess, setIsMdSizeOrLess] = useState(window.innerWidth <= 768);
-	const [feedbackDraftId, setFeedbackDraftId] = useState();
+	const [isUnread, setIsUnread] = useState(false);
+
+	// Opening an unread (imported feedback) idea marks it read.
+	useMarkReadApi(ideaId, isUnread);
 
 	// own ideas have no creator attribution; imported ones carry creator info
 	const isOwnIdea = !idea.creatorEmail && !idea.creatorName;
@@ -41,7 +42,6 @@ export default function IdeaResultContent() {
 		};
 		window.addEventListener("resize", handleResize);
 
-		const ideaId = getQueryParam("id");
 		const tab = getQueryParam("tab");
 		if (tab) {
 			setActiveTab(tabs[tab]);
@@ -52,13 +52,14 @@ export default function IdeaResultContent() {
 		getIdeaApi(ideaId)
 			.then((res) => {
 				if (isCurrent) {
-					useIdeaChildrenApi(ideaId).then(
+					fetchIdeaChildrenData(ideaId).then(
 						([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
 							setIdeaChildren(updateIdeaChildren);
 							setHeadingIdxToComments(updateOidHeadingToFeedbackComments);
 						}
 					);
 
+					setIsUnread(res.isUnread ?? false);
 					let ideaContent = {
 						id: ideaId,
 						title: res.title,
@@ -162,7 +163,6 @@ export default function IdeaResultContent() {
 					idea={idea}
 					isOwnIdea={isOwnIdea}
 					isFeedbackMissing={!parentIdea}
-					requestedDraftId={feedbackDraftId}
 					parentId={parentIdea?.id}
 				/>
 				<TailwindComposedTabs data={tabData} activeTab={activeTab} accentColor="pink" />
@@ -171,7 +171,7 @@ export default function IdeaResultContent() {
 	}
 }
 
-async function useIdeaChildrenApi(ideaId) {
+async function fetchIdeaChildrenData(ideaId) {
 	const result = await getIdeaChildrenApi(ideaId)
 		.then((res) => {
 			const oidHeadingToFeedbackComments = {};
@@ -217,7 +217,7 @@ function useMarkReadApi(id, isUnread) {
 				}
 			})
 			.catch((err) => {
-				console.error("PROBABLY IDEA NOT FOUND WITH ID: " + ideaId);
+				console.error("PROBABLY IDEA NOT FOUND WITH ID: " + id);
 				throw err;
 			});
 		return () => {

@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { TOPICS, CHAT_TYPE } from "@src/const";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam } from "@helpers/helpers";
-import { getIdeaApi } from "@helpers/api/idea";
 
 export function useIdeaIdFromUrl(hasMounted, setIdeaId) {
 	useEffect(() => {

@@ -69,7 +69,7 @@ const BASELINE_SCHEMA: &str = "
 		structured_result TEXT,
 		transcript TEXT NOT NULL DEFAULT '[]',
 		idea_metadata TEXT NOT NULL DEFAULT '{}',
-		parent_idea_id TEXT,
+		parent_idea_id TEXT REFERENCES ideas(id) ON DELETE CASCADE,
 		log_id TEXT,
 		is_unread INTEGER NOT NULL DEFAULT 0,
 		creator_name TEXT,
@@ -101,6 +101,10 @@ const BASELINE_SCHEMA: &str = "
 ///   2: `daily.created_at` column + lookup indexes
 ///   3: `local_date` columns on ideas/log_entries/surveys, freezing each
 ///      activity's local calendar day at write time
+/// The baseline also gained `ideas.parent_idea_id REFERENCES ideas(id)
+/// ON DELETE CASCADE` before first release; databases from pre-release dev
+/// builds simply don't have the constraint (the app-level recursive delete
+/// keeps them correct) and are fine to delete and recreate.
 /// A database created before this framework exists reports version 0 and is
 /// brought forward through every step (the CREATE IF NOT EXISTS statements
 /// make step 1 a no-op for its tables).
@@ -113,6 +117,10 @@ impl Db {
 		// A second app instance (or a stray backup tool) can hold the write
 		// lock briefly; wait instead of failing instantly with SQLITE_BUSY.
 		conn.pragma_update(None, "busy_timeout", 5000)?;
+		// Enforce the parent_idea_id -> ideas(id) foreign key (cascades
+		// deletes through the feedback tree at the DB level, backing the
+		// app-level recursive delete).
+		conn.pragma_update(None, "foreign_keys", "ON")?;
 
 		let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 		if version < 1 {
@@ -228,6 +236,17 @@ impl Db {
 			}
 			Ok(())
 		})
+	}
+
+	/// Remove a setting row entirely (used when secrets move to the
+	/// keychain); a no-op if the row doesn't exist.
+	pub fn delete_setting(&self, key: &str) {
+		if let Err(e) = self
+			.lock()
+			.execute("DELETE FROM settings WHERE key = ?1", params![key])
+		{
+			log::warn!("failed to delete setting '{key}': {e}");
+		}
 	}
 
 	// ---- ideas ----
@@ -606,66 +625,61 @@ impl Db {
 		.flatten()
 	}
 
-	pub fn get_idea_children(&self, id: &str) -> Vec<IdeaItem> {
+	/// Lightweight existence + title lookup (no transcript parsing). Used
+	/// on hot paths like idea autosave. `Ok(None)` = row missing.
+	pub fn get_idea_title(&self, id: &str) -> Result<Option<String>, String> {
 		let conn = self.lock();
-		let mut stmt = match conn.prepare(&format!(
-			"SELECT {} FROM ideas WHERE parent_idea_id = ?1 ORDER BY created_at DESC, rowid DESC",
-			Self::IDEA_COLS
-		)) {
-			Ok(s) => s,
-			Err(e) => {
-				log::warn!("failed to list feedback: {e}");
-				return vec![];
-			}
-		};
+		conn.query_row(
+			"SELECT title FROM ideas WHERE id = ?1",
+			params![id],
+			|row| row.get::<_, String>(0),
+		)
+		.optional()
+		.map_err(|e| format!("failed to read idea {id}: {e}"))
+	}
+
+	pub fn get_idea_children(&self, id: &str) -> Result<Vec<IdeaItem>, String> {
+		let conn = self.lock();
+		let mut stmt = conn
+			.prepare(&format!(
+				"SELECT {} FROM ideas WHERE parent_idea_id = ?1 ORDER BY created_at DESC, rowid DESC",
+				Self::IDEA_COLS
+			))
+			.map_err(|e| format!("failed to list feedback: {e}"))?;
 		let mut children_items: Vec<IdeaItem> = Vec::new();
-		let rows = match stmt.query_map(params![id], Self::row_to_idea) {
-			Ok(r) => r,
-			Err(e) => {
-				log::warn!("failed to list feedback: {e}");
-				return vec![];
-			}
-		};
+		let rows = stmt
+			.query_map(params![id], Self::row_to_idea)
+			.map_err(|e| format!("failed to list feedback: {e}"))?;
 		for row in rows {
 			match row {
 				Ok((_, idea)) => children_items.push(idea),
 				Err(e) => log::error!("skipping unreadable feedback row: {e}"),
 			}
 		}
-		children_items
+		Ok(children_items)
 	}
 
 	/// All top-level ideas with their feedback children, newest first.
 	/// Single query + one grouping pass (no per-idea child lookups).
-	pub fn list_ideas(&self) -> Vec<IdeaItem> {
+	pub fn list_ideas(&self) -> Result<Vec<IdeaItem>, String> {
 		let conn = self.lock();
-		let mut stmt = match conn.prepare(&format!(
-			"SELECT {} FROM ideas ORDER BY created_at DESC, rowid DESC",
-			Self::IDEA_COLS
-		)) {
-			Ok(s) => s,
-			Err(e) => {
-				log::warn!("failed to list ideas: {e}");
-				return vec![];
-			}
-		};
+		let mut stmt = conn
+			.prepare(&format!(
+				"SELECT {} FROM ideas ORDER BY created_at DESC, rowid DESC",
+				Self::IDEA_COLS
+			))
+			.map_err(|e| format!("failed to list ideas: {e}"))?;
 		let mut rows: Vec<(Option<String>, IdeaItem)> = Vec::new();
 		{
-			let queried = stmt.query_map([], Self::row_to_idea);
-			match queried {
-				Ok(rows_iter) => {
-					for row in rows_iter {
-						match row {
-							Ok(item) => rows.push(item),
-							// A row that fails to decode must not vanish
-							// silently - that reads as "the idea is gone".
-							Err(e) => log::error!("skipping unreadable idea row: {e}"),
-						}
-					}
-				}
-				Err(e) => {
-					log::warn!("failed to list ideas: {e}");
-					return vec![];
+			let queried = stmt
+				.query_map([], Self::row_to_idea)
+				.map_err(|e| format!("failed to list ideas: {e}"))?;
+			for row in queried {
+				match row {
+					Ok(item) => rows.push(item),
+					// A row that fails to decode must not vanish
+					// silently - that reads as "the idea is gone".
+					Err(e) => log::error!("skipping unreadable idea row: {e}"),
 				}
 			}
 		}
@@ -690,7 +704,7 @@ impl Db {
 				*idea.feedback.as_mut().unwrap() = feedback;
 			}
 		}
-		ideas
+		Ok(ideas)
 	}
 
 	// ---- logs / surveys / daily ----
@@ -995,7 +1009,7 @@ mod tests {
 		assert!(db.get_idea("parent").unwrap().is_none());
 		assert!(db.get_idea("child").unwrap().is_none());
 		assert!(db.get_idea("grandchild").unwrap().is_none());
-		assert!(db.list_ideas().is_empty());
+		assert!(db.list_ideas().unwrap().is_empty());
 		std::fs::remove_file(path).ok();
 	}
 
@@ -1009,6 +1023,51 @@ mod tests {
 			.expect_err("missing parent must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
 		assert!(db.get_idea("kid").unwrap().is_none(), "nothing inserted");
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn foreign_keys_are_enforced_at_the_schema_level() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		{
+			let conn = db.lock();
+			// a direct SQL insert bypassing the app's checks must hit the FK
+			let ghost = conn.execute(
+				"INSERT INTO ideas (id, created_at, parent_idea_id) VALUES ('orphan', '2026-01-01T00:00:00', 'ghost')",
+				[],
+			);
+			assert!(ghost.is_err(), "FK must reject a missing parent");
+
+			// ON DELETE CASCADE: removing the parent removes the subtree
+			conn.execute("INSERT INTO ideas (id, created_at) VALUES ('p', '2026-01-01T00:00:00')", []).unwrap();
+			conn.execute(
+				"INSERT INTO ideas (id, created_at, parent_idea_id) VALUES ('c', '2026-01-01T00:00:00', 'p')",
+				[],
+			)
+			.unwrap();
+			conn.execute("DELETE FROM ideas WHERE id = 'p'", []).unwrap();
+			let orphans: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM ideas WHERE id = 'c'",
+					[],
+					|row| row.get(0),
+				)
+				.unwrap();
+			assert_eq!(orphans, 0, "cascade must remove the child");
+		}
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn get_idea_title_is_a_lightweight_read() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let meta = serde_json::json!({});
+		db.insert_idea("t1", "The Title", "original", "r", None, &[], &meta, None, None, None, None, None, None)
+			.unwrap();
+		assert_eq!(db.get_idea_title("t1").unwrap().as_deref(), Some("The Title"));
+		assert_eq!(db.get_idea_title("missing").unwrap(), None);
 		std::fs::remove_file(path).ok();
 	}
 }

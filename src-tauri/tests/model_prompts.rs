@@ -17,11 +17,12 @@ fn generate(llm: &LocalLlm, request: &PromptRequest) -> (String, String) {
 	let messages = request.user_messages();
 	let cancel = Arc::new(AtomicBool::new(false));
 	let mut streamed = String::new();
-	let returned = llm
+	let (returned, prompt_tokens) = llm
 		.generate(&system, &messages, request.summarize, &cancel, |chunk| {
 			streamed.push_str(&chunk);
 		})
 		.expect("generation failed");
+	println!("[tokens] prompt: {prompt_tokens}");
 	(returned, streamed)
 }
 

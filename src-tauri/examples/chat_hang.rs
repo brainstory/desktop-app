@@ -51,13 +51,13 @@ fn main() {
 
 	let t = now();
 	let mut chunk_count = 0usize;
-	let output = llm
+	let (output, prompt_tokens) = llm
 		.generate(&system, &user_messages, false, &cancel, |_| {
 			chunk_count += 1;
 		})
 		.expect("generation failed");
 	eprintln!(
-		"[timing] generate: {:?} ({chunk_count} chunks, {} chars)",
+		"[timing] generate: {:?} ({chunk_count} chunks, {prompt_tokens} prompt tokens, {} chars)",
 		t.elapsed(),
 		output.len()
 	);

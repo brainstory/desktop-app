@@ -18,8 +18,6 @@ export default function TimePickerInput({
 	onChange,
 	onKeyDown,
 	picker,
-	onLeftFocus,
-	onRightFocus,
 	...props
 }) {
 	const [flag, setFlag] = useState(false);

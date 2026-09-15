@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
 import { getQueryParam } from "@helpers/helpers";
-import { CHAT_TYPE } from "@src/const";
 
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
@@ -37,7 +36,7 @@ export default function ChatApp() {
 						setIntentProgressState(INTENT_PROGRESS_STATE.start_log);
 					}
 					setLogId(resp.logId);
-					if (!!resp.intentIdeaId) {
+					if (resp.intentIdeaId) {
 						// intent idea draft is found
 						let url = new URL(window.location.href);
 						let params = new URLSearchParams(url.search);

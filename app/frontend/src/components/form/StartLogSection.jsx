@@ -4,7 +4,7 @@ export default function StartLogSection({ logItems, setLogItems, disabled }) {
 	return (
 		<div className="flex flex-col gap-1 my-5 h-[calc(100%-152px)] overflow-y-auto">
 			{logItems.map((item, i) => {
-				const toggleItem = (e) => {
+				const toggleItem = () => {
 					let updateLogItems = [...logItems];
 					updateLogItems[i].value = !updateLogItems[i].value;
 					setLogItems(updateLogItems);

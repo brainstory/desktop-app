@@ -35,7 +35,7 @@ pub async fn get_daily_status(state: State<'_, AppState>) -> Result<DailyStatus,
 
 #[tauri::command]
 pub async fn get_all_ideas(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-	Ok(idea_list(state.db.list_ideas()))
+	Ok(idea_list(state.db.list_ideas()?))
 }
 
 #[tauri::command]
@@ -51,7 +51,7 @@ pub async fn get_idea_children(
 	state: State<'_, AppState>,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
-	Ok(idea_list(state.db.get_idea_children(&idea_id)))
+	Ok(idea_list(state.db.get_idea_children(&idea_id)?))
 }
 
 #[tauri::command]
@@ -114,21 +114,17 @@ pub async fn update_idea(
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	structured_result: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-	if state.db.get_idea(&id)?.is_none() {
+	// One lightweight read for both the existence check and the derived
+	// title, instead of parsing the whole transcript twice.
+	let existing_title = state.db.get_idea_title(&id)?;
+	if existing_title.is_none() {
 		return Err(format!("idea {id} not found"));
 	}
 	let mut derived_title = title;
 	if derived_title.is_none() {
 		if let Some(r) = &result {
-			if !r.is_empty() {
-				let existing = state
-					.db
-					.get_idea(&id)?
-					.map(|i| i.title)
-					.unwrap_or_default();
-				if existing.trim().is_empty() {
-					derived_title = Some(title_from_result(r));
-				}
+			if !r.is_empty() && existing_title.as_deref().unwrap_or_default().trim().is_empty() {
+				derived_title = Some(title_from_result(r));
 			}
 		}
 	}

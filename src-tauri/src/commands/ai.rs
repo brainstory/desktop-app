@@ -119,7 +119,7 @@ pub async fn generate_response(
 	let cancel = take_cancel_token(&state);
 	let settings = AiSettings::load(&state.db);
 
-	let output = run_generation(
+	let (output, prompt_tokens) = run_generation(
 		&state,
 		&settings,
 		system,
@@ -138,7 +138,7 @@ pub async fn generate_response(
 
 	Ok(serde_json::json!({
 		"response": output,
-		"request_message_tokens": 0,
+		"request_message_tokens": prompt_tokens,
 		"request_word_count": word_count,
 		"structured_result": structured,
 	}))
@@ -193,7 +193,7 @@ pub async fn generate_streaming_response(
 			}
 		}
 	};
-	let output = run_generation(
+	let (output, prompt_tokens) = run_generation(
 		&state,
 		&settings,
 		system,
@@ -224,14 +224,14 @@ pub async fn generate_streaming_response(
 			|_| {},
 		)
 		.await;
-		if let Ok(json_output) = json_output {
+		if let Ok((json_output, _)) = json_output {
 			structured = extract_json(&json_output);
 		}
 	}
 
 	Ok(serde_json::json!({
 		"response": output,
-		"request_message_tokens": 0,
+		"request_message_tokens": prompt_tokens,
 		"request_word_count": word_count,
 		"structured_result": structured,
 	}))
@@ -308,6 +308,8 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 
 /// Run one LLM call on the configured backend (local llama.cpp or external
 /// OpenAI-compatible endpoint), streaming pieces through `on_chunk`.
+/// Returns the final text plus the prompt token count (0 when unknown, as
+/// with external endpoints).
 async fn run_generation(
 	state: &State<'_, AppState>,
 	settings: &AiSettings,
@@ -316,7 +318,7 @@ async fn run_generation(
 	summarize: bool,
 	cancel: Arc<AtomicBool>,
 	on_chunk: impl FnMut(String) + Send + 'static,
-) -> Result<String, String> {
+) -> Result<(String, usize), String> {
 	let max_tokens = if summarize {
 		crate::llm::MAX_NEW_TOKENS_RESULT
 	} else {
@@ -324,9 +326,10 @@ async fn run_generation(
 	};
 	if settings.llm_mode == "external" {
 		let client = external_llm(settings)?;
-		client
+		let (text, _prompt_tokens) = client
 			.generate(&system, messages, &cancel, max_tokens, on_chunk)
-			.await
+			.await?;
+		Ok((text, 0))
 	} else {
 		let engine = local_llm(state)?;
 		let messages = messages.to_vec();

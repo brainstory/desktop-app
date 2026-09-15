@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import PinkButton from "@ds/PinkButton";
 import TransparentButton from "@ds/TransparentButton";
 

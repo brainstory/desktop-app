@@ -96,7 +96,7 @@ export default function DashboardSection() {
 
 						<div>
 							<p className="text-xs text-right text-stone-600 italic">
-								Art inspired by 'Oh No Comics' by Alex Norris
+								Art inspired by &lsquo;Oh No Comics&rsquo; by Alex Norris
 							</p>
 						</div>
 					</div>

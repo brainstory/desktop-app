@@ -1,6 +1,6 @@
 import IdeaDocument from "@components/idea/feedback-aggregation/IdeaDocument.jsx";
 import IdeaSidebar from "@components/idea/feedback-aggregation/IdeaSidebar.jsx";
-import React, { useState, useRef } from "react";
+import { useState, useRef } from "react";
 
 export default function IdeaSection({ resultSections, headingIdxToComments, canShare }) {
 	// This should be used to tell the side bar which reaction should be scrolled into view

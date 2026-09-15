@@ -1,5 +1,4 @@
 import EmojiItem from "./EmojiItem";
-import React, { useState } from "react";
 
 /**
  * EmojiList Component

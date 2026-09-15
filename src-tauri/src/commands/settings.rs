@@ -138,27 +138,36 @@ pub async fn save_user_settings(
 #[tauri::command]
 pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
 	let s = AiSettings::load(&state.db);
-	// The HF token is a secret: never echo it to the webview. The settings
-	// form gets only a "is one stored" flag plus a hint; saving null/absent
-	// keeps the stored token and an empty string clears it.
-	let hf_hint = if s.hf_token.is_empty() {
-		None
-	} else {
-		let tail: String = s.hf_token.chars().skip(s.hf_token.chars().count().saturating_sub(4)).collect();
-		Some(format!("••••{tail}"))
+	// Secrets are never echoed to the webview: the form gets a "is one
+	// stored" flag plus a masked hint; saving absent/null keeps the stored
+	// value and an empty string clears it.
+	let masked = |value: &str| -> (bool, Option<String>) {
+		if value.is_empty() {
+			return (false, None);
+		}
+		let tail: String = value
+			.chars()
+			.skip(value.chars().count().saturating_sub(4))
+			.collect();
+		(true, Some(format!("••••{tail}")))
 	};
+	let (hf_set, hf_hint) = masked(&s.hf_token);
+	let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
+	let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
 	// camelCase to match the frontend's field access
 	serde_json::json!({
 		"llmMode": s.llm_mode,
 		"llmModel": s.llm_model,
 		"sttModel": s.stt_model,
-		"hfTokenSet": !s.hf_token.is_empty(),
+		"hfTokenSet": hf_set,
 		"hfTokenHint": hf_hint,
 		"extLlmBaseUrl": s.ext_llm_base_url,
-		"extLlmApiKey": s.ext_llm_api_key,
+		"extLlmApiKeySet": llm_key_set,
+		"extLlmApiKeyHint": llm_key_hint,
 		"extLlmModel": s.ext_llm_model,
 		"extSttBaseUrl": s.ext_stt_base_url,
-		"extSttApiKey": s.ext_stt_api_key,
+		"extSttApiKeySet": stt_key_set,
+		"extSttApiKeyHint": stt_key_hint,
 		"extSttModel": s.ext_stt_model,
 	})
 }
@@ -181,30 +190,28 @@ pub fn save_ai_settings(
 	if let Some(v) = get_str("sttModel") {
 		settings.stt_model = v;
 	}
+	if let Some(v) = get_str("extLlmBaseUrl") {
+		settings.ext_llm_base_url = v;
+	}
+	if let Some(v) = get_str("extLlmModel") {
+		settings.ext_llm_model = v;
+	}
+	if let Some(v) = get_str("extSttBaseUrl") {
+		settings.ext_stt_base_url = v;
+	}
+	if let Some(v) = get_str("extSttModel") {
+		settings.ext_stt_model = v;
+	}
+	// Secrets: the real value never comes back to the webview, so an
+	// absent/null field keeps the stored value and an explicit "" clears it.
 	if let Some(v) = get_str("hfToken") {
-		// absent/null keeps the stored token; "" clears it; otherwise set.
-		// This pairs with get_ai_settings never sending the real token back.
 		settings.hf_token = v;
 	}
-	for key in [
-		"extLlmBaseUrl",
-		"extLlmApiKey",
-		"extLlmModel",
-		"extSttBaseUrl",
-		"extSttApiKey",
-		"extSttModel",
-	] {
-		if let Some(v) = get_str(key) {
-			match key {
-				"extLlmBaseUrl" => settings.ext_llm_base_url = v,
-				"extLlmApiKey" => settings.ext_llm_api_key = v,
-				"extLlmModel" => settings.ext_llm_model = v,
-				"extSttBaseUrl" => settings.ext_stt_base_url = v,
-				"extSttApiKey" => settings.ext_stt_api_key = v,
-				"extSttModel" => settings.ext_stt_model = v,
-				_ => {}
-			}
-		}
+	if let Some(v) = get_str("extLlmApiKey") {
+		settings.ext_llm_api_key = v;
+	}
+	if let Some(v) = get_str("extSttApiKey") {
+		settings.ext_stt_api_key = v;
 	}
 	settings.save(&state.db);
 
@@ -238,7 +245,7 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	);
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let mut got_any = false;
-	let output = client
+	let (output, _) = client
 		.generate(
 			"You are a helpful assistant.",
 			&[crate::types::ChatMessage {

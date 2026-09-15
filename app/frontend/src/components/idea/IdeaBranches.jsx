@@ -1,4 +1,3 @@
-import IdeaPlaceholder from "./IdeaPlaceholder";
 import IdeaCard from "./IdeaCard";
 
 export default function IdeaBranches({ kids }) {

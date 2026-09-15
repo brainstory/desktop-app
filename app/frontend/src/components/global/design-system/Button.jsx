@@ -13,6 +13,7 @@ export default function Button({
 	return (
 		<a href={href}>
 			<button
+				type="button"
 				className={`flex items-center rounded-md ${
 					children !== undefined ? "px-4" : "px-2"
 				} py-2 text-sm font-medium focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 transition-all ${

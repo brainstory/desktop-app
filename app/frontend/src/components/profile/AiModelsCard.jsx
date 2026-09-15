@@ -1,6 +1,7 @@
 import { Card } from "./ProfileCards";
 import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
+import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useState } from "react";
 import { useEffect } from "react";
@@ -39,26 +40,21 @@ export function AiModelsCard({ openSnackbar }) {
 	const [settings, setSettings] = useState(null);
 	const [runtime, setRuntime] = useState({ llm: {}, stt: {} });
 	const [downloadProgress, setDownloadProgress] = useState({});
-	// the token field is deliberately kept out of `settings`: the backend
-	// never sends the stored token back, only hfTokenSet + hfTokenHint
-	const [hfTokenInput, setHfTokenInput] = useState("");
 
 	const refresh = () => {
 		listModelsApi()
 			.then((data) => {
 				setModels(data);
 				// rehydrate in-flight downloads (e.g. after navigating away and back)
-				setDownloadProgress((prev) => {
-					const next = {};
-					for (const list of [data.llm, data.stt]) {
-						for (const model of list) {
-							if (model.downloading) {
-								next[model.id] = model.progress ?? 0;
-							}
+				const next = {};
+				for (const list of [data.llm, data.stt]) {
+					for (const model of list) {
+						if (model.downloading) {
+							next[model.id] = model.progress ?? 0;
 						}
 					}
-					return next;
-				});
+				}
+				setDownloadProgress(next);
 			})
 			.catch((e) => console.log("list models failed", e));
 		getRuntimeStatusApi().then(setRuntime).catch((e) => console.log("status failed", e));
@@ -127,28 +123,13 @@ export function AiModelsCard({ openSnackbar }) {
 			.catch((e) => openSnackbar(false, e));
 	};
 
-	const saveToken = () => {
-		// empty field = keep the stored token (it is never echoed back);
-		// clearing requires the explicit Remove button, which sends ""
-		const payload = {
-			...settings,
-			hfToken: hfTokenInput === "" ? null : hfTokenInput
-		};
-		saveAiSettingsApi(payload)
+	// Secrets: value "" is the backend's clear signal; anything else sets.
+	// The stored value is never round-tripped through the UI.
+	const saveSecret = (key, value) => {
+		saveAiSettingsApi({ ...settings, [key]: value })
 			.then(() => {
-				setHfTokenInput("");
 				refresh();
-				openSnackbar(true, "Token saved");
-			})
-			.catch((e) => openSnackbar(false, e));
-	};
-
-	const removeToken = () => {
-		saveAiSettingsApi({ ...settings, hfToken: "" })
-			.then(() => {
-				setHfTokenInput("");
-				refresh();
-				openSnackbar(true, "Token removed");
+				openSnackbar(true, value === "" ? "Removed" : "Saved");
 			})
 			.catch((e) => openSnackbar(false, e));
 	};
@@ -206,14 +187,19 @@ export function AiModelsCard({ openSnackbar }) {
 				</div>
 				{isDownloading && (
 					<div className="flex items-center gap-3">
-						<div className="w-full bg-stone-200 rounded-full h-2.5">
-							<div
-								className="bg-pink-500 h-2.5 rounded-full transition-all"
-								style={{ width: `${downloadProgress[model.id] ?? 0}%` }}
-							></div>
+						<div className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden">
+							{downloadProgress[model.id] < 0 ? (
+								// backend couldn't determine the total size
+								<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
+							) : (
+								<div
+									className="bg-pink-500 h-2.5 rounded-full transition-all"
+									style={{ width: `${downloadProgress[model.id] ?? 0}%` }}
+								></div>
+							)}
 						</div>
 						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
-							{Math.floor(downloadProgress[model.id] ?? 0)}%
+							{downloadProgress[model.id] < 0 ? "…" : `${Math.floor(downloadProgress[model.id] ?? 0)}%`}
 						</span>
 					</div>
 				)}
@@ -255,7 +241,7 @@ export function AiModelsCard({ openSnackbar }) {
 			columns={3}
 		>
 			<div className="mb-4 bg-stone-100 border border-stone-200 rounded-lg p-4 text-sm">
-				<p className="font-semibold mb-1">What's being used right now</p>
+				<p className="font-semibold mb-1">What&rsquo;s being used right now</p>
 				<p>
 					<span className="font-medium">Brainstorming:</span> {activeLlmLabel}
 				</p>
@@ -324,31 +310,17 @@ export function AiModelsCard({ openSnackbar }) {
 					<div className="border border-stone-200 rounded-lg p-4 text-sm">
 						<p className="font-semibold mb-1">HuggingFace access token (optional)</p>
 						<p className="text-stone-500 mb-2">
-							Authenticated downloads are faster and never hit HuggingFace's
+							Authenticated downloads are faster and never hit HuggingFace&rsquo;s
 							anonymous rate limits. Create a free read token at
 							huggingface.co/settings/tokens.
 						</p>
-						{settings.hfTokenSet && (
-							<p className="text-green-700 mb-2">
-								A token is saved ({settings.hfTokenHint}). It is stored locally
-								and never displayed.
-							</p>
-						)}
-						<div className="flex gap-2">
-							<input
-								type="password"
-								value={hfTokenInput}
-								onChange={(e) => setHfTokenInput(e.target.value)}
-								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 p-2"
-								placeholder={settings.hfTokenSet ? "Leave empty to keep the saved token" : "hf_..."}
-							/>
-							<PinkButton onClick={saveToken} disabled={hfTokenInput === ""}>
-								Save Token
-							</PinkButton>
-							{settings.hfTokenSet && (
-								<BorderedButton onClick={removeToken}>Remove</BorderedButton>
-							)}
-						</div>
+						<SecretField
+							placeholder="hf_..."
+							stored={settings.hfTokenSet}
+							hint={settings.hfTokenHint}
+							saveLabel="Save Token"
+							onSave={(value) => saveSecret("hfToken", value)}
+						/>
 					</div>
 				)}
 			</div>
@@ -413,11 +385,11 @@ export function AiModelsCard({ openSnackbar }) {
 						<label className="block mb-1 text-sm font-medium text-stone-900">
 							LLM API key (if needed)
 						</label>
-						<input
-							type="password"
-							value={settings.extLlmApiKey ?? ""}
-							onChange={updateField("extLlmApiKey")}
-							className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2"
+						<SecretField
+							stored={settings.extLlmApiKeySet}
+							hint={settings.extLlmApiKeyHint}
+							placeholder="sk-..."
+							onSave={(value) => saveSecret("extLlmApiKey", value)}
 						/>
 					</div>
 					<div>
@@ -448,11 +420,11 @@ export function AiModelsCard({ openSnackbar }) {
 						<label className="block mb-1 text-sm font-medium text-stone-900">
 							STT API key (if needed)
 						</label>
-						<input
-							type="password"
-							value={settings.extSttApiKey ?? ""}
-							onChange={updateField("extSttApiKey")}
-							className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2"
+						<SecretField
+							stored={settings.extSttApiKeySet}
+							hint={settings.extSttApiKeyHint}
+							placeholder="sk-..."
+							onSave={(value) => saveSecret("extSttApiKey", value)}
 						/>
 					</div>
 				</div>

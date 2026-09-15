@@ -7,7 +7,6 @@ import BorderedButton from "@ds/BorderedButton.jsx";
 export default function IdeaTitleBar({
 	idea,
 	isOwnIdea,
-	isFeedbackMissing,
 	requestedDraftId,
 	parentId
 }) {
@@ -196,7 +195,7 @@ export default function IdeaTitleBar({
 										role="textbox"
 										contentEditable="true"
 										onKeyDown={handleKeyDown}
-										onFocus={(e) => {
+										onFocus={() => {
 											// set cursor to end when focused
 											const range = document.createRange();
 											const sel = window.getSelection();
