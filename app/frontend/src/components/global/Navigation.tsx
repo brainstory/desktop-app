@@ -22,7 +22,7 @@ function Navigation() {
 	};
 
 	const handleNavigate = (href: string) => {
-		window.location.href = href;
+		window.location.assign(href);
 	};
 
 	return (

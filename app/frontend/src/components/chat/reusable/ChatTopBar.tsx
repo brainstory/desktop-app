@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { CHAT_SAVE_STATE } from "@src/const";
 
 import TransparentButton from "@ds/TransparentButton";
@@ -21,20 +21,17 @@ export default function ChatTopBar({
 	leftButtonHref,
 	saveState
 }: ChatTopBarProps) {
-	const [saveIconName, setSaveIconName] = useState<string | undefined>(undefined);
 	const isLeftButton = leftButtonHref && leftButtonIcon;
 
-	useEffect(() => {
-		let iconName = null;
-		if (saveState === CHAT_SAVE_STATE.SAVING) {
-			iconName = "sync-outline"; //reload-circle-outline
-		} else if (saveState === CHAT_SAVE_STATE.SUCCESS) {
-			iconName = "checkmark-outline";
-		} else if (saveState === CHAT_SAVE_STATE.FAILED) {
-			iconName = "close-outline";
-		}
-		setSaveIconName(iconName ?? undefined);
-	}, [saveState]);
+	// derived from saveState; no effect/state needed
+	const saveIconName =
+		saveState === CHAT_SAVE_STATE.SAVING
+			? "sync-outline" //reload-circle-outline
+			: saveState === CHAT_SAVE_STATE.SUCCESS
+				? "checkmark-outline"
+				: saveState === CHAT_SAVE_STATE.FAILED
+					? "close-outline"
+					: undefined;
 
 	const renderLeftComponent = () => {
 		if (saveIconName) {

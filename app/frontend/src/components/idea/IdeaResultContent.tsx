@@ -20,7 +20,10 @@ export default function IdeaResultContent() {
 	};
 
 	const ideaId = getQueryParam("id") ?? undefined;
-	const [activeTab, setActiveTab] = useState(tabs.summary);
+	const [activeTab] = useState<number>(() => {
+		const tab = getQueryParam("tab");
+		return tab ? (tabs[tab] ?? 0) : tabs.summary;
+	});
 	const [isLoading, setIsLoading] = useState(true);
 	const [idea, setIdea] = useState<IdeaDetail>({ id: "" });
 	const [parentIdea, setParentIdea] = useState<IdeaDetail["parentIdea"]>(null);
@@ -42,11 +45,6 @@ export default function IdeaResultContent() {
 			setIsMdSizeOrLess(window.innerWidth <= 768);
 		};
 		window.addEventListener("resize", handleResize);
-
-		const tab = getQueryParam("tab");
-		if (tab) {
-			setActiveTab(tabs[tab] ?? 0);
-		}
 
 		let isCurrent = true;
 

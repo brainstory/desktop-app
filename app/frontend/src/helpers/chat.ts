@@ -6,17 +6,17 @@ import { getQueryParam } from "@helpers/helpers";
 import type { RefObject, Dispatch, SetStateAction } from "react";
 
 export function useIdeaIdFromUrl(
-	hasMounted: RefObject<boolean>,
+	hasMountedRef: RefObject<boolean>,
 	setIdeaId: Dispatch<SetStateAction<string | undefined>>
 ): void {
 	useEffect(() => {
-		if (hasMounted.current) {
+		if (hasMountedRef.current) {
 			return;
 		}
 		// this is for safeguarding against extra idea saves from weird edges cases
 		// related to the ideaId once being in the query parameter but isn't anymore
 		setIdeaId(getQueryParam("id") ?? undefined);
-		hasMounted.current = true;
+		hasMountedRef.current = true;
 	}, []);
 }
 

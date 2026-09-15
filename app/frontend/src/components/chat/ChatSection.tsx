@@ -56,7 +56,6 @@ export function ChatSection({
 	/** true if result finished generating result */
 	const [readyToSave, setReadyToSave] = useState(false);
 	/** true if there's no id in query param and conversation meets length */
-	const [readyToCreateIdea, setReadyToCreateIdea] = useState(false);
 	/** true if user message was inappropriate by the AI provider */
 	const [isUserResendRequired, setIsUserResendRequired] = useState(false);
 	/** if isUserResendRequired is true, then this field value is the inappropriate flagged transcript */
@@ -78,6 +77,28 @@ export function ChatSection({
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ||
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT;
 
+	const fetchParentIdea = (parentId: string): void => {
+		getIdeaApi(parentId)
+			.then((res) => {
+				const ideaContent = {
+					id: res.id,
+					title: res.title,
+					summary: res.summary
+				};
+				document.title = `Feedback for "${res.title}"`;
+				setParentIdea(ideaContent);
+			})
+			.catch((err) => {
+				console.log("Parent Idea not found with ID " + parentId, err);
+				setErrorComponent(
+					<ErrorSection
+						title="Shared idea not found"
+						paragraphs={["This idea does not exist or you do not have access"]}
+					/>
+				);
+			});
+	};
+
 	const hasMounted = useRef(false);
 	/** guards createIdeaApi: the effect can legally re-run while a create
 	 *  is still in flight (StrictMode double-invoke, conversation updates);
@@ -85,6 +106,11 @@ export function ChatSection({
 	const creatingIdeaRef = useRef(false);
 
 	useIdeaIdFromUrl(hasMounted, setIdeaId);
+
+	// derived: an idea must be created as soon as the conversation is long
+	// enough and no idea row exists yet
+	const readyToCreateIdea =
+		!ideaId && currConversation.length >= minConversationLenForCreateAndEnd;
 
 	useEffect(() => {
 		// this useEffect is to protect from creating duplicates of the same idea if the currConversation is set twice
@@ -103,11 +129,11 @@ export function ChatSection({
 				.catch((err) => {
 					creatingIdeaRef.current = false;
 					setAiError(`Could not save this session: ${normalizeApiError(err)}`);
-					// allow the next conversation update to retry creation
-					setReadyToCreateIdea(false);
+					// readyToCreateIdea stays true; the next conversation
+					// update re-runs this effect and retries creation
 				});
 		}
-	}, [readyToCreateIdea]);
+	}, [readyToCreateIdea, currConversation]);
 
 	useEffect(() => {
 		if (currConversation.length >= minConversationLenForCreateAndEnd) {
@@ -124,8 +150,6 @@ export function ChatSection({
 						setSaveState(CHAT_SAVE_STATE.FAILED);
 						setAiError(`Autosave failed: ${normalizeApiError(e)}`);
 					});
-			} else {
-				setReadyToCreateIdea(true);
 			}
 		}
 	}, [currConversation]);
@@ -178,27 +202,6 @@ export function ChatSection({
 		}
 	}, [ideaId]);
 
-	const fetchParentIdea = (parentId: string): void => {
-		getIdeaApi(parentId)
-			.then((res) => {
-				const ideaContent = {
-					id: res.id,
-					title: res.title,
-					summary: res.summary
-				};
-				document.title = `Feedback for "${res.title}"`;
-				setParentIdea(ideaContent);
-			})
-			.catch((err) => {
-				console.log("Parent Idea not found with ID " + parentId, err);
-				setErrorComponent(
-					<ErrorSection
-						title="Shared idea not found"
-						paragraphs={["This idea does not exist or you do not have access"]}
-					/>
-				);
-			});
-	};
 
 	/** Generate assistant response. NOT for the final outline result. */
 	const handleGetResponse = () => {

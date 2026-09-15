@@ -27,7 +27,6 @@ const EditableTextItem = ({ initialText, setText }: EditableTextItemProps) => {
 		if (isEditing) {
 			inputRef.current?.focus();
 		}
-		setThisText(thisText);
 	}, [isEditing]);
 
 	return (

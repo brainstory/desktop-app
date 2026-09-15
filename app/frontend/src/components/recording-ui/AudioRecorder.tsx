@@ -29,7 +29,7 @@ interface AudioRecorderProps {
 	currConversation?: ChatMessage[];
 	conversationState: string;
 	getCoachResponse: () => Promise<void>;
-	setUiTranscript: (transcript: string) => void | Promise<void>;
+	onTranscript: (transcript: string) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
 	isCompressed?: boolean | string | null;
 	startRecordingCallback?: () => void;
@@ -39,27 +39,17 @@ const AudioRecorder = ({
 	isDisabled,
 	conversationState,
 	getCoachResponse,
-	setUiTranscript,
+	onTranscript,
 	setIsTranscribing,
 	isCompressed,
 	startRecordingCallback
 }: AudioRecorderProps) => {
 	const [time, setTime] = useState(0);
 	const [isRunning, setIsRunning] = useState(false);
-	const [transcript, setTranscript] = useState("");
+
 
 	// Timer
 	useTimer(isRunning, setTime);
-
-	useEffect(() => {
-		if (transcript.length > 0) {
-			setUiTranscript(transcript);
-			// Clear the transcript so saying or typing the same thing twice
-			// in a row still triggers the effect (identical strings would
-			// otherwise be swallowed by React's state dedup).
-			setTranscript("");
-		}
-	}, [transcript]);
 
 	useEffect(() => {
 		if (isRunning) {
@@ -88,7 +78,7 @@ const AudioRecorder = ({
 					conversationState={conversationState}
 					setIsRecording={setIsRunning}
 					setIsTranscribing={setIsTranscribing}
-					setTranscript={setTranscript}
+					onTranscript={onTranscript}
 					getCoachResponse={getCoachResponse}
 					time={time}
 					resetTimer={() => setTime(0)}

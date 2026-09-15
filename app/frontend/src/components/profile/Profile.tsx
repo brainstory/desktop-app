@@ -26,7 +26,10 @@ export default function Profile() {
 	const userState = useStore($userState);
 	const { createdAt } = userState;
 
-	const [activeTab, setActiveTab] = useState(0);
+	const [activeTab] = useState<number>(() => {
+		const tab = getQueryParam("tab");
+		return tab ? (TAB_MAP[tab] ?? 0) : 0;
+	});
 	const [userName, setUserName] = useState<string>("");
 	const [userTimezone, setUserTimezone] = useState("");
 	const [notifications, setNotifications] = useState<NotificationSetting[]>([]);
@@ -38,14 +41,6 @@ export default function Profile() {
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState(ERROR_COPY.DEFAULT);
 	const [isLoading, setIsLoading] = useState(true);
-
-	useEffect(() => {
-		setSettingDataFromApi();
-		const tab = getQueryParam("tab");
-		if (tab) {
-			setActiveTab(TAB_MAP[tab] ?? 0);
-		}
-	}, []);
 
 	const setSettingDataFromApi = () => {
 		getUserSettingsApi()
@@ -59,6 +54,10 @@ export default function Profile() {
 			})
 			.catch((e) => console.log("error getting user settings", e));
 	};
+
+	useEffect(() => {
+		setSettingDataFromApi();
+	}, []);
 
 	const openSnackbar = (isSuccess: boolean, message: string): void => {
 		if (isSuccess) {

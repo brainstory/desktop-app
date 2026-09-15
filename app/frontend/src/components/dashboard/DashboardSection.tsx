@@ -16,7 +16,6 @@ import AiSetupNeeded from "./AiSetupNeeded";
 export default function DashboardSection() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
 	const [isLoading, setIsLoading] = useState(true);
-	const [showGetStarted, setShowGetStarted] = useState(false);
 	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
 	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
@@ -31,17 +30,18 @@ export default function DashboardSection() {
 			.finally(() => setIsLoading(false));
 	}, []);
 
+	// derived during render
+	const hasCreatedIdea =
+		userIdeas?.reduce((acc: boolean, idea: IdeaListItem) => acc || !idea.creatorEmail, false) ?? false;
+	const showGetStarted = !hasCreatedIdea;
+
 	useEffect(() => {
 		if (userIdeas) {
-			const hasCreatedIdea =
-				userIdeas?.reduce((acc: boolean, idea: IdeaListItem) => acc || !idea.creatorEmail, false) ?? false;
-			setShowGetStarted(!hasCreatedIdea);
-
 			// keep the onboarding flag in sync with reality (e.g. for past
 			// users who already created ideas before /get-started existed)
 			setGettingStartedDone(hasCreatedIdea);
 		}
-	}, [userIdeas]);
+	}, [userIdeas, hasCreatedIdea]);
 
 	const handleImport = () => {
 		importShareApi()

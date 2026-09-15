@@ -13,7 +13,7 @@ interface RecordButtonProps {
 	conversationState: string;
 	setIsRecording: (recording: boolean) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
-	setTranscript: (transcript: string) => void;
+	onTranscript: (transcript: string) => void;
 	getCoachResponse: () => Promise<void>;
 	time: number;
 	resetTimer: () => void;
@@ -26,7 +26,7 @@ function RecordButton({
 	conversationState,
 	setIsRecording,
 	setIsTranscribing,
-	setTranscript,
+	onTranscript,
 	getCoachResponse,
 	time,
 	resetTimer,
@@ -35,9 +35,9 @@ function RecordButton({
 	const RECORDING_MAX_DURATION = 240000; // 4 minutes
 
 	const [warningType, setWarningType] = useState<string | null>(null);
-	const [readyToSend, setReadyToSend] = useState(
-		conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript
-	);
+	// derived: the parent drives when the coach should respond
+	const readyToSend =
+		conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript;
 	const [status, setStatus] = useState("idle");
 	const [isTextInput, setIsTextInput] = useState(false);
 	const [userTextInput, setUserTextInput] = useState("");
@@ -55,20 +55,22 @@ function RecordButton({
 		? "w-[60px] h-[60px] group-hover:w-[66px] group-hover:h-[66px]"
 		: "w-[108px] h-[108px] group-hover:w-[116px] group-hover:h-[116px]";
 
-	useEffect(() => {
-		setReadyToSend(conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript);
-	}, [conversationState]);
+	// one-shot guard so the coach response fires once per ReadyToSend
+	const respondedRef = useRef(false);
 
 	useEffect(() => {
-		if (readyToSend === true) {
+		if (readyToSend && !respondedRef.current) {
+			respondedRef.current = true;
 			resetTimer();
 			getCoachResponse()
 				.catch((err) => console.error("coach response failed", err))
 				.finally(() => {
-					setReadyToSend(false);
 					// clear any possible user text input
 					setUserTextInput("");
 				});
+		}
+		if (!readyToSend) {
+			respondedRef.current = false;
 		}
 	}, [readyToSend]);
 
@@ -145,9 +147,7 @@ function RecordButton({
 
 	function handleError(error: unknown): void {
 		setIsTranscribing(false);
-		setTranscript("");
 		console.log(error);
-		setReadyToSend(false);
 		setErrorMessage(normalizeApiError(error));
 		setWarningType("error");
 	}
@@ -159,7 +159,7 @@ function RecordButton({
 
 		apiCall(blobby)
 			.then((transcript) => {
-				setTranscript(transcript);
+				onTranscript(transcript);
 				setIsTranscribing(false);
 				// No setReadyToSend here: sending is driven by
 				// conversationState turning ReadyToSendUserTranscript, which
@@ -183,7 +183,7 @@ function RecordButton({
 	}
 
 	function handleTextSend() {
-		setTranscript(userTextInput);
+		onTranscript(userTextInput);
 	}
 
 	function renderInputComponent() {

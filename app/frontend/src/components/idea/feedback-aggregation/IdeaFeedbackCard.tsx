@@ -19,8 +19,10 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText, labels } = feedback;
 	const ref = useRef<HTMLDivElement | null>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
+	// derived: this card is the one the sidebar currently has focused
+	const isFocused = focusedIdea?.ideaId === ideaId && focusedIdea?.labels === labels;
 	const [isShowingMore, setIsShowingMore] = useState(false);
-	const [isFocused, setIsFocused] = useState(false);
+
 
 	useEffect(() => {
 		const { offsetHeight, scrollHeight } = ref.current || {};
@@ -31,13 +33,9 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 			setIsTruncated(false);
 		}
 
-		// Check if the feedback is currently focused and scroll into view if true
+		// Currently focused -> scroll into view
 		if (focusedIdea?.ideaId === ideaId && focusedIdea?.labels === labels) {
 			ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-			setIsFocused(true);
-		} else {
-			// Prevents issue where it doesn't remove if other elements clicked
-			setIsFocused(false);
 		}
 	}, [ref, focusedIdea, ideaId, labels]);
 

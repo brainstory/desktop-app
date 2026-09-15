@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { CONVERSATION_STATE, CHAT_SAVE_STATE } from "@src/const";
 import { addConversationMessage } from "@helpers/chat";
 import AudioRecorder from "@components/recording-ui/AudioRecorder";
@@ -33,14 +32,10 @@ export default function ChatRecorder({
 	allowFinishMinConversationLength
 }: ChatRecorderProps) {
 	/** if the max content is met, disable further addition to conversation */
-	const [forceFinish, setForceFinish] = useState(currConversation.length > 100);
-
-	useEffect(() => {
-		if (currConversation.length > 100) {
-			// unbounded conversations degrade model quality; force the result
-			setForceFinish(true);
-		}
-	}, [currConversation]);
+	// unbounded conversations degrade model quality; force the result.
+	// Derived during render: the conversation only ever grows, so once this
+	// is true it stays true.
+	const forceFinish = currConversation.length > 100;
 
 	return (
 		<section
@@ -61,7 +56,7 @@ export default function ChatRecorder({
 						setConversationState(CONVERSATION_STATE.Idle);
 					}
 				}}
-			setUiTranscript={async (userMessage) => {
+			onTranscript={async (userMessage: string) => {
 				const isUser = true;
 				const next = await addConversationMessage(
 					userMessage,

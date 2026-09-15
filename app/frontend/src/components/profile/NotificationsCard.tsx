@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { NotificationSetting } from "@helpers/api/settings";
 
 import { Card } from "./ProfileCards";
@@ -15,10 +15,13 @@ interface NotificationsCardProps {
 export function NotificationsCard({ notificationsData = [], saveSettings }: NotificationsCardProps) {
 	const [notificationFields, setNotificationFields] = useState<NotificationSetting[]>(notificationsData);
 	const [hasChanged, setHasChanged] = useState(false);
-
-	useEffect(() => {
+	// reset local edits whenever the parent passes fresh data (the
+	// documented "adjust state when props change" render-time pattern)
+	const [prevData, setPrevData] = useState(notificationsData);
+	if (prevData !== notificationsData) {
+		setPrevData(notificationsData);
 		setNotificationFields(notificationsData);
-	}, [notificationsData]);
+	}
 
 	const handleSaveClick = () => {
 		saveSettings(notificationFields);
