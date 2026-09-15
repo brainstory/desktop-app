@@ -41,13 +41,15 @@ export default function IdeaDocument({
 				<div key={outerIndex} id={`heading-${outerIndex}`}>
 					<ReactMarkdown>{section.heading}</ReactMarkdown>
 					<ReactMarkdown>{section.body}</ReactMarkdown>
-					<div id={`emojiList-${outerIndex}`}>
-						<EmojiList
-							reactions={headingIdxToComments[outerIndex]}
-							onReactionClick={onReactionClick}
-							isFocused={Number(focusedSection) === outerIndex}
-						/>
-					</div>
+					{(headingIdxToComments[outerIndex]?.length ?? 0) > 0 && (
+						<div id={`emojiList-${outerIndex}`}>
+							<EmojiList
+								reactions={headingIdxToComments[outerIndex]}
+								onReactionClick={onReactionClick}
+								isFocused={focusedSection != null && Number(focusedSection) === outerIndex}
+							/>
+						</div>
+					)}
 				</div>
 			))}
 		</div>

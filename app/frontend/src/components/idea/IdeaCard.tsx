@@ -140,22 +140,18 @@ function FeedbackStack({ ideaId, feedback = [] }: FeedbackStackProps) {
 }
 
 function PinkIcon({ shared }: { shared?: boolean }) {
-	let icon = "flash";
-	if (shared) {
-		// if shared then is a feedback message
-		icon = "mail-outline";
-	}
+	const icon = shared ? "mail-outline" : "flash";
 
+	// Inline (not floated): the title is a line-clamp box, which ignores
+	// floats and would push the icon onto its own line above the title.
 	return (
-		<div className="float-left">
-			<span className="flex items-center justify-center mt-1 mr-2 w-6 h-6 bg-pink-100 text-pink-600 rounded-full -left-4 ring-8 ring-white">
-				<ion-icon
-					class="w-4 md hydrated"
-					name={icon}
-					role="img"
-					aria-label={shared ? "feedback message" : "flash"}
-				></ion-icon>
-			</span>
-		</div>
+		<span className="inline-flex items-center justify-center align-middle mr-2 w-6 h-6 shrink-0 bg-pink-100 text-pink-600 rounded-full ring-4 ring-white">
+			<ion-icon
+				class="w-4 hydrated"
+				name={icon}
+				role="img"
+				aria-label={shared ? "feedback message" : "idea highlight"}
+			></ion-icon>
+		</span>
 	);
 }
