@@ -83,7 +83,13 @@ pnpm tauri:dev        # dev: astro dev server + debug build
 pnpm tauri:build      # release build + .app + DMG (via scripts/make-dmg.sh,
                       # using plain hdiutil - tauri's own dmg bundler needs
                       # AppleScript control of Finder and fails headless)
+pnpm -C app/frontend typecheck   # tsc --noEmit + astro check (strict)
+pnpm -C app/frontend test        # vitest
+pnpm -C app/frontend lint        # eslint
 ```
+
+The frontend is TypeScript (`.ts` / `.tsx`; `.astro` pages stay `.astro`).
+Keep `pnpm -C app/frontend typecheck` green alongside tests and lint.
 
 Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12+.
 The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
