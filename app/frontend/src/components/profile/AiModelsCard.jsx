@@ -10,6 +10,7 @@ import {
 	getAiSettingsApi,
 	saveAiSettingsApi,
 	downloadModelApi,
+	cancelDownloadApi,
 	deleteModelApi,
 	activateModelApi,
 	testLlmEndpointApi,
@@ -38,6 +39,9 @@ export function AiModelsCard({ openSnackbar }) {
 	const [settings, setSettings] = useState(null);
 	const [runtime, setRuntime] = useState({ llm: {}, stt: {} });
 	const [downloadProgress, setDownloadProgress] = useState({});
+	// the token field is deliberately kept out of `settings`: the backend
+	// never sends the stored token back, only hfTokenSet + hfTokenHint
+	const [hfTokenInput, setHfTokenInput] = useState("");
 
 	const refresh = () => {
 		listModelsApi()
@@ -123,6 +127,32 @@ export function AiModelsCard({ openSnackbar }) {
 			.catch((e) => openSnackbar(false, e));
 	};
 
+	const saveToken = () => {
+		// empty field = keep the stored token (it is never echoed back);
+		// clearing requires the explicit Remove button, which sends ""
+		const payload = {
+			...settings,
+			hfToken: hfTokenInput === "" ? null : hfTokenInput
+		};
+		saveAiSettingsApi(payload)
+			.then(() => {
+				setHfTokenInput("");
+				refresh();
+				openSnackbar(true, "Token saved");
+			})
+			.catch((e) => openSnackbar(false, e));
+	};
+
+	const removeToken = () => {
+		saveAiSettingsApi({ ...settings, hfToken: "" })
+			.then(() => {
+				setHfTokenInput("");
+				refresh();
+				openSnackbar(true, "Token removed");
+			})
+			.catch((e) => openSnackbar(false, e));
+	};
+
 	const updateField = (key) => (e) => {
 		setSettings({ ...settings, [key]: e.target.value });
 	};
@@ -162,14 +192,29 @@ export function AiModelsCard({ openSnackbar }) {
 								Download ({formatSize(model.sizeBytes)})
 							</PinkButton>
 						)}
+						{isDownloading && (
+							<BorderedButton
+								onClick={() =>
+									cancelDownloadApi(model.id)
+										.catch((e) => openSnackbar(false, e))
+								}
+							>
+								Cancel
+							</BorderedButton>
+						)}
 					</div>
 				</div>
 				{isDownloading && (
-					<div className="w-full bg-stone-200 rounded-full h-2.5">
-						<div
-							className="bg-pink-500 h-2.5 rounded-full transition-all"
-							style={{ width: `${downloadProgress[model.id] ?? 0}%` }}
-						></div>
+					<div className="flex items-center gap-3">
+						<div className="w-full bg-stone-200 rounded-full h-2.5">
+							<div
+								className="bg-pink-500 h-2.5 rounded-full transition-all"
+								style={{ width: `${downloadProgress[model.id] ?? 0}%` }}
+							></div>
+						</div>
+						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
+							{Math.floor(downloadProgress[model.id] ?? 0)}%
+						</span>
 					</div>
 				)}
 			</div>
@@ -283,23 +328,26 @@ export function AiModelsCard({ openSnackbar }) {
 							anonymous rate limits. Create a free read token at
 							huggingface.co/settings/tokens.
 						</p>
+						{settings.hfTokenSet && (
+							<p className="text-green-700 mb-2">
+								A token is saved ({settings.hfTokenHint}). It is stored locally
+								and never displayed.
+							</p>
+						)}
 						<div className="flex gap-2">
 							<input
 								type="password"
-								value={settings.hfToken ?? ""}
-								onChange={updateField("hfToken")}
+								value={hfTokenInput}
+								onChange={(e) => setHfTokenInput(e.target.value)}
 								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 p-2"
-								placeholder="hf_..."
+								placeholder={settings.hfTokenSet ? "Leave empty to keep the saved token" : "hf_..."}
 							/>
-							<PinkButton
-								onClick={() =>
-									saveAiSettingsApi(settings)
-										.then(() => openSnackbar(true, "Token saved"))
-										.catch((e) => openSnackbar(false, e))
-								}
-							>
+							<PinkButton onClick={saveToken} disabled={hfTokenInput === ""}>
 								Save Token
 							</PinkButton>
+							{settings.hfTokenSet && (
+								<BorderedButton onClick={removeToken}>Remove</BorderedButton>
+							)}
 						</div>
 					</div>
 				)}

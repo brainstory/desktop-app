@@ -9,7 +9,7 @@ fn idea_list(ideas: Vec<IdeaItem>) -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn get_user(state: State<'_, AppState>) -> UserData {
+pub async fn get_user(state: State<'_, AppState>) -> Result<UserData, String> {
 	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
 	let timezone = state
 		.db
@@ -19,40 +19,43 @@ pub fn get_user(state: State<'_, AppState>) -> UserData {
 		.db
 		.get_setting("created_at")
 		.unwrap_or_else(|| "1970-01-01T00:00:00".into());
-	UserData {
+	Ok(UserData {
 		email: None,
 		name,
 		mail_verified: true,
 		timezone,
 		created_at,
+	})
+}
+
+#[tauri::command]
+pub async fn get_daily_status(state: State<'_, AppState>) -> Result<DailyStatus, String> {
+	Ok(state.db.get_daily_status())
+}
+
+#[tauri::command]
+pub async fn get_all_ideas(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+	Ok(idea_list(state.db.list_ideas()))
+}
+
+#[tauri::command]
+pub async fn get_idea(state: State<'_, AppState>, idea_id: String) -> Result<IdeaItem, String> {
+	match state.db.get_idea(&idea_id)? {
+		Some(idea) => Ok(idea),
+		None => Err(format!("idea {idea_id} not found")),
 	}
 }
 
 #[tauri::command]
-pub fn get_daily_status(state: State<'_, AppState>) -> DailyStatus {
-	state.db.get_daily_status()
+pub async fn get_idea_children(
+	state: State<'_, AppState>,
+	idea_id: String,
+) -> Result<serde_json::Value, String> {
+	Ok(idea_list(state.db.get_idea_children(&idea_id)))
 }
 
 #[tauri::command]
-pub fn get_all_ideas(state: State<'_, AppState>) -> serde_json::Value {
-	idea_list(state.db.list_ideas())
-}
-
-#[tauri::command]
-pub fn get_idea(state: State<'_, AppState>, idea_id: String) -> Result<IdeaItem, String> {
-	state
-		.db
-		.get_idea(&idea_id)
-		.ok_or_else(|| format!("idea {idea_id} not found"))
-}
-
-#[tauri::command]
-pub fn get_idea_children(state: State<'_, AppState>, idea_id: String) -> serde_json::Value {
-	idea_list(state.db.get_idea_children(&idea_id))
-}
-
-#[tauri::command]
-pub fn create_idea(
+pub async fn create_idea(
 	state: State<'_, AppState>,
 	result: Option<String>,
 	transcript: Option<Vec<crate::types::ChatMessage>>,
@@ -66,11 +69,8 @@ pub fn create_idea(
 	let result = result.unwrap_or_default();
 	let transcript = transcript.unwrap_or_default();
 
-	if let Some(parent_id) = &parent_idea_id {
-		if state.db.get_idea(parent_id).is_none() {
-			return Err(format!("parent idea {parent_id} not found"));
-		}
-	}
+	// (The parent's existence is verified inside insert_idea's transaction,
+	// so a concurrent delete can't create an orphan.)
 
 	let mut title = String::new();
 	if !result.is_empty() {
@@ -106,7 +106,7 @@ pub fn create_idea(
 }
 
 #[tauri::command]
-pub fn update_idea(
+pub async fn update_idea(
 	state: State<'_, AppState>,
 	id: String,
 	title: Option<String>,
@@ -114,14 +114,18 @@ pub fn update_idea(
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	structured_result: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-	if state.db.get_idea(&id).is_none() {
+	if state.db.get_idea(&id)?.is_none() {
 		return Err(format!("idea {id} not found"));
 	}
 	let mut derived_title = title;
 	if derived_title.is_none() {
 		if let Some(r) = &result {
 			if !r.is_empty() {
-				let existing = state.db.get_idea(&id).map(|i| i.title).unwrap_or_default();
+				let existing = state
+					.db
+					.get_idea(&id)?
+					.map(|i| i.title)
+					.unwrap_or_default();
 				if existing.trim().is_empty() {
 					derived_title = Some(title_from_result(r));
 				}
@@ -144,7 +148,7 @@ pub fn update_idea(
 }
 
 #[tauri::command]
-pub fn mark_idea_read(
+pub async fn mark_idea_read(
 	state: State<'_, AppState>,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
@@ -153,7 +157,7 @@ pub fn mark_idea_read(
 }
 
 #[tauri::command]
-pub fn delete_idea(
+pub async fn delete_idea(
 	state: State<'_, AppState>,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
@@ -162,7 +166,7 @@ pub fn delete_idea(
 }
 
 #[tauri::command]
-pub fn get_log_questions(state: State<'_, AppState>) -> serde_json::Value {
+pub async fn get_log_questions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
 	let enabled_ids = enabled_log_ids(&state);
 	let answers = state.db.get_log_answers_today();
 	let log: Vec<LogQuestionItem> = DEFAULT_LOG_QUESTIONS
@@ -177,11 +181,11 @@ pub fn get_log_questions(state: State<'_, AppState>) -> serde_json::Value {
 		})
 		.filter(|q| enabled_ids.contains(&q.id))
 		.collect();
-	serde_json::json!({ "log": log })
+	Ok(serde_json::json!({ "log": log }))
 }
 
 #[tauri::command]
-pub fn submit_log(
+pub async fn submit_log(
 	state: State<'_, AppState>,
 	log: Vec<LogAnswerItem>,
 ) -> Result<serde_json::Value, String> {
@@ -196,7 +200,7 @@ pub fn get_survey_fields() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn submit_survey(
+pub async fn submit_survey(
 	state: State<'_, AppState>,
 	survey: serde_json::Value,
 	idea_id: Option<String>,

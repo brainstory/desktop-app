@@ -36,8 +36,14 @@ First launch (or from **Profile → AI Models**), download:
 
 Downloads are verified against pinned file sizes and SHA-256 hashes before
 being activated, so a truncated or corrupted transfer can't brick a model slot.
-Optionally paste a HuggingFace access token (Profile → AI Models) —
-authenticated downloads are faster and never hit anonymous rate limits.
+Downloads can be cancelled from the same card; a hard quit leaves no garbage
+behind (partial `.part` files are swept at the next launch). Switching models
+unloads the old engine only when the new one is ready to take over — if the
+new model fails to load, the previous one is restored and the app keeps
+working. Optionally paste a HuggingFace access token (Profile → AI Models) —
+authenticated downloads are faster and never hit anonymous rate limits. The
+token is stored locally and never sent back to the UI, only a `••••1234`
+style hint.
 
 Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 
@@ -99,3 +105,9 @@ Data locations (macOS): `~/Library/Application Support/ai.brainstory.desktop/`
   use the improved Claude Code rewrites (adapted back to system-message form).
 - Reminders fire while the app process is alive (tray). Scheduling while fully
   quit would need native per-platform notification scheduling.
+- Logs (both stdout and a rotating file under `~/Library/Logs/ai.brainstory.desktop/`)
+  are written via `tauri-plugin-log`; include `brainstory.log` when reporting
+  model-load or storage problems.
+- Share files are plain signed-by-nothing JSON: anyone can author one with any
+  author name or share id. That is inherent to the file-based flow; imports
+  are still size-bounded so a hostile file can't exhaust memory.

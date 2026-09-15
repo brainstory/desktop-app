@@ -48,19 +48,21 @@ export default function ChatRecorder({
 						setConversationState(CONVERSATION_STATE.Idle);
 					}
 				}}
-				setUiTranscript={async (userMessage) => {
-					const isUser = true;
-					await addConversationMessage(
-						userMessage,
-						isUser,
-						currConversation,
-						setCurrConversation,
-						() => setSaveState(CHAT_SAVE_STATE.SAVING)
-					);
-					// only after the user message is actually appended does
-					// sending become safe (the coach must see it)
-					setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
-				}}
+			setUiTranscript={async (userMessage) => {
+				const isUser = true;
+				const next = await addConversationMessage(
+					userMessage,
+					isUser,
+					currConversation,
+					setCurrConversation
+				);
+				// only after the user message is actually appended does
+				// sending become safe (the coach must see it)
+				if (next.length >= (allowFinishMinConversationLength ?? 0)) {
+					setSaveState(CHAT_SAVE_STATE.SAVING);
+				}
+				setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
+			}}
 				getCoachResponse={async () => await handleGetResponse()}
 				startRecordingCallback={() => setSaveState(CHAT_SAVE_STATE.WAITING)}
 			/>

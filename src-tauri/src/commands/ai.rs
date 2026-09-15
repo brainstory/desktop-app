@@ -37,6 +37,17 @@ pub async fn transcribe(
 	if bytes.is_empty() {
 		return Err("no audio received".into());
 	}
+	// 300 s of 16 kHz mono 16-bit WAV is ~9.6 MB and the recorder stops at
+	// 4 minutes; anything larger is a bug or abuse. The decoder
+	// materializes several times the input size, so refuse instead of
+	// risking an OOM.
+	const MAX_TRANSCRIBE_BYTES: usize = 32 * 1024 * 1024;
+	if bytes.len() > MAX_TRANSCRIBE_BYTES {
+		return Err(format!(
+			"audio capture too large ({} MB, limit 32 MB)",
+			bytes.len() / (1024 * 1024)
+		));
+	}
 
 	let settings = AiSettings::load(&state.db);
 	// STT offload rule: if an external STT endpoint is configured, use it;
@@ -236,15 +247,22 @@ pub fn cancel_generation(state: State<'_, AppState>) {
 }
 
 /// Start capturing microphone audio (Rust-side, bypasses the webview).
+/// Async so the CoreAudio device probing never blocks the main thread.
 #[tauri::command]
-pub fn start_voice_capture() -> Result<(), String> {
-	crate::voice::start_capture()
+pub async fn start_voice_capture() -> Result<(), String> {
+	tauri::async_runtime::spawn_blocking(crate::voice::start_capture)
+		.await
+		.map_err(|e| e.to_string())?
 }
 
 /// Stop capturing and return the recording as a 16 kHz mono WAV (raw bytes).
+/// Async: folding + resampling + WAV-encoding of a multi-minute recording
+/// is real CPU work and must not run on the main thread.
 #[tauri::command]
-pub fn stop_voice_capture() -> Result<tauri::ipc::Response, String> {
-	let wav = crate::voice::stop_capture()?;
+pub async fn stop_voice_capture() -> Result<tauri::ipc::Response, String> {
+	let wav = tauri::async_runtime::spawn_blocking(crate::voice::stop_capture)
+		.await
+		.map_err(|e| e.to_string())??;
 	Ok(tauri::ipc::Response::new(wav))
 }
 
@@ -332,4 +350,46 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 		return None;
 	}
 	serde_json::from_str(&text[start..=end]).ok()
+}
+
+#[cfg(test)]
+mod tests {
+	use super::extract_json;
+
+	#[test]
+	fn parses_pure_json() {
+		let v = extract_json(r#"{"a": 1}"#).expect("pure object");
+		assert_eq!(v["a"], 1);
+	}
+
+	#[test]
+	fn extracts_object_from_prose() {
+		let v = extract_json("Here is your document:\n```json\n{\"title\": \"T\"}\n```")
+			.expect("embedded object");
+		assert_eq!(v["title"], "T");
+	}
+
+	#[test]
+	fn extracts_array_from_prose() {
+		let v = extract_json("prefix [1, 2, 3] suffix").expect("embedded array");
+		assert_eq!(v, serde_json::json!([1, 2, 3]));
+	}
+
+	#[test]
+	fn rejects_nested_mismatched_brackets() {
+		// first '{' before any '[', last '}' - unparseable slice yields None
+		assert!(extract_json("no json here").is_none());
+	}
+
+	#[test]
+	fn rejects_broken_json() {
+		assert!(extract_json("{not json}").is_none());
+	}
+
+	#[test]
+	fn multiple_objects_do_not_panic() {
+		// first '{' to last '}' spans two objects: the slice is not valid
+		// JSON, so the contract is a clean None, never a panic
+		assert!(extract_json("a {\"x\": 1} b {\"y\": 2}").is_none());
+	}
 }

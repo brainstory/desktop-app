@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 
-import { Input } from "@/components/ui/input";
+import { Input } from "@ds/Input";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@helpers/cn";
 import { getArrowByType, getValidHour, setDateByType } from "./utils";
 
 // https://time.openstatus.dev/

@@ -8,7 +8,7 @@ use crate::types::{
 use crate::AppState;
 
 #[tauri::command]
-pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
+pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSettings, String> {
 	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
 	let timezone = state
 		.db
@@ -59,12 +59,12 @@ pub fn get_user_settings(state: State<'_, AppState>) -> UserSettings {
 		enabled: reminder_enabled,
 	}];
 
-	UserSettings {
+	Ok(UserSettings {
 		user: UserSettingsUser { name, timezone },
 		log,
 		notifications,
 		presence,
-	}
+	})
 }
 
 fn valid_reminder_time(value: &str) -> bool {
@@ -79,7 +79,7 @@ fn valid_reminder_time(value: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn save_user_settings(
+pub async fn save_user_settings(
 	state: State<'_, AppState>,
 	user: Option<serde_json::Value>,
 	enabled_log_question_ids: Option<Vec<i64>>,
@@ -138,12 +138,22 @@ pub fn save_user_settings(
 #[tauri::command]
 pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
 	let s = AiSettings::load(&state.db);
+	// The HF token is a secret: never echo it to the webview. The settings
+	// form gets only a "is one stored" flag plus a hint; saving null/absent
+	// keeps the stored token and an empty string clears it.
+	let hf_hint = if s.hf_token.is_empty() {
+		None
+	} else {
+		let tail: String = s.hf_token.chars().skip(s.hf_token.chars().count().saturating_sub(4)).collect();
+		Some(format!("••••{tail}"))
+	};
 	// camelCase to match the frontend's field access
 	serde_json::json!({
 		"llmMode": s.llm_mode,
 		"llmModel": s.llm_model,
 		"sttModel": s.stt_model,
-		"hfToken": s.hf_token,
+		"hfTokenSet": !s.hf_token.is_empty(),
+		"hfTokenHint": hf_hint,
 		"extLlmBaseUrl": s.ext_llm_base_url,
 		"extLlmApiKey": s.ext_llm_api_key,
 		"extLlmModel": s.ext_llm_model,
@@ -171,8 +181,12 @@ pub fn save_ai_settings(
 	if let Some(v) = get_str("sttModel") {
 		settings.stt_model = v;
 	}
+	if let Some(v) = get_str("hfToken") {
+		// absent/null keeps the stored token; "" clears it; otherwise set.
+		// This pairs with get_ai_settings never sending the real token back.
+		settings.hf_token = v;
+	}
 	for key in [
-		"hfToken",
 		"extLlmBaseUrl",
 		"extLlmApiKey",
 		"extLlmModel",
@@ -182,7 +196,6 @@ pub fn save_ai_settings(
 	] {
 		if let Some(v) = get_str(key) {
 			match key {
-				"hfToken" => settings.hf_token = v,
 				"extLlmBaseUrl" => settings.ext_llm_base_url = v,
 				"extLlmApiKey" => settings.ext_llm_api_key = v,
 				"extLlmModel" => settings.ext_llm_model = v,

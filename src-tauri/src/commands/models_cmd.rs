@@ -170,9 +170,12 @@ pub async fn download_model(
 						let app2 = app_handle.clone();
 						tauri::async_runtime::spawn_blocking(move || {
 							let state = app2.state::<AppState>();
-							match spec.kind {
+							let result = match spec.kind {
 								ModelKind::Llm => state.load_llm(&app2, &spec),
 								ModelKind::Stt => state.load_stt(&app2, &spec),
+							};
+							if let Err(e) = result {
+								log::error!("auto-load of {} failed: {e}", spec.id);
 							}
 						});
 					}
@@ -224,11 +227,8 @@ pub fn delete_model(
 		}
 	}
 	let path = state.model_path(spec);
-	if path.exists() {
-		std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-	}
-
-	// If the deleted model is loaded, unload it so the UI reflects reality.
+	// Unload the engine BEFORE deleting the file: the loaded engine mmaps
+	// the model, and on Windows an open mmap makes remove_file fail.
 	let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
 	let llm_gone =
 		runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
@@ -241,6 +241,11 @@ pub fn delete_model(
 		runtime.stt = None;
 	}
 	drop(runtime);
+
+	if path.exists() {
+		std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+	}
+
 	if llm_gone {
 		*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
 			crate::models::EngineStatus::new("missing", None, None);
@@ -254,7 +259,29 @@ pub fn delete_model(
 	Ok(())
 }
 
-/// Explicitly activate (and load if needed) a downloaded model.
+/// Cancel an in-flight download. The token is checked between chunks, so
+/// the transfer stops within a second or two and the `.part` file is
+/// removed by the downloader's normal failure path.
+#[tauri::command]
+pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+	let token = state
+		.download_cancels
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.get(&model_id)
+		.cloned();
+	match token {
+		Some(token) => {
+			token.store(true, Ordering::Relaxed);
+			Ok(())
+		}
+		None => Err(format!("no download in progress for {model_id}")),
+	}
+}
+
+/// Explicitly activate (and load if needed) a downloaded model. The
+/// settings row is only updated once the engine actually loaded, so the
+/// recorded active model can never disagree with the runtime.
 #[tauri::command]
 pub async fn activate_model(
 	app: tauri::AppHandle,
@@ -269,24 +296,32 @@ pub async fn activate_model(
 		return Err("model is not downloaded".into());
 	}
 
-	let mut settings = AiSettings::load(&state.db);
-	match spec.kind {
-		ModelKind::Llm => {
-			settings.llm_mode = "local".into();
-			settings.llm_model = spec.id.to_string();
-		}
-		ModelKind::Stt => {
-			settings.stt_model = spec.id.to_string();
-		}
-	}
-	settings.save(&state.db);
-
 	let app_handle = app.clone();
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app_handle.state::<AppState>();
-		match spec.kind {
+		let result = match spec.kind {
 			ModelKind::Llm => state.load_llm(&app_handle, &spec),
 			ModelKind::Stt => state.load_stt(&app_handle, &spec),
+		};
+		match result {
+			Ok(()) => {
+				let mut settings = AiSettings::load(&state.db);
+				match spec.kind {
+					ModelKind::Llm => {
+						settings.llm_mode = "local".into();
+						settings.llm_model = spec.id.to_string();
+					}
+					ModelKind::Stt => {
+						settings.stt_model = spec.id.to_string();
+					}
+				}
+				settings.save(&state.db);
+			}
+			Err(e) => {
+				// The status event already carries the error to the UI;
+				// this keeps it in the (now real) log file too.
+				log::error!("activate_model({}) failed: {e}", spec.id);
+			}
 		}
 	});
 	Ok(())

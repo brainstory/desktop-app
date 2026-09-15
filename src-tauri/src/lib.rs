@@ -33,6 +33,23 @@ pub fn sync_tray_reminder_check(enabled: bool) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	tauri::Builder::default()
+		.plugin(
+			// Must be the first plugin: without a registered logger every
+			// log::error!/warn! in the app is silently discarded, and
+			// model-load/DB diagnostics are the difference between a
+			// debuggable report and a mystery.
+			tauri_plugin_log::Builder::new()
+				.targets([
+					tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+					tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+						file_name: Some("brainstory".into()),
+					}),
+				])
+				.level(log::LevelFilter::Info)
+				.max_file_size(512_000)
+				.rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+				.build(),
+		)
 		.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
 			// A second launch just focuses the existing window instead of
 			// running two processes against the same database.
@@ -76,6 +93,7 @@ pub fn run() {
 			commands::models_cmd::list_models,
 			commands::models_cmd::get_runtime_status,
 			commands::models_cmd::download_model,
+			commands::models_cmd::cancel_download,
 			commands::models_cmd::delete_model,
 			commands::models_cmd::activate_model,
 			commands::share::export_idea,
@@ -87,8 +105,29 @@ pub fn run() {
 				.app_data_dir()
 				.expect("failed to resolve app data dir");
 			std::fs::create_dir_all(data_dir.join("models")).ok();
+			sweep_stale_part_files(&data_dir.join("models"));
 
-			let db = open_database(&data_dir);
+			let db = match open_database(&data_dir) {
+				Ok(db) => db,
+				Err(message) => {
+					// The app cannot start without its data store; a native
+					// dialog is the only way to tell the user why nothing
+					// launched. setup() returning Err aborts the launch.
+					log::error!("{message}");
+					{
+						use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+						app.dialog()
+							.message(format!(
+								"Brainstory could not open its data store and cannot start.\n\n{message}\n\nYour data directory:\n{}",
+								data_dir.display()
+							))
+							.title("Brainstory")
+							.kind(MessageDialogKind::Error)
+							.blocking_show();
+					}
+					return Err(message.into());
+				}
+			};
 			if db.get_setting("created_at").is_none() {
 				// naive UTC, no trailing Z (the frontend appends it itself)
 				let now = Utc::now()
@@ -158,25 +197,62 @@ pub fn run() {
 		});
 }
 
-/// Open the database, quarantining an unopenable/corrupt file instead of
-/// failing to launch forever. The old file is kept for manual recovery.
-fn open_database(data_dir: &std::path::Path) -> db::Db {
+/// Remove `.part` files left behind by a quit (or crash) mid-download; the
+/// in-process error path can't clean up when the process itself is gone.
+fn sweep_stale_part_files(models_dir: &std::path::Path) {
+	let Ok(entries) = std::fs::read_dir(models_dir) else {
+		return;
+	};
+	for entry in entries.flatten() {
+		let path = entry.path();
+		let is_part = path.extension().map(|e| e == "part").unwrap_or(false);
+		if is_part {
+			log::warn!("removing leftover partial download {}", path.display());
+			if let Err(e) = std::fs::remove_file(&path) {
+				log::warn!("could not remove {}: {e}", path.display());
+			}
+		}
+	}
+}
+
+/// Open the database, quarantining a *corrupt* file instead of failing to
+/// launch forever. The old file is kept for manual recovery. Any other
+/// open failure (permissions, disk full, ...) surfaces as Err - renaming
+/// the user's database away on a transient error would look like a
+/// factory reset.
+fn open_database(data_dir: &std::path::Path) -> Result<db::Db, String> {
 	let db_path = data_dir.join("brainstory.db");
 	match db::Db::open(&db_path) {
-		Ok(db) => db,
-		Err(e) => {
-			log::error!("database open failed: {e}");
+		Ok(db) => Ok(db),
+		Err(e) if is_db_corruption(&e) => {
+			log::error!("database is corrupt ({e}); quarantining it and starting fresh");
 			let stamp = Utc::now().format("%Y%m%d-%H%M%S");
 			let corrupt = data_dir.join(format!("brainstory.db.corrupt-{stamp}"));
-			let _ = std::fs::rename(&db_path, &corrupt);
+			if let Err(rename_err) = std::fs::rename(&db_path, &corrupt) {
+				log::error!("failed to quarantine the corrupt database: {rename_err}");
+			}
 			// move WAL sidecars along with it so the fresh DB starts clean
 			for ext in ["wal", "shm"] {
 				let _ = std::fs::rename(db_path.with_extension(ext), corrupt.with_extension(ext));
 			}
-			db::Db::open(&db_path)
-				.expect("failed to open a fresh database after quarantining the corrupt one")
+			db::Db::open(&db_path).map_err(|e| {
+				format!(
+					"the database was quarantined as corrupt, but a fresh database could not be created either: {e}"
+				)
+			})
 		}
+		Err(e) => Err(format!("could not open the database: {e}")),
 	}
+}
+
+/// True only for errors that actually indicate a corrupt/unreadable file -
+/// not for transient failures like SQLITE_BUSY or a full disk.
+fn is_db_corruption(e: &rusqlite::Error) -> bool {
+	use rusqlite::ffi::ErrorCode;
+	matches!(
+		e.sqlite_error_code(),
+		Some(ErrorCode::DatabaseCorrupt) | Some(ErrorCode::NotADatabase)
+	)
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -308,7 +384,9 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 		if settings.ext_stt_base_url.is_empty() {
 			if let Some(spec) = models::find_model(&settings.stt_model, ModelKind::Stt) {
 				if state.is_model_downloaded(spec) {
-					state.load_stt(&app, spec);
+					if let Err(e) = state.load_stt(&app, spec) {
+						log::error!("startup STT load failed: {e}");
+					}
 				}
 			}
 		} else {
@@ -324,7 +402,9 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 		}
 		if let Some(spec) = models::find_model(&settings.llm_model, ModelKind::Llm) {
 			if state.is_model_downloaded(spec) {
-				state.load_llm(&app, spec);
+				if let Err(e) = state.load_llm(&app, spec) {
+					log::error!("startup LLM load failed: {e}");
+				}
 			}
 		}
 	});

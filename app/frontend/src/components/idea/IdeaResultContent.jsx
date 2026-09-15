@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { getIdeaApi, getIdeaChildrenApi, markIdeaReadApi } from "@helpers/api/idea.js";
-import { getAllUserNotifications } from "@helpers/api/user";
 
 import { TailwindComposedTabs } from "@ds/TailwindTabs.jsx";
 import LoadingAnimation from "@components/global/LoadingAnimation";
@@ -49,8 +48,6 @@ export default function IdeaResultContent() {
 		}
 
 		let isCurrent = true;
-
-		getUserFeedbackDraftId(ideaId).then((draftId) => setFeedbackDraftId(draftId));
 
 		getIdeaApi(ideaId)
 			.then((res) => {
@@ -228,11 +225,3 @@ function useMarkReadApi(id, isUnread) {
 		};
 	}, [id]);
 }
-
-const getUserFeedbackDraftId = async (parentId) => {
-	const notifications = await getAllUserNotifications();
-	const draftNotification = notifications.find(
-		(notification) => notification.related_idea_id === parentId
-	);
-	return draftNotification?.draft_response_idea_id;
-};

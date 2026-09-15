@@ -278,26 +278,45 @@ impl AppState {
 
 	pub fn emit_llm_status(&self, app: &AppHandle) {
 		let status = lock(&self.llm_status).clone();
-		let _ = app.emit("llm-status", status);
+		if let Err(e) = app.emit("llm-status", status) {
+			log::warn!("failed to emit llm-status: {e}");
+		}
 	}
 
 	pub fn emit_stt_status(&self, app: &AppHandle) {
 		let status = lock(&self.stt_status).clone();
-		let _ = app.emit("stt-status", status);
+		if let Err(e) = app.emit("stt-status", status) {
+			log::warn!("failed to emit stt-status: {e}");
+		}
 	}
 
 	/// Load the given LLM model file into the runtime. Blocking; call from a
 	/// background thread.
-	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) {
+	///
+	/// The previously loaded engine is dropped before the new file is
+	/// mmap'd (peak memory stays at one model). If the new file fails to
+	/// load or was deleted mid-load, the previous model is loaded back from
+	/// disk, so a failed switch never leaves the app without a working LLM.
+	///
+	/// Err means the switch did NOT happen (a busy load, or the new model
+	/// failed and could not be rolled back to); callers must not persist
+	/// the new model as active on Err.
+	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		// One load at a time: a second activate while the first is running
-		// would mmap two multi-GB models simultaneously.
+		// would mmap two multi-GB models simultaneously. Refuse instead of
+		// silently ignoring, so callers can't persist a divergent active
+		// model while a different load is in flight.
 		if self.llm_loading.swap(true, Ordering::SeqCst) {
-			log::warn!(
-				"llm load already in progress, ignoring request for {}",
-				spec.id
-			);
-			return;
+			log::warn!("llm load already in progress; refusing request for {}", spec.id);
+			return Err("a model is already loading - try again in a moment".into());
 		}
+		let result = self.load_llm_inner(app, spec);
+		self.llm_loading.store(false, Ordering::SeqCst);
+		self.emit_llm_status(app);
+		result
+	}
+
+	fn load_llm_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		{
 			let mut s = lock(&self.llm_status);
 			*s = EngineStatus::new("loading", Some(spec.id), None);
@@ -305,57 +324,128 @@ impl AppState {
 		self.emit_llm_status(app);
 
 		let path = self.model_path(spec);
+		let prev_spec: Option<ModelSpec> = {
+			let runtime = lock(&self.runtime);
+			runtime
+				.llm
+				.as_ref()
+				.map(|engine| engine.model_id.clone())
+				.and_then(|id| find_model(&id, ModelKind::Llm))
+				.cloned()
+		};
+
 		let result = (|| -> Result<LocalLlm, String> {
-			// Drop the previous engine before loading the new file so peak
-			// memory stays at one model instead of two.
-			{
+			let backend = {
 				let mut runtime = lock(&self.runtime);
-				if runtime.backend.is_none() {
-					let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
-						.map_err(|e| format!("failed to init llama backend: {e}"))?;
-					runtime.backend = Some(Arc::new(backend));
-				}
+				let backend = match runtime.backend.as_ref() {
+					Some(existing) => existing.clone(),
+					None => {
+						let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+							.map_err(|e| format!("failed to init llama backend: {e}"))?;
+						let backend = Arc::new(backend);
+						runtime.backend = Some(Arc::clone(&backend));
+						backend
+					}
+				};
+				// Drop the previous engine before loading the new file so
+				// peak memory stays at one model instead of two.
 				runtime.llm = None;
-			}
-			let backend = lock(&self.runtime).backend.clone().unwrap();
+				backend
+			};
 			LocalLlm::load(backend, &path, spec.id)
 		})();
 
-		match result {
-			Ok(engine) => {
-				if path.is_file() {
-					let mut runtime = lock(&self.runtime);
-					runtime.llm = Some(Arc::new(engine));
-					drop(runtime);
-					let mut s = lock(&self.llm_status);
-					*s = EngineStatus::new("ready", Some(spec.id), None);
-				} else {
-					// The model file was deleted while loading; don't
-					// resurrect a deleted model in the runtime.
-					log::warn!("{} was deleted while loading; not activating it", spec.id);
-					let mut s = lock(&self.llm_status);
-					*s = EngineStatus::new("missing", None, None);
-				}
-			}
+		let loaded = match result {
+			Ok(engine) => Some(engine),
 			Err(e) => {
 				log::error!("llm load failed: {e}");
+				None
+			}
+		};
+
+		// Install the new engine, or roll back to the previous one.
+		let had_loaded = loaded.is_some();
+		let install = loaded.filter(|_| path.is_file());
+		match install {
+			Some(engine) => {
+				let mut runtime = lock(&self.runtime);
+				runtime.llm = Some(Arc::new(engine));
+				drop(runtime);
 				let mut s = lock(&self.llm_status);
-				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
+				*s = EngineStatus::new("ready", Some(spec.id), None);
+				Ok(())
+			}
+			None => {
+				let vanished = had_loaded;
+				if vanished {
+					// The engine built fine but the model file vanished
+					// while loading; don't resurrect a deleted model.
+					log::warn!("{} was deleted while loading; not activating it", spec.id);
+				}
+				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
+					match self.reload_llm(&prev) {
+						Ok(()) => {
+							log::warn!("switch to {} failed; previous model {} is active again", spec.id, prev.id);
+							let mut s = lock(&self.llm_status);
+							*s = EngineStatus::new(
+								"ready",
+								Some(prev.id),
+								Some(&format!(
+									"could not load {0} - {1} is still active",
+									spec.id, prev.id
+								)),
+							);
+							return Err(format!(
+								"could not load {} - {} is still active",
+								spec.id, prev.id
+							));
+						}
+						Err(rollback_err) => {
+							log::error!("rollback to {} failed: {rollback_err}", prev.id);
+						}
+					}
+				}
+				let mut s = lock(&self.llm_status);
+				if vanished {
+					*s = EngineStatus::new("missing", None, None);
+					return Err(format!("{} was deleted while loading", spec.id));
+				}
+				*s = EngineStatus::new("error", Some(spec.id), Some("model failed to load"));
+				Err("model failed to load".into())
 			}
 		}
-		self.llm_loading.store(false, Ordering::SeqCst);
-		self.emit_llm_status(app);
 	}
 
-	/// Load the given whisper model file. Blocking; call from a background thread.
-	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) {
-		if self.stt_loading.swap(true, Ordering::SeqCst) {
-			log::warn!(
-				"stt load already in progress, ignoring request for {}",
-				spec.id
-			);
-			return;
+	/// Best-effort reload of a previously working model (rollback path).
+	fn reload_llm(&self, spec: &ModelSpec) -> Result<(), String> {
+		let path = self.model_path(spec);
+		if !path.is_file() {
+			return Err(format!("model file {} is gone", path.display()));
 		}
+		let backend = lock(&self.runtime)
+			.backend
+			.clone()
+			.ok_or_else(|| "llama backend missing".to_string())?;
+		let engine = LocalLlm::load(backend, &path, spec.id)?;
+		let mut runtime = lock(&self.runtime);
+		runtime.llm = Some(Arc::new(engine));
+		Ok(())
+	}
+
+	/// Load the given whisper model file. Blocking; call from a background
+	/// thread. Same staging/rollback contract as `load_llm`.
+	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+		if self.stt_loading.swap(true, Ordering::SeqCst) {
+			log::warn!("stt load already in progress; refusing request for {}", spec.id);
+			return Err("a model is already loading - try again in a moment".into());
+		}
+		let result = self.load_stt_inner(app, spec);
+		self.stt_loading.store(false, Ordering::SeqCst);
+		self.emit_stt_status(app);
+		result
+	}
+
+	fn load_stt_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		{
 			let mut s = lock(&self.stt_status);
 			*s = EngineStatus::new("loading", Some(spec.id), None);
@@ -363,34 +453,71 @@ impl AppState {
 		self.emit_stt_status(app);
 
 		let path = self.model_path(spec);
-		let result = {
-			// Free the previous engine before loading the new file.
-			lock(&self.runtime).stt = None;
-			SttEngine::load(&path, spec.id)
+		let prev_spec: Option<ModelSpec> = {
+			let runtime = lock(&self.runtime);
+			runtime
+				.stt
+				.as_ref()
+				.map(|engine| engine.model_id.clone())
+				.and_then(|id| find_model(&id, ModelKind::Stt))
+				.cloned()
 		};
 
-		match result {
-			Ok(engine) => {
-				if path.is_file() {
-					let mut runtime = lock(&self.runtime);
-					runtime.stt = Some(Arc::new(engine));
-					drop(runtime);
-					let mut s = lock(&self.stt_status);
-					*s = EngineStatus::new("ready", Some(spec.id), None);
-				} else {
-					log::warn!("{} was deleted while loading; not activating it", spec.id);
-					let mut s = lock(&self.stt_status);
-					*s = EngineStatus::new("missing", None, None);
-				}
-			}
-			Err(e) => {
-				log::error!("stt load failed: {e}");
+		// Free the previous engine before loading the new file.
+		lock(&self.runtime).stt = None;
+		let loaded = SttEngine::load(&path, spec.id).ok();
+
+		let had_loaded = loaded.is_some();
+		let install = loaded.filter(|_| path.is_file());
+		match install {
+			Some(engine) => {
+				let mut runtime = lock(&self.runtime);
+				runtime.stt = Some(Arc::new(engine));
+				drop(runtime);
 				let mut s = lock(&self.stt_status);
-				*s = EngineStatus::new("error", Some(spec.id), Some(&e));
+				*s = EngineStatus::new("ready", Some(spec.id), None);
+				Ok(())
+			}
+			None => {
+				if had_loaded {
+					log::warn!("{} was deleted while loading; not activating it", spec.id);
+				}
+				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
+					let prev_path = self.model_path(&prev);
+					if prev_path.is_file() {
+						match SttEngine::load(&prev_path, prev.id) {
+							Ok(engine) => {
+								lock(&self.runtime).stt = Some(Arc::new(engine));
+								log::warn!(
+									"switch to {} failed; previous model {} is active again",
+									spec.id,
+									prev.id
+								);
+								let mut s = lock(&self.stt_status);
+								*s = EngineStatus::new(
+									"ready",
+									Some(prev.id),
+									Some(&format!(
+										"could not load {0} - {1} is still active",
+										spec.id, prev.id
+									)),
+								);
+								return Err(format!(
+									"could not load {} - {} is still active",
+									spec.id, prev.id
+								));
+							}
+							Err(rollback_err) => {
+								log::error!("rollback to {} failed: {rollback_err}", prev.id);
+							}
+						}
+					}
+				}
+				let mut s = lock(&self.stt_status);
+				*s = EngineStatus::new("error", Some(spec.id), Some("model failed to load"));
+				Err("model failed to load".into())
 			}
 		}
-		self.stt_loading.store(false, Ordering::SeqCst);
-		self.emit_stt_status(app);
 	}
 }
 
@@ -401,9 +528,6 @@ pub fn model_url(spec: &ModelSpec) -> String {
 	)
 }
 
-/// Stream a model file to disk, reporting progress through `on_progress`
-/// (percentage 0-100). Verifies the download completed fully before moving
-/// it into place; the `.part` file is removed on any failure.
 /// Stream a model file to disk, reporting progress through `on_progress`
 /// (percentage 0-100). Verifies the download completed fully and matches
 /// the pinned sha256 before moving it into place; the `.part` file is
@@ -529,5 +653,155 @@ pub async fn download_model_file(
 			let _ = tokio::fs::remove_file(&tmp).await;
 			Err(e)
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::download_model_file;
+	use std::sync::atomic::AtomicBool;
+	use std::sync::Arc;
+
+	/// Serve one canned HTTP response from a loopback listener; returns the
+	/// base URL. Good enough to exercise the downloader against a real
+	/// socket without an HTTP-server dependency.
+	fn serve(response: Vec<u8>) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let _ = sock.write_all(&response);
+				let _ = sock.flush();
+				// keep the socket open briefly so the client can read it all
+				std::thread::sleep(std::time::Duration::from_millis(500));
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	fn http(body: &[u8], extra_headers: &str) -> Vec<u8> {
+		let mut response = format!(
+			"HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{}\r\n",
+			body.len(),
+			extra_headers
+		)
+		.into_bytes();
+		response.extend_from_slice(body);
+		response
+	}
+
+	fn temp_dest(name: &str) -> std::path::PathBuf {
+		std::env::temp_dir().join(format!("brainstory-dl-test-{name}-{}", uuid::Uuid::new_v4()))
+	}
+
+	fn sha256_hex(bytes: &[u8]) -> String {
+		use sha2::{Digest, Sha256};
+		format!("{:x}", Sha256::digest(bytes))
+	}
+
+	#[tokio::test]
+	async fn downloads_and_verifies_a_clean_file() {
+		let body = vec![7u8; 100_000];
+		let url = serve(http(&body, ""));
+		let dest = temp_dest("ok");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let mut progress = Vec::new();
+		download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&sha256_hex(&body),
+			"",
+			&cancel,
+			&mut |p| progress.push(p),
+		)
+		.await
+		.expect("clean download");
+		assert!(dest.is_file());
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+		assert!(!progress.is_empty(), "progress was reported");
+		assert_eq!(*progress.last().unwrap(), 100.0);
+		let _ = std::fs::remove_file(&dest);
+	}
+
+	#[tokio::test]
+	async fn rejects_a_hash_mismatch() {
+		let body = vec![7u8; 10_000];
+		let url = serve(http(&body, ""));
+		let dest = temp_dest("hash");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(&url, &dest, body.len() as u64, "deadbeef", "", &cancel, &mut |_| {})
+			.await
+			.expect_err("hash mismatch must fail");
+		assert!(err.contains("integrity"), "unexpected error: {err}");
+		assert!(!dest.exists(), "no file left behind on failure");
+	}
+
+	#[tokio::test]
+	async fn rejects_a_truncated_transfer() {
+		// Content-Length promises more than the body delivers
+		let body = vec![1u8; 500];
+		let url = serve(http(&body, ""));
+		let dest = temp_dest("trunc");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			100_000,
+			&sha256_hex(&body),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("truncated transfer must fail");
+		assert!(err.contains("incomplete") || err.contains("mismatch"), "unexpected error: {err}");
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn honors_cancellation() {
+		let body = vec![3u8; 10_000];
+		let url = serve(http(&body, ""));
+		let dest = temp_dest("cancel");
+		let cancel = Arc::new(AtomicBool::new(false));
+		cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+		let err = download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&sha256_hex(&body),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("cancelled download must fail");
+		assert!(err.contains("cancelled"), "unexpected error: {err}");
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn rejects_a_size_mismatch() {
+		let body = vec![5u8; 1_000];
+		let url = serve(http(&body, ""));
+		let dest = temp_dest("size");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			999_999,
+			&sha256_hex(&body),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("size mismatch must fail");
+		assert!(err.contains("size mismatch"), "unexpected error: {err}");
+		assert!(!dest.exists());
 	}
 }

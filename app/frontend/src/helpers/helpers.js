@@ -30,6 +30,17 @@ export function normalizeApiError(error) {
 	return error?.message ?? String(error);
 }
 
+/**
+ * The backend's moderation signal: external providers' content-filter
+ * rejections are mapped by the Rust layer onto the original protocol's
+ * "HttpError 469" marker. Detect it by prefix, not substring, so an error
+ * that merely *quotes* the marker (e.g. in a wrapped message) can't
+ * trigger the resend flow.
+ */
+export function isModerationError(message) {
+	return normalizeApiError(message).startsWith(ERROR_MESSAGE_MAP[469]);
+}
+
 export async function callApiWithRetry(apiCall, retriesLeft = 1) {
 	return new Promise((resolve, reject) => {
 		apiCall()
@@ -37,8 +48,7 @@ export async function callApiWithRetry(apiCall, retriesLeft = 1) {
 				resolve(message);
 			})
 			.catch((error) => {
-				const message = normalizeApiError(error);
-				if (message.includes(ERROR_MESSAGE_MAP[469])) {
+				if (isModerationError(error)) {
 					reject(error);
 					return;
 				}

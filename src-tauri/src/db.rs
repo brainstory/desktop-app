@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::types::{ChatMessage, DailyStatus, IdeaItem};
@@ -37,8 +37,8 @@ fn now_iso() -> String {
 }
 
 fn today_local() -> NaiveDate {
-	let local = chrono::Local::now();
-	NaiveDate::from_ymd_opt(local.year(), local.month(), local.day()).unwrap()
+	// date_naive() is infallible; no unwrap needed.
+	chrono::Local::now().date_naive()
 }
 
 /// The local calendar day a UTC timestamp falls on. Computed at write time
@@ -354,7 +354,9 @@ impl Db {
 	}
 
 	/// Insert an idea. `created_at` overrides the timestamp (used when
-	/// importing shared ideas so they keep their original date).
+	/// importing shared ideas so they keep their original date). A
+	/// `parent_idea_id` is verified inside the same transaction, so a
+	/// concurrent delete can't slip an orphan through.
 	#[allow(clippy::too_many_arguments)]
 	pub fn insert_idea(
 		&self,
@@ -373,6 +375,18 @@ impl Db {
 		created_at: Option<&str>,
 	) -> Result<(), String> {
 		self.with_tx(|conn| {
+			if let Some(parent_id) = parent_idea_id {
+				let exists: i64 = conn
+					.query_row(
+						"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+						params![parent_id],
+						|row| row.get(0),
+					)
+					.map_err(|e| format!("failed to verify parent idea: {e}"))?;
+				if exists == 0 {
+					return Err(format!("parent idea {parent_id} not found"));
+				}
+			}
 			Self::insert_idea_tx(
 				conn,
 				id,
@@ -482,9 +496,10 @@ impl Db {
 		Ok(())
 	}
 
-	/// Delete an idea and its feedback children in one transaction; also
-	/// clear any daily-intent reference and survey links so nothing points
-	/// at the deleted rows.
+	/// Delete an idea and its whole feedback subtree in one transaction
+	/// (recursive, so a child-of-child can never survive as an orphan);
+	/// also clear any daily-intent reference and survey links so nothing
+	/// points at the deleted rows.
 	pub fn delete_idea(&self, id: &str) -> Result<bool, String> {
 		let mut deleted = false;
 		self.with_tx(|conn| {
@@ -498,8 +513,18 @@ impl Db {
 				params![id],
 			)
 			.map_err(|e| format!("failed to delete idea: {e}"))?;
-			conn.execute("DELETE FROM ideas WHERE parent_idea_id = ?1", params![id])
-				.map_err(|e| format!("failed to delete feedback: {e}"))?;
+			conn.execute(
+				"DELETE FROM ideas WHERE id IN (
+					WITH RECURSIVE descendants(id) AS (
+						SELECT id FROM ideas WHERE parent_idea_id = ?1
+						UNION ALL
+						SELECT i.id FROM ideas i JOIN descendants d ON i.parent_idea_id = d.id
+					)
+					SELECT id FROM descendants
+				)",
+				params![id],
+			)
+			.map_err(|e| format!("failed to delete feedback: {e}"))?;
 			deleted = conn
 				.execute("DELETE FROM ideas WHERE id = ?1", params![id])
 				.map(|n| n > 0)
@@ -519,33 +544,36 @@ impl Db {
 		Ok(())
 	}
 
-	pub fn get_idea(&self, id: &str) -> Option<IdeaItem> {
+	/// Fetch one idea. `Ok(None)` means genuinely not found; a SQL/decode
+	/// failure is an Err so the UI can distinguish "deleted" from "broken".
+	pub fn get_idea(&self, id: &str) -> Result<Option<IdeaItem>, String> {
 		let conn = self.lock();
-		let (parent_id, mut idea) = conn
+		let row = conn
 			.query_row(
 				&format!("SELECT {} FROM ideas WHERE id = ?1", Self::IDEA_COLS),
 				params![id],
 				Self::row_to_idea,
 			)
 			.optional()
-			.ok()
-			.flatten()?;
+			.map_err(|e| format!("failed to read idea {id}: {e}"))?;
+		let Some((parent_id, mut idea)) = row else {
+			return Ok(None);
+		};
 
 		if let Some(parent_id) = parent_id {
-			if let Some((_, parent)) = conn
+			let parent = conn
 				.query_row(
 					&format!("SELECT {} FROM ideas WHERE id = ?1", Self::IDEA_COLS),
 					params![parent_id],
 					Self::row_to_idea,
 				)
 				.optional()
-				.ok()
-				.flatten()
-			{
+				.map_err(|e| format!("failed to read parent idea {parent_id}: {e}"))?;
+			if let Some((_, parent)) = parent {
 				idea.parent_idea = Some(Box::new(parent));
 			}
 		}
-		Some(idea)
+		Ok(Some(idea))
 	}
 
 	/// Find an idea by its share id (used when importing feedback that
@@ -590,9 +618,21 @@ impl Db {
 				return vec![];
 			}
 		};
-		stmt.query_map(params![id], Self::row_to_idea)
-			.map(|rows| rows.filter_map(|r| r.ok().map(|(_, idea)| idea)).collect())
-			.unwrap_or_default()
+		let mut children_items: Vec<IdeaItem> = Vec::new();
+		let rows = match stmt.query_map(params![id], Self::row_to_idea) {
+			Ok(r) => r,
+			Err(e) => {
+				log::warn!("failed to list feedback: {e}");
+				return vec![];
+			}
+		};
+		for row in rows {
+			match row {
+				Ok((_, idea)) => children_items.push(idea),
+				Err(e) => log::error!("skipping unreadable feedback row: {e}"),
+			}
+		}
+		children_items
 	}
 
 	/// All top-level ideas with their feedback children, newest first.
@@ -609,10 +649,26 @@ impl Db {
 				return vec![];
 			}
 		};
-		let rows: Vec<(Option<String>, IdeaItem)> = stmt
-			.query_map([], Self::row_to_idea)
-			.map(|rows| rows.filter_map(|r| r.ok()).collect())
-			.unwrap_or_default();
+		let mut rows: Vec<(Option<String>, IdeaItem)> = Vec::new();
+		{
+			let queried = stmt.query_map([], Self::row_to_idea);
+			match queried {
+				Ok(rows_iter) => {
+					for row in rows_iter {
+						match row {
+							Ok(item) => rows.push(item),
+							// A row that fails to decode must not vanish
+							// silently - that reads as "the idea is gone".
+							Err(e) => log::error!("skipping unreadable idea row: {e}"),
+						}
+					}
+				}
+				Err(e) => {
+					log::warn!("failed to list ideas: {e}");
+					return vec![];
+				}
+			}
+		}
 		drop(stmt);
 
 		let mut children: std::collections::HashMap<String, Vec<IdeaItem>> =
@@ -777,47 +833,43 @@ impl Db {
 		// or survey submitted, or a completed daily intent). Each activity's
 		// local calendar day was frozen at write time (local_date), so the
 		// history is stable across timezone changes.
-		let mut activity: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
+		// Collect the raw date strings under the lock, then drop it before
+		// parsing so the four scans don't block writers for longer than
+		// necessary.
+		let mut raw_days: Vec<String> = Vec::new();
 		for table in ["ideas", "log_entries", "surveys"] {
 			let sql = format!("SELECT DISTINCT local_date FROM {table} WHERE local_date != ''");
 			let mut stmt = match conn.prepare(&sql) {
 				Ok(s) => s,
-				Err(_) => continue,
+				Err(e) => {
+					log::error!("streak query on {table} failed: {e}");
+					continue;
+				}
 			};
 			let dates: Vec<String> = stmt
 				.query_map([], |row| row.get(0))
 				.map(|rows| rows.filter_map(|r| r.ok()).collect())
 				.unwrap_or_default();
-			for day in dates {
-				if let Ok(d) = NaiveDate::parse_from_str(&day, "%Y-%m-%d") {
-					activity.insert(d);
-				}
-			}
+			raw_days.extend(dates);
 		}
-		{
-			let mut stmt = match conn.prepare("SELECT date FROM daily WHERE is_completed = 1") {
-				Ok(s) => s,
-				Err(_) => {
-					return DailyStatus {
-						log_id,
-						intent_idea_id,
-						survey_id,
-						is_completed,
-						streak: 0,
-					}
-				}
-			};
-			let days: Vec<String> = stmt
-				.query_map([], |row| row.get(0))
-				.map(|rows| rows.filter_map(|r| r.ok()).collect())
-				.unwrap_or_default();
-			for day in days {
-				if let Ok(d) = NaiveDate::parse_from_str(&day, "%Y-%m-%d") {
-					activity.insert(d);
-				}
+		match conn.prepare("SELECT date FROM daily WHERE is_completed = 1") {
+			Ok(mut stmt) => {
+				let days: Vec<String> = stmt
+					.query_map([], |row| row.get(0))
+					.map(|rows| rows.filter_map(|r| r.ok()).collect())
+					.unwrap_or_default();
+				raw_days.extend(days);
 			}
+			Err(e) => log::error!("streak query on daily failed: {e}"),
 		}
 		drop(conn);
+
+		let mut activity: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
+		for day in raw_days {
+			if let Ok(d) = NaiveDate::parse_from_str(&day, "%Y-%m-%d") {
+				activity.insert(d);
+			}
+		}
 
 		// Walk back from today; if today has no activity yet the streak
 		// isn't broken (it continues from yesterday).
@@ -918,9 +970,45 @@ mod tests {
 			);
 			assert_ne!(local_date, "", "backfill is not empty");
 		}
-		// yesterday's idea counts via its frozen local date; today without
-		// activity doesn't break the streak
+	// yesterday's idea counts via its frozen local date; today without
+	// activity doesn't break the streak
 		assert!(db.get_daily_status().streak >= 1);
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn delete_idea_removes_the_whole_feedback_subtree() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let meta = serde_json::json!({});
+		let empty: Vec<ChatMessage> = vec![];
+		db.insert_idea("parent", "P", "original", "r", None, &empty, &meta, None, None, None, None, None, None)
+			.unwrap();
+		db.insert_idea("child", "C", "feedback", "r", None, &empty, &meta, Some("parent"), None, None, None, None, None)
+			.unwrap();
+		// a child of the child: the old delete-children-only logic left
+		// this row orphaned in the library
+		db.insert_idea("grandchild", "G", "feedback", "r", None, &empty, &meta, Some("child"), None, None, None, None, None)
+			.unwrap();
+		let deleted = db.delete_idea("parent").unwrap();
+		assert!(deleted);
+		assert!(db.get_idea("parent").unwrap().is_none());
+		assert!(db.get_idea("child").unwrap().is_none());
+		assert!(db.get_idea("grandchild").unwrap().is_none());
+		assert!(db.list_ideas().is_empty());
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn insert_idea_rejects_a_missing_parent() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let meta = serde_json::json!({});
+		let err = db
+			.insert_idea("kid", "K", "feedback", "r", None, &[], &meta, Some("ghost"), None, None, None, None, None)
+			.expect_err("missing parent must fail");
+		assert!(err.contains("not found"), "unexpected error: {err}");
+		assert!(db.get_idea("kid").unwrap().is_none(), "nothing inserted");
 		std::fs::remove_file(path).ok();
 	}
 }

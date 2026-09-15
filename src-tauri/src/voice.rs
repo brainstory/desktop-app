@@ -15,6 +15,15 @@ struct Capture {
 
 static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
 
+/// Append converted samples to the capture buffer unless the length cap is
+/// hit. Runs in the audio callback: lock briefly, no heavy work.
+fn queue_samples(queue: &Arc<Mutex<Vec<f32>>>, max_samples: usize, samples: impl Iterator<Item = f32>) {
+	let mut buf = queue.lock().unwrap_or_else(|e| e.into_inner());
+	if buf.len() < max_samples {
+		buf.extend(samples);
+	}
+}
+
 /// Hard cap on capture length (a little above the UI's 4-minute recording
 /// limit) so an abandoned recording can't grow the buffer unboundedly.
 const MAX_CAPTURE_SECS: usize = 300;
@@ -69,25 +78,50 @@ pub fn start_capture() -> Result<(), String> {
 		};
 
 	for (sample_format, stream_config) in &candidates {
-		if *sample_format != cpal::SampleFormat::F32 {
-			continue;
-		}
 		let queue = Arc::clone(&queue);
 		// Stop appending past the cap; a stream left running by a bug or a
 		// crashed UI must not eat memory forever.
 		let max_samples =
 			stream_config.sample_rate as usize * stream_config.channels as usize * MAX_CAPTURE_SECS;
-		let stream = device.build_input_stream(
-			*stream_config,
-			move |data: &[f32], _: &cpal::InputCallbackInfo| {
-				let mut buf = queue.lock().unwrap_or_else(|e| e.into_inner());
-				if buf.len() < max_samples {
-					buf.extend_from_slice(data);
-				}
-			},
-			move |err| log::warn!("microphone stream error: {err}"),
-			None,
-		);
+		let err_fn = move |err| log::warn!("microphone stream error: {err}");
+		// F32 is the native whisper input; I16/U16 devices are common on
+		// other platforms, and converting is trivial - so accept them
+		// instead of reporting "microphone unsupported".
+		let stream = match sample_format {
+			cpal::SampleFormat::F32 => device.build_input_stream(
+				*stream_config,
+				move |data: &[f32], _: &cpal::InputCallbackInfo| {
+					queue_samples(&queue, max_samples, data.iter().copied());
+				},
+				err_fn,
+				None,
+			),
+			cpal::SampleFormat::I16 => device.build_input_stream(
+				*stream_config,
+				move |data: &[i16], _: &cpal::InputCallbackInfo| {
+					queue_samples(
+						&queue,
+						max_samples,
+						data.iter().map(|&s| s as f32 / 32768.0),
+					);
+				},
+				err_fn,
+				None,
+			),
+			cpal::SampleFormat::U16 => device.build_input_stream(
+				*stream_config,
+				move |data: &[u16], _: &cpal::InputCallbackInfo| {
+					queue_samples(
+						&queue,
+						max_samples,
+						data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0),
+					);
+				},
+				err_fn,
+				None,
+			),
+			_ => continue,
+		};
 		match stream {
 			Ok(stream) => {
 				if let Err(e) = stream.play() {

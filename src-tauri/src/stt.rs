@@ -100,11 +100,13 @@ pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 		return Err("WAV contains no samples".into());
 	}
 
-	// fold channels to mono
+	// fold channels to mono (divide each frame by its own length: a
+	// truncated file can end mid-frame, and dividing a short frame by the
+	// full channel count would produce a spurious volume dip)
 	let mono: Vec<f32> = if channels > 1 {
 		samples
 			.chunks(channels)
-			.map(|frame| frame.iter().sum::<f32>() / channels as f32)
+			.map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
 			.collect()
 	} else {
 		samples
@@ -198,4 +200,92 @@ pub async fn transcribe_external(
 		.as_str()
 		.map(|s| s.to_string())
 		.ok_or_else(|| "external STT returned no text".into())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{resample_to_16k, wav_to_samples};
+
+	fn wav_bytes(spec: hound::WavSpec, samples: &[i16]) -> Vec<u8> {
+		let mut cursor = std::io::Cursor::new(Vec::new());
+		{
+			let mut writer = hound::WavWriter::new(&mut cursor, spec).expect("writer");
+			for &s in samples {
+				writer.write_sample(s).expect("write");
+			}
+		}
+		cursor.into_inner()
+	}
+
+	fn mono_spec(rate: u32, channels: u16) -> hound::WavSpec {
+		hound::WavSpec {
+			channels,
+			sample_rate: rate,
+			bits_per_sample: 16,
+			sample_format: hound::SampleFormat::Int,
+		}
+	}
+
+	#[test]
+	fn decodes_mono_16k() {
+		let bytes = wav_bytes(mono_spec(16_000, 1), &[0, 16384, -16384, 32767]);
+		let samples = wav_to_samples(&bytes).expect("decode");
+		assert_eq!(samples.len(), 4);
+		assert!((samples[1] - 0.5).abs() < 1e-3);
+		assert!((samples[2] + 0.5).abs() < 1e-3);
+	}
+
+	#[test]
+	fn folds_stereo_to_mono() {
+		// L=32767, R=-32767 -> average 0
+		let bytes = wav_bytes(mono_spec(16_000, 2), &[32767, -32767, 16384, 16384]);
+		let samples = wav_to_samples(&bytes).expect("decode");
+		assert_eq!(samples.len(), 2);
+		assert!(samples[0].abs() < 1e-4);
+		assert!((samples[1] - 0.5).abs() < 1e-3);
+	}
+
+	#[test]
+	fn resamples_44k1_to_16k() {
+		let ones = vec![1000i16; 44_100]; // one second
+		let bytes = wav_bytes(mono_spec(44_100, 1), &ones);
+		let samples = wav_to_samples(&bytes).expect("decode");
+		// one second at 16 kHz, small tolerance for the naive resampler
+		assert!(
+			(15_800..=16_200).contains(&samples.len()),
+			"got {} samples",
+			samples.len()
+		);
+	}
+
+	#[test]
+	fn rejects_garbage_bytes() {
+		assert!(wav_to_samples(b"not a wav file at all").is_err());
+		assert!(wav_to_samples(&[]).is_err());
+	}
+
+	#[test]
+	fn rejects_zero_channels() {
+		let bytes = wav_bytes(mono_spec(16_000, 1), &[0, 0]);
+		// hand-patch the channel field to 0 in the fmt chunk (byte 22)
+		let mut patched = bytes.clone();
+		patched[22] = 0;
+		assert!(wav_to_samples(&patched).is_err());
+	}
+
+	#[test]
+	fn rejects_empty_audio() {
+		let bytes = wav_bytes(mono_spec(16_000, 1), &[]);
+		assert!(wav_to_samples(&bytes).is_err());
+	}
+
+	#[test]
+	fn resample_passthrough_and_errors() {
+		let mono = vec![1.0f32, 2.0, 3.0];
+		assert_eq!(resample_to_16k(mono.clone(), 16_000).unwrap(), mono);
+		assert!(resample_to_16k(mono.clone(), 0).is_err());
+		// upsampling in frequency terms (8k -> 16k) doubles the length
+		let up = resample_to_16k(vec![0.0f32, 1.0], 8_000).unwrap();
+		assert_eq!(up.len(), 4);
+	}
 }

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import {
 	CONVERSATION_STATE,
 	CHAT_SAVE_STATE,
-	ERROR_MESSAGE_MAP,
 	MIN_CONVERSATION_LENGTH_BEFORE_SAVE,
 	CHAT_TYPE
 } from "@src/const";
@@ -17,7 +16,7 @@ import {
 import { markGettingStartedDone } from "@helpers/storage";
 import { getIdeaApi, createIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
-import { getQueryParam, callApiWithRetry, normalizeApiError } from "@helpers/helpers";
+import { getQueryParam, callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 
 import ChatRecorder from "@components/chat/reusable/ChatRecorder";
 import FinishedResultSection from "@components/chat/reusable/FinishedResultSection";
@@ -68,16 +67,21 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT;
 
 	const hasMounted = useRef(false);
+	/** guards createIdeaApi: the effect can legally re-run while a create
+	 *  is still in flight (StrictMode double-invoke, conversation updates);
+	 *  a second create would produce a duplicate idea row */
+	const creatingIdeaRef = useRef(false);
 
 	useIdeaIdFromUrl(hasMounted, setIdeaId);
 
 	useEffect(() => {
 		// this useEffect is to protect from creating duplicates of the same idea if the currConversation is set twice
 		// perhaps to the same value but the useEffect is triggered since array variables are pointers to memory
-		// WARNING: this is a bandiad as it doesn't help debug why currConversation might be set twice to the same value
-		if (readyToCreateIdea) {
+		if (readyToCreateIdea && !creatingIdeaRef.current) {
+			creatingIdeaRef.current = true;
 			createIdeaApi(result, currConversation, chatType, parentId, dailyLogId)
 				.then((createdIdeaId) => {
+					creatingIdeaRef.current = false;
 					setIdeaId(createdIdeaId);
 					let url = new URL(window.location.href);
 					let params = new URLSearchParams(url.search);
@@ -85,6 +89,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 					history.pushState(null, null, "?" + params.toString());
 				})
 				.catch((err) => {
+					creatingIdeaRef.current = false;
 					setAiError(`Could not save this session: ${normalizeApiError(err)}`);
 					// allow the next conversation update to retry creation
 					setReadyToCreateIdea(false);
@@ -198,31 +203,30 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 			callApiWithRetry(apiCall)
 				.then((message) => {
 					const isUser = false;
-					addConversationMessage(
+					const next = addConversationMessage(
 						message,
 						isUser,
 						currConversation,
-						setCurrConversation,
-						(newLength) =>
-							newLength >= minConversationLenForCreateAndEnd &&
-							setSaveState(CHAT_SAVE_STATE.SAVING)
+						setCurrConversation
 					);
+					if (next.length >= minConversationLenForCreateAndEnd) {
+						setSaveState(CHAT_SAVE_STATE.SAVING);
+					}
 					setIsUserResendRequired(false);
 					setInappropriateUserTranscript(null);
 				})
-				.catch((err) => {
-					const message = normalizeApiError(err);
-					if (message.includes(ERROR_MESSAGE_MAP[469])) {
-						setIsUserResendRequired(true);
-						const removedMessage = removeLastConversationMessage(
-							currConversation,
-							setCurrConversation
-						);
-						setInappropriateUserTranscript(removedMessage);
-					} else {
-						setAiError(message);
-					}
-				})
+			.catch((err) => {
+				if (isModerationError(err)) {
+					const removedMessage = removeLastConversationMessage(
+						currConversation,
+						setCurrConversation
+					);
+					setInappropriateUserTranscript(removedMessage);
+					setIsUserResendRequired(true);
+				} else {
+					setAiError(normalizeApiError(err));
+				}
+			})
 				.finally(() => {
 					setConversationState(CONVERSATION_STATE.Idle);
 				});
@@ -278,16 +282,15 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 
 	const askADifferentQuestion = async () => {
 		const isUser = true;
-		addConversationMessage(
+		const next = addConversationMessage(
 			askADifferentQuestionString,
 			isUser,
 			currConversation,
-			setCurrConversation,
-			(newLength) => {
-				newLength >= minConversationLenForCreateAndEnd &&
-					setSaveState(CHAT_SAVE_STATE.SAVING);
-			}
+			setCurrConversation
 		);
+		if (next.length >= minConversationLenForCreateAndEnd) {
+			setSaveState(CHAT_SAVE_STATE.SAVING);
+		}
 		setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
 	};
 
@@ -325,10 +328,7 @@ export function ChatSection({ draftId, dailyLogId, conversationEndCallbacks }) {
 				setConversationState={setConversationState}
 				currConversation={currConversation}
 				setCurrConversation={setCurrConversation}
-				setSaveState={(state) =>
-					currConversation.length >= minConversationLenForCreateAndEnd &&
-					setSaveState(state)
-				}
+				setSaveState={setSaveState}
 				handleGetResponse={handleGetResponse}
 			/>
 		];

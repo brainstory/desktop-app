@@ -11,11 +11,14 @@
 		"start": "astro dev --port 5173",
 		"build": "node scripts/vendor-assets.mjs && astro build",
 		"preview": "astro preview",
-		"astro": "astro"
+		"astro": "astro",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.3.3",
-		"astro": "^7.3.2"
+		"astro": "^7.3.2",
+		"vitest": "^3.2.4"
 	},
 	"dependencies": {
 		"@astrojs/react": "^6.0.5",

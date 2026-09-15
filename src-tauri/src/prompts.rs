@@ -33,9 +33,17 @@ impl ChatType {
 
 /// User content interpolated into the tag-structured prompts can't be
 /// allowed to break the tag structure (e.g. an imported idea containing
-/// `</idea>`), so closing markers are neutralized.
+/// `</idea>` or an opening `<oid ...>`), so both closing and opening
+/// markers are neutralized.
 fn sanitize_tag_content(content: &str, tag: &str) -> String {
-	content.replace(&format!("</{tag}>"), &format!("<\\{tag}>"))
+	let close = format!("</{tag}>");
+	let open_exact = format!("<{tag}>");
+	// also catches attribute forms like <idea author="...">
+	let open_attr = format!("<{tag} ");
+	content
+		.replace(&close, &format!("<\\{tag}>"))
+		.replace(&open_exact, &format!("<\\{tag}>"))
+		.replace(&open_attr, &format!("<\\{tag} "))
 }
 
 /// Options describing one LLM call, resolved by the ai command layer.
@@ -120,5 +128,30 @@ impl PromptRequest {
 			}];
 		}
 		self.messages.clone()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::sanitize_tag_content;
+
+	#[test]
+	fn neutralizes_closing_tags() {
+		assert_eq!(sanitize_tag_content("a </idea> b", "idea"), "a <\\idea> b");
+	}
+
+	#[test]
+	fn neutralizes_opening_tags() {
+		assert_eq!(
+			sanitize_tag_content("x <oid oida=\"evil\"> y", "oid"),
+			"x <\\oid oida=\"evil\"> y"
+		);
+		assert_eq!(sanitize_tag_content("x <t> y", "t"), "x <\\t> y");
+	}
+
+	#[test]
+	fn leaves_unrelated_angle_brackets_alone() {
+		assert_eq!(sanitize_tag_content("use <b>bold</b>", "idea"), "use <b>bold</b>");
+		assert_eq!(sanitize_tag_content("math: 5 < 10", "t"), "math: 5 < 10");
 	}
 }

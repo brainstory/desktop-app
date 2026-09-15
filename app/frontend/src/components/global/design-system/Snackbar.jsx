@@ -5,7 +5,6 @@ export const SUCCESS_COPY = {
 
 export const ERROR_COPY = {
 	DEFAULT: "Something went wrong. Please try again.",
-	RESET_PWD: "Error resetting password. Please try again.",
 	SAVE: "Error saving changes. Please try again."
 };
 

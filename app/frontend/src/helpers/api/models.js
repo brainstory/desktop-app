@@ -27,6 +27,11 @@ export async function deleteModelApi(modelId) {
 	return invoke("delete_model", { modelId });
 }
 
+/** Cancel an in-flight download; the backend removes its .part file. */
+export async function cancelDownloadApi(modelId) {
+	return invoke("cancel_download", { modelId });
+}
+
 /** Activate a downloaded model (sets it active and loads it) */
 export async function activateModelApi(modelId) {
 	return invoke("activate_model", { modelId });

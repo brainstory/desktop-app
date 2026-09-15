@@ -4,6 +4,18 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::AppState;
 
+// Trust model: share files are plain JSON the user received however they
+// liked (email, AirDrop, ...). Nothing cryptographically ties a file to an
+// author - a crafted file can claim any author name or share id (which can
+// suppress a later import of the real file as a "duplicate"). That is an
+// accepted property of this peer-to-peer, trust-based flow; the surfaces
+// below still bound file/content sizes so a hostile file can only confuse,
+// not exhaust, the app.
+
+/// Largest share file we will read into memory.
+const MAX_SHARE_FILE_BYTES: u64 = 10 * 1024 * 1024;/// Largest structured feedback document we will store.
+const MAX_STRUCTURED_BYTES: usize = 1024 * 1024;
+
 /// Export an idea (or a feedback document) as a portable JSON file. The user
 /// sends the file to the other person however they like; importing it on
 /// another machine attributes the content to the author stored in the file.
@@ -17,7 +29,7 @@ pub async fn export_idea(
 ) -> Result<serde_json::Value, String> {
 	let idea = state
 		.db
-		.get_idea(&idea_id)
+		.get_idea(&idea_id)?
 		.ok_or_else(|| format!("idea {idea_id} not found"))?;
 
 	let idea_type = idea.r#type.clone().unwrap_or_else(|| "original".into());
@@ -76,7 +88,7 @@ pub async fn export_idea(
 		chrono::Local::now().format("%Y%m%d-%H%M")
 	);
 
-	let (sender, receiver) = std::sync::mpsc::channel();
+	let (sender, receiver) = tokio::sync::oneshot::channel();
 	let dialog = app
 		.dialog()
 		.file()
@@ -85,7 +97,9 @@ pub async fn export_idea(
 	dialog.save_file(move |path| {
 		let _ = sender.send(path);
 	});
-	let path = receiver.recv().map_err(|e| e.to_string())?;
+	let path = receiver
+		.await
+		.map_err(|e| e.to_string())?;
 	let Some(path) = path else {
 		// user cancelled the dialog
 		return Ok(json!({ "cancelled": true }));
@@ -107,18 +121,33 @@ pub async fn import_share(
 	app: tauri::AppHandle,
 	state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-	let (sender, receiver) = std::sync::mpsc::channel();
+	let (sender, receiver) = tokio::sync::oneshot::channel();
 	app.dialog()
 		.file()
 		.add_filter("Brainstory share", &["json"])
 		.pick_file(move |path| {
 			let _ = sender.send(path);
 		});
-	let path = receiver.recv().map_err(|e| e.to_string())?;
+	let path = receiver
+		.await
+		.map_err(|e| e.to_string())?;
 	let Some(path) = path else {
 		return Ok(json!({ "cancelled": true }));
 	};
 	let path = path.into_path().map_err(|e| e.to_string())?;
+
+	// Bound the read: a corrupt or hostile multi-GB "share file" must not
+	// spike memory (the dialog filter is only a hint; nothing enforces it).
+	let file_len = std::fs::metadata(&path)
+		.map_err(|e| format!("could not read file: {e}"))?
+		.len();
+	if file_len > MAX_SHARE_FILE_BYTES {
+		return Err(format!(
+			"share file is too large ({} MB, limit {} MB)",
+			file_len / (1024 * 1024),
+			MAX_SHARE_FILE_BYTES / (1024 * 1024)
+		));
+	}
 
 	let raw = std::fs::read_to_string(&path).map_err(|e| format!("could not read file: {e}"))?;
 	let payload: serde_json::Value =
@@ -207,9 +236,22 @@ pub async fn import_share(
 				.db
 				.get_idea_by_share_id(target_share_id)
 				.or_else(|| {
-					// fall back to a title match if the share id is unknown
+					// Fall back to a title match only when it is
+					// unambiguous: titles are derived and truncated, so
+					// collisions are plausible and attaching feedback to
+					// the wrong idea is worse than a clean refusal.
 					let title = feedback["target_title"].as_str()?;
-					state.db.list_ideas().into_iter().find(|i| i.title == title)
+					let matches: Vec<_> = state
+						.db
+						.list_ideas()
+						.into_iter()
+						.filter(|i| i.title == title)
+						.collect();
+					if matches.len() == 1 {
+						matches.into_iter().next()
+					} else {
+						None
+					}
 				})
 				.ok_or_else(|| {
 					"the original idea for this feedback is not in your library".to_string()
@@ -239,6 +281,11 @@ pub async fn import_share(
 			let structured = feedback["structured_result"]
 				.as_object()
 				.map(|_| feedback["structured_result"].clone());
+			if let Some(v) = &structured {
+				if v.to_string().len() > MAX_STRUCTURED_BYTES {
+					return Err("feedback document is too large to import".into());
+				}
+			}
 			let id = uuid::Uuid::new_v4().to_string();
 			let created_at = parse_created_at(feedback["created_at"].as_str());
 			state.db.insert_idea(

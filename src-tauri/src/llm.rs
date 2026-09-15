@@ -68,6 +68,14 @@ impl LocalLlm {
 			.map_err(|e| format!("failed to apply chat template: {e}"))
 	}
 
+	/// Neutralize the model's own turn control markers so message content
+	/// (user text, or text imported from a share file) can't reshape the
+	/// prompt structure in the manual-template path.
+	fn neutralize_turn_markers(text: &str) -> String {
+		text.replace("<|turn>", "<\\|turn>")
+			.replace("<turn|>", "<turn\\|>")
+	}
+
 	/// Manual prompt format matching the model's native chat markers. Used
 	/// when llama.cpp's built-in template applier can't handle the model's
 	/// (e.g. the Gemma 4 canonical template, which its minja subset rejects).
@@ -85,10 +93,11 @@ impl LocalLlm {
 				} else {
 					"user"
 				};
+				let content = Self::neutralize_turn_markers(&msg.content);
 				let content = if role == "user" {
-					msg.content.trim()
+					content.trim()
 				} else {
-					msg.content.as_str()
+					content.as_str()
 				};
 				prompt.push_str(&format!("<|turn>{role}\n{content}<turn|>\n"));
 			}
@@ -173,6 +182,40 @@ impl LocalLlm {
 			prompt = self.apply_template(system, &msgs)?;
 			n_tokens = self.count_tokens(&prompt)?;
 		}
+
+		// Even with only the opening + final message left, one oversized
+		// paste can exceed the budget. Hard-truncate the final message
+		// (char-boundary safe) so decode succeeds instead of failing with
+		// "prompt decode failed" or collapsing the generation cap to ~0.
+		while n_tokens > budget {
+			let Some(last) = msgs.last_mut() else {
+				break;
+			};
+			if last.content.is_empty() {
+				break;
+			}
+			// Estimate the cut from the overshoot (~4 bytes per token is a
+			// safe upper bound) but always make progress.
+			let overshoot = n_tokens - budget;
+			let target = last
+				.content
+				.len()
+				.saturating_sub(overshoot.saturating_mul(4))
+				.max(last.content.len() / 2);
+			let truncated = truncate_at_boundary(&last.content, target);
+			// The truncation notice must never outweigh the shrink, or this
+			// loop stops making progress.
+			let mut candidate = format!("{truncated}\n[...truncated to fit the model context]");
+			if candidate.len() >= last.content.len() {
+				candidate = truncated.to_string();
+			}
+			if candidate.len() >= last.content.len() {
+				break;
+			}
+			last.content = candidate;
+			prompt = self.apply_template(system, &msgs)?;
+			n_tokens = self.count_tokens(&prompt)?;
+		}
 		Ok(prompt)
 	}
 
@@ -197,7 +240,7 @@ impl LocalLlm {
 			.str_to_token(&prompt, AddBos::Never)
 			.map_err(|e| e.to_string())?;
 		if tokens.is_empty() {
-			return Err("empty prompt".into());
+			return Err("the model produced no tokens for this conversation; please try again".into());
 		}
 
 		// The context borrows the model, so it lives only within this call.
@@ -606,10 +649,28 @@ fn map_provider_error(status: u16, body: &str) -> String {
 
 fn truncate_body(body: &str) -> String {
 	if body.len() > 300 {
-		format!("{}...", &body[..300])
+		// Slice at a char boundary: byte 300 can land mid-UTF-8-character
+		// for a non-ASCII error body, and a plain [..300] would panic.
+		let mut cut = 300;
+		while !body.is_char_boundary(cut) {
+			cut -= 1;
+		}
+		format!("{}...", &body[..cut])
 	} else {
 		body.to_string()
 	}
+}
+
+/// Truncate a string to at most `max_bytes`, never splitting a character.
+fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
+	if s.len() <= max_bytes {
+		return s;
+	}
+	let mut cut = max_bytes;
+	while !s.is_char_boundary(cut) {
+		cut -= 1;
+	}
+	&s[..cut]
 }
 
 #[cfg(test)]
@@ -654,6 +715,27 @@ mod tests {
 	#[test]
 	fn think_mid_answer_is_stripped() {
 		assert_eq!(run(&["Wait. <think>reconsider</think> Done."]), "Wait. Done.");
+	}
+
+	#[test]
+	fn truncate_body_never_splits_a_character() {
+		use super::truncate_body;
+		// byte 300 lands inside this multi-byte snowman
+		let body = "☃".repeat(120); // 360 bytes
+		let truncated = truncate_body(&body);
+		assert!(truncated.ends_with("..."));
+		assert!(truncated.is_char_boundary(truncated.len() - 3));
+		assert_eq!(truncate_body("short"), "short");
+	}
+
+	#[test]
+	fn truncate_at_boundary_respects_utf8() {
+		use super::truncate_at_boundary;
+		let s = "héllo wörld"; // multi-byte é, ö
+		let cut = truncate_at_boundary(s, 4);
+		assert!(s.starts_with(cut));
+		assert!(cut.is_char_boundary(cut.len()));
+		assert_eq!(truncate_at_boundary(s, 100), s);
 	}
 }
 

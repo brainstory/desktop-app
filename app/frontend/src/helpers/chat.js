@@ -36,22 +36,21 @@ export function getFirstPrompt(chatType) {
 }
 
 /**
- * Append a message to the conversation. Uses the functional state update so
- * concurrent updates can never clobber each other with a stale array.
- * `callback` receives the new conversation length.
+ * Append a message to the conversation and return the new array. The new
+ * array is returned (instead of invoking a callback with a guessed length)
+ * so callers can threshold off the *real* new length synchronously instead
+ * of a stale `conversation.length + 1` from a closing closure.
  */
 export const addConversationMessage = (
 	message,
 	isUser,
 	conversation,
-	setConversation,
-	callback
+	setConversation
 ) => {
 	const role = isUser ? "user" : "assistant";
-	setConversation((prev) => [...prev, { role, content: message }]);
-	if (callback) {
-		callback(conversation.length + 1);
-	}
+	const next = [...conversation, { role, content: message }];
+	setConversation(next);
+	return next;
 };
 
 export const removeLastConversationMessage = (conversation, setConversation) => {

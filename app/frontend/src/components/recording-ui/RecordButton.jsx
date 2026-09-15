@@ -212,18 +212,18 @@ function RecordButton({
 							{ICON.MicOff}
 						</button>
 					</div>
-					<div className="text-black text-base">
-						<p>Brainstory can't hear you without your mic!</p>
-						<p>
-							{errorMessage ? (
-							errorMessage
-						) : (
-							<>
-								<b>Allow microphone</b> in your system settings and try again
-							</>
-						)}
-						</p>
-					</div>
+				<div className="text-black text-base">
+					<p>Couldn't start the microphone.</p>
+					<p>
+						{errorMessage ? (
+						errorMessage
+					) : (
+						<>
+							<b>Allow microphone</b> in your system settings and try again
+						</>
+					)}
+					</p>
+				</div>
 				</div>
 			);
 		} else {
@@ -287,7 +287,9 @@ function RecordButton({
 	}
 
 	function handleKeyDown(event) {
-		if (event.key === "Enter") {
+		// Enter sends; Shift+Enter inserts a newline (the field is a
+		// multi-line textarea, so users expect both)
+		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
 			handleTextSend();
 		}
@@ -303,12 +305,22 @@ function RecordButton({
 			{renderInputComponent()}
 			{warningType && (
 				<div className={warningBoxStyle}>
-					<p className="text-sm font-semibold">
+					<p className="text-sm font-semibold flex-1">
 						{warningType === "error"
 							? (errorMessage ??
 								"An error occurred while transcribing. Please try again.")
 							: "Maximum recording time 4 minutes reached. Send message to continue."}
 					</p>
+					<button
+						className="text-white/80 hover:text-white text-lg font-bold px-2 shrink-0"
+						aria-label="dismiss message"
+						onClick={() => {
+							setWarningType(null);
+							setErrorMessage(null);
+						}}
+					>
+						×
+					</button>
 				</div>
 			)}
 			<ChangeInputTypeButton isTextInput={isTextInput} onToggle={onInterfaceToggle} />

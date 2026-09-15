@@ -11,7 +11,9 @@ export default function EmojiItem({
 	creatorName = null,
 	style = ""
 }) {
-	const avatarLetter = creatorName ? creatorName.charAt(0) : creatorEmail.charAt(0);
+	const avatarLetter = creatorName
+		? creatorName.charAt(0)
+		: (creatorEmail || "?").charAt(0);
 
 	return (
 		<button

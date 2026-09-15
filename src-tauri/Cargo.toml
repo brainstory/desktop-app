@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
@@ -34,25 +36,27 @@ reqwest = { version = "0.13", default-features = false, features = [
 	"multipart",
 ] }
 futures-util = "0.3"
-tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "fs", "io-util", "sync", "time", "macros"] }
 
-# local inference
-llama-cpp-2 = "0.1.156"
+# local inference.
+# Pinned exactly on purpose: the crates vendor their own llama.cpp /
+# whisper.cpp / ggml C++, and the binary's force_exit() workaround depends
+# on that C++'s teardown behavior. Let a deliberate upgrade change it.
+llama-cpp-2 = "=0.1.156"
 hound = "3"
 
 thiserror = "2"
 encoding_rs = "0.8"
 libc = "0.2"
 cpal = "0.18"
-tauri-plugin-dialog = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { version = "0.16", features = ["metal"] }
+whisper-rs = { version = "=0.16.0", features = ["metal"] }
 objc2-app-kit = "0.3"
 objc2 = "0.6"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-whisper-rs = "0.16"
+whisper-rs = "=0.16.0"
 
 [profile.release]
 opt-level = 3
