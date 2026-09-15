@@ -41,6 +41,11 @@ export default tseslint.config(
 			"react/no-unknown-property": "off",
 			// prop-type declarations are superseded by TypeScript
 			"react/prop-types": "off",
+			// react-hooks v7 experimental rules: fire on established
+			// effect-driven data fetching patterns across this codebase;
+			// revisiting them means migrating to loaders/suspense
+			"react-hooks/set-state-in-effect": "off",
+			"react-hooks/immutability": "off",
 			// allow the conventional `_` name for intentionally unused vars
 			"no-unused-vars": "off",
 			"@typescript-eslint/no-unused-vars": [

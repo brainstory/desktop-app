@@ -646,7 +646,11 @@ pub async fn download_model_file(
 			));
 		}
 		if let Some(hasher) = hasher.take() {
-			let actual = format!("{:x}", hasher.finalize());
+			let actual: String = hasher
+				.finalize()
+				.iter()
+				.map(|b| format!("{b:02x}"))
+				.collect();
 			if !actual.eq_ignore_ascii_case(expected_sha256) {
 				return Err(format!(
 					"download failed its integrity check (sha256 {actual}) - the file was corrupted in transit or changed upstream; please retry"
@@ -715,7 +719,10 @@ mod tests {
 
 	fn sha256_hex(bytes: &[u8]) -> String {
 		use sha2::{Digest, Sha256};
-		format!("{:x}", Sha256::digest(bytes))
+		Sha256::digest(bytes)
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect::<String>()
 	}
 
 	#[tokio::test]
