@@ -6,3 +6,17 @@
 # when unset, and non-forced [env] values only apply when the var is unset.
 [env]
 MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
+
+# llama.cpp and whisper.cpp each vendor their own ggml/gguf copy, producing
+# duplicate symbols when both static libs are linked. macOS ld64 only warns
+# about this (see README); MSVC link/lld-link treat it as an error, so the
+# Windows target forces the linker to tolerate it - same tradeoff, verified
+# harmless by engine_smoke on macOS. The repo-root .cargo/config.toml mirrors
+# this section for tauri CLI invocations from the repo root.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "link-arg=/FORCE:MULTIPLE",
+    # local cross-compiles only: satisfies the stray ggml-blas.lib directive
+    # (see windows-xwin-stub/README.md)
+    "-L", "native=windows-xwin-stub",
+]

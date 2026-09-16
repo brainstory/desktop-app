@@ -1,0 +1,17 @@
+# Read by cargo when the tauri CLI invokes it (from this root dir).
+# src-tauri/.cargo/config.toml only applies to direct cargo runs in src-tauri.
+
+[target.x86_64-pc-windows-msvc]
+# llama.cpp and whisper.cpp each vendor ggml/gguf -> duplicate symbols that
+# lld-link treats as errors (macOS ld64 only warns); force tolerance.
+# -L stub: whisper-rs-sys 0.15 cross-compile quirk (see
+# src-tauri/windows-xwin-stub/README.md).
+rustflags = [
+    "-C", "link-arg=/FORCE:MULTIPLE",
+    # stub resolvable from both repo root and src-tauri (invoker CWD varies)
+    "-L", "native=windows-xwin-stub",
+    "-L", "native=src-tauri/windows-xwin-stub",
+]
+
+[env]
+MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }

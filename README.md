@@ -92,6 +92,18 @@ The frontend is TypeScript (`.ts` / `.tsx`; `.astro` pages stay `.astro`).
 Keep `pnpm -C app/frontend typecheck` green alongside tests and lint.
 
 Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12+.
+
+Local Windows cross-compile (no Windows machine needed):
+
+```sh
+brew install llvm lld makensis cmake ninja
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin
+./scripts/build-windows-local.sh   # -> .../bundle/nsis/Brainstory_*_x64-setup.exe
+```
+
+The binary is cross-compiled but never executed locally; runtime verification
+happens via the nightly/release Windows CI builds.
 The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
 `src-tauri/.cargo/config.toml`.
 
