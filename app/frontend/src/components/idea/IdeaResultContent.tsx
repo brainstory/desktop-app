@@ -83,7 +83,7 @@ export default function IdeaResultContent() {
 				}
 			})
 			.catch((err) => {
-				console.error("PROBABLY IDEA NOT FOUND WITH ID: " + ideaId);
+				console.error("PROBABLY IDEA NOT FOUND WITH ID", ideaId);
 				setErrorFound(true);
 				setIsLoading(false);
 				throw err;
@@ -196,7 +196,7 @@ async function fetchIdeaChildrenData(ideaId: string): Promise<[IdeaFeedbackItem[
 			return [ideaChildren as IdeaFeedbackItem[], oidHeadingToFeedbackComments];
 		})
 		.catch((err) => {
-			console.error("PROBABLY IDEA NOT FOUND WITH ID: " + ideaId, err);
+			console.error("PROBABLY IDEA NOT FOUND WITH ID", ideaId, err);
 			throw err;
 		});
 

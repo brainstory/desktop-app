@@ -50,7 +50,7 @@ export default function DailyIntentModal({ logId, setLogId, onClose }: DailyInte
 				setIsLogLoading(false);
 			})
 			.catch((err) => {
-				console.log("Error getting daily log questions " + err);
+				console.log("Error getting daily log questions", err);
 			});
 		// getSurveyFieldsApi()
 		// 	.then((resp) => {
@@ -68,7 +68,7 @@ export default function DailyIntentModal({ logId, setLogId, onClose }: DailyInte
 					setLogId(logId);
 				})
 				.catch((err) => {
-					console.log("Error submitting daily log answers " + err);
+					console.log("Error submitting daily log answers", err);
 				})
 				.finally(() => setIsSaving(false));
 		} else if (modalTab === TAB_NAME.END_SURVEY) {
