@@ -17,7 +17,7 @@ export function useIdeaIdFromUrl(
 		// related to the ideaId once being in the query parameter but isn't anymore
 		setIdeaId(getQueryParam("id") ?? undefined);
 		hasMountedRef.current = true;
-	}, []);
+	}, [hasMountedRef, setIdeaId]);
 }
 
 export function getFirstPrompt(chatType: string): string {

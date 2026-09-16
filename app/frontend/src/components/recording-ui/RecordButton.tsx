@@ -72,7 +72,7 @@ function RecordButton({
 		if (!readyToSend) {
 			respondedRef.current = false;
 		}
-	}, [readyToSend]);
+	}, [readyToSend, getCoachResponse, resetTimer]);
 
 	// If the component goes away mid-recording (user ends the chat, page
 	// navigates), stop the timer and release the Rust-side microphone.

@@ -21,7 +21,7 @@ function useTimer(isRunning: boolean, setTime: Dispatch<SetStateAction<number>>)
 		return () => {
 			if (interval !== null) window.clearInterval(interval);
 		};
-	}, [isRunning]);
+	}, [isRunning, setTime]);
 }
 
 interface AudioRecorderProps {
@@ -55,7 +55,7 @@ const AudioRecorder = ({
 		if (isRunning) {
 			startRecordingCallback?.();
 		}
-	}, [isRunning]);
+	}, [isRunning, startRecordingCallback]);
 
 	return (
 		<div className="w-full text-center">

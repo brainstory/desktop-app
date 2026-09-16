@@ -92,7 +92,7 @@ export default function IdeaResultContent() {
 			isCurrent = false;
 			window.removeEventListener("resize", handleResize);
 		};
-	}, []);
+	}, [ideaId]);
 
 	const tabData: {
 		label: string;
@@ -225,5 +225,5 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 		return () => {
 			isCurrent = false;
 		};
-	}, [id]);
+	}, [id, isUnread]);
 }

@@ -133,7 +133,7 @@ export function ChatSection({
 					// update re-runs this effect and retries creation
 				});
 		}
-	}, [readyToCreateIdea, currConversation]);
+	}, [readyToCreateIdea, currConversation, dailyLogId, result]);
 
 	useEffect(() => {
 		if (currConversation.length >= minConversationLenForCreateAndEnd) {
@@ -152,7 +152,7 @@ export function ChatSection({
 					});
 			}
 		}
-	}, [currConversation]);
+	}, [currConversation, ideaId, minConversationLenForCreateAndEnd]);
 
 	useEffect(() => {
 		if (ideaId) {
@@ -200,7 +200,7 @@ export function ChatSection({
 			// when idea id isn't in the query parameter bc the idea hasn't been created yet
 			fetchParentIdea(parentId);
 		}
-	}, [ideaId]);
+	}, [ideaId, currConversation.length]);
 
 
 	/** Generate assistant response. NOT for the final outline result. */
