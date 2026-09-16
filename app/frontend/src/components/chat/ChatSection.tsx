@@ -89,7 +89,7 @@ export function ChatSection({
 				setParentIdea(ideaContent);
 			})
 			.catch((err) => {
-				console.log("Parent Idea not found with ID " + parentId, err);
+				console.log("Parent Idea not found with ID", parentId, err);
 				setErrorComponent(
 					<ErrorSection
 						title="Shared idea not found"
@@ -185,7 +185,7 @@ export function ChatSection({
 					}
 				})
 				.catch((err) => {
-					console.log("idea not found with ID " + ideaId, err);
+					console.log("idea not found with ID", ideaId, err);
 					setErrorComponent(
 						<ErrorSection
 							title="Draft idea not found"

@@ -12,6 +12,9 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Nightly (${{ matrix.name }})

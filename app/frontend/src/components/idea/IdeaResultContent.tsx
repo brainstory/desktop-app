@@ -219,7 +219,7 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 				}
 			})
 			.catch((err) => {
-				console.error("PROBABLY IDEA NOT FOUND WITH ID: " + id);
+				console.error("PROBABLY IDEA NOT FOUND WITH ID", id);
 				throw err;
 			});
 		return () => {
