@@ -138,9 +138,7 @@ pub struct AiSettings {
 impl AiSettings {
 	pub fn load(db: &Db) -> Self {
 		let get = |k: &str| db.get_setting(k).unwrap_or_default();
-		let secret = |s: crate::secrets::Secret| {
-			crate::secrets::load(s, db).unwrap_or_default()
-		};
+		let secret = |s: crate::secrets::Secret| crate::secrets::load(s, db).unwrap_or_default();
 		Self {
 			llm_mode: {
 				let m = get("ai_llm_mode");
@@ -166,14 +164,14 @@ impl AiSettings {
 					m
 				}
 			},
-		hf_token: secret(crate::secrets::Secret::HfToken),
-		ext_llm_base_url: get("ext_llm_base_url"),
-		ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
-		ext_llm_model: get("ext_llm_model"),
-		ext_stt_base_url: get("ext_stt_base_url"),
-		ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
-		ext_stt_model: get("ext_stt_model"),
-	}
+			hf_token: secret(crate::secrets::Secret::HfToken),
+			ext_llm_base_url: get("ext_llm_base_url"),
+			ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
+			ext_llm_model: get("ext_llm_model"),
+			ext_stt_base_url: get("ext_stt_base_url"),
+			ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
+			ext_stt_model: get("ext_stt_model"),
+		}
 	}
 
 	pub fn save(&self, db: &Db) {
@@ -321,7 +319,10 @@ impl AppState {
 		// silently ignoring, so callers can't persist a divergent active
 		// model while a different load is in flight.
 		if self.llm_loading.swap(true, Ordering::SeqCst) {
-			log::warn!("llm load already in progress; refusing request for {}", spec.id);
+			log::warn!(
+				"llm load already in progress; refusing request for {}",
+				spec.id
+			);
 			return Err("a model is already loading - try again in a moment".into());
 		}
 		let result = self.load_llm_inner(app, spec);
@@ -399,7 +400,11 @@ impl AppState {
 				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
 					match self.reload_llm(&prev) {
 						Ok(()) => {
-							log::warn!("switch to {} failed; previous model {} is active again", spec.id, prev.id);
+							log::warn!(
+								"switch to {} failed; previous model {} is active again",
+								spec.id,
+								prev.id
+							);
 							let mut s = lock(&self.llm_status);
 							*s = EngineStatus::new(
 								"ready",
@@ -450,7 +455,10 @@ impl AppState {
 	/// thread. Same staging/rollback contract as `load_llm`.
 	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		if self.stt_loading.swap(true, Ordering::SeqCst) {
-			log::warn!("stt load already in progress; refusing request for {}", spec.id);
+			log::warn!(
+				"stt load already in progress; refusing request for {}",
+				spec.id
+			);
 			return Err("a model is already loading - try again in a moment".into());
 		}
 		let result = self.load_stt_inner(app, spec);
@@ -568,7 +576,9 @@ pub async fn download_model_file(
 		.connect_timeout(std::time::Duration::from_secs(15))
 		.build()
 		.map_err(|e| e.to_string())?;
-	let mut request = client.get(url).header("User-Agent", "brainstory-desktop/0.1");
+	let mut request = client
+		.get(url)
+		.header("User-Agent", "brainstory-desktop/0.1");
 	if !hf_token.is_empty() {
 		request = request.bearer_auth(hf_token);
 	}
@@ -714,7 +724,10 @@ mod tests {
 	}
 
 	fn temp_dest(name: &str) -> std::path::PathBuf {
-		std::env::temp_dir().join(format!("brainstory-dl-test-{name}-{}", uuid::Uuid::new_v4()))
+		std::env::temp_dir().join(format!(
+			"brainstory-dl-test-{name}-{}",
+			uuid::Uuid::new_v4()
+		))
 	}
 
 	fn sha256_hex(bytes: &[u8]) -> String {
@@ -756,9 +769,17 @@ mod tests {
 		let url = serve(http(&body, ""));
 		let dest = temp_dest("hash");
 		let cancel = Arc::new(AtomicBool::new(false));
-		let err = download_model_file(&url, &dest, body.len() as u64, "deadbeef", "", &cancel, &mut |_| {})
-			.await
-			.expect_err("hash mismatch must fail");
+		let err = download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			"deadbeef",
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("hash mismatch must fail");
 		assert!(err.contains("integrity"), "unexpected error: {err}");
 		assert!(!dest.exists(), "no file left behind on failure");
 	}
@@ -781,7 +802,10 @@ mod tests {
 		)
 		.await
 		.expect_err("truncated transfer must fail");
-		assert!(err.contains("incomplete") || err.contains("mismatch"), "unexpected error: {err}");
+		assert!(
+			err.contains("incomplete") || err.contains("mismatch"),
+			"unexpected error: {err}"
+		);
 		assert!(!dest.exists());
 	}
 

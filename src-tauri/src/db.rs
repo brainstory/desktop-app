@@ -984,8 +984,8 @@ mod tests {
 			);
 			assert_ne!(local_date, "", "backfill is not empty");
 		}
-	// yesterday's idea counts via its frozen local date; today without
-	// activity doesn't break the streak
+		// yesterday's idea counts via its frozen local date; today without
+		// activity doesn't break the streak
 		assert!(db.get_daily_status().streak >= 1);
 		std::fs::remove_file(path).ok();
 	}
@@ -996,14 +996,44 @@ mod tests {
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let empty: Vec<ChatMessage> = vec![];
-		db.insert_idea("parent", "P", "original", "r", None, &empty, &meta, None, None, None, None, None, None)
-			.unwrap();
-		db.insert_idea("child", "C", "feedback", "r", None, &empty, &meta, Some("parent"), None, None, None, None, None)
-			.unwrap();
+		db.insert_idea(
+			"parent", "P", "original", "r", None, &empty, &meta, None, None, None, None, None, None,
+		)
+		.unwrap();
+		db.insert_idea(
+			"child",
+			"C",
+			"feedback",
+			"r",
+			None,
+			&empty,
+			&meta,
+			Some("parent"),
+			None,
+			None,
+			None,
+			None,
+			None,
+		)
+		.unwrap();
 		// a child of the child: the old delete-children-only logic left
 		// this row orphaned in the library
-		db.insert_idea("grandchild", "G", "feedback", "r", None, &empty, &meta, Some("child"), None, None, None, None, None)
-			.unwrap();
+		db.insert_idea(
+			"grandchild",
+			"G",
+			"feedback",
+			"r",
+			None,
+			&empty,
+			&meta,
+			Some("child"),
+			None,
+			None,
+			None,
+			None,
+			None,
+		)
+		.unwrap();
 		let deleted = db.delete_idea("parent").unwrap();
 		assert!(deleted);
 		assert!(db.get_idea("parent").unwrap().is_none());
@@ -1019,7 +1049,21 @@ mod tests {
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let err = db
-			.insert_idea("kid", "K", "feedback", "r", None, &[], &meta, Some("ghost"), None, None, None, None, None)
+			.insert_idea(
+				"kid",
+				"K",
+				"feedback",
+				"r",
+				None,
+				&[],
+				&meta,
+				Some("ghost"),
+				None,
+				None,
+				None,
+				None,
+				None,
+			)
 			.expect_err("missing parent must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
 		assert!(db.get_idea("kid").unwrap().is_none(), "nothing inserted");
@@ -1040,19 +1084,22 @@ mod tests {
 			assert!(ghost.is_err(), "FK must reject a missing parent");
 
 			// ON DELETE CASCADE: removing the parent removes the subtree
-			conn.execute("INSERT INTO ideas (id, created_at) VALUES ('p', '2026-01-01T00:00:00')", []).unwrap();
+			conn.execute(
+				"INSERT INTO ideas (id, created_at) VALUES ('p', '2026-01-01T00:00:00')",
+				[],
+			)
+			.unwrap();
 			conn.execute(
 				"INSERT INTO ideas (id, created_at, parent_idea_id) VALUES ('c', '2026-01-01T00:00:00', 'p')",
 				[],
 			)
 			.unwrap();
-			conn.execute("DELETE FROM ideas WHERE id = 'p'", []).unwrap();
+			conn.execute("DELETE FROM ideas WHERE id = 'p'", [])
+				.unwrap();
 			let orphans: i64 = conn
-				.query_row(
-					"SELECT COUNT(*) FROM ideas WHERE id = 'c'",
-					[],
-					|row| row.get(0),
-				)
+				.query_row("SELECT COUNT(*) FROM ideas WHERE id = 'c'", [], |row| {
+					row.get(0)
+				})
 				.unwrap();
 			assert_eq!(orphans, 0, "cascade must remove the child");
 		}
@@ -1064,9 +1111,26 @@ mod tests {
 		let path = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
-		db.insert_idea("t1", "The Title", "original", "r", None, &[], &meta, None, None, None, None, None, None)
-			.unwrap();
-		assert_eq!(db.get_idea_title("t1").unwrap().as_deref(), Some("The Title"));
+		db.insert_idea(
+			"t1",
+			"The Title",
+			"original",
+			"r",
+			None,
+			&[],
+			&meta,
+			None,
+			None,
+			None,
+			None,
+			None,
+			None,
+		)
+		.unwrap();
+		assert_eq!(
+			db.get_idea_title("t1").unwrap().as_deref(),
+			Some("The Title")
+		);
 		assert_eq!(db.get_idea_title("missing").unwrap(), None);
 		std::fs::remove_file(path).ok();
 	}

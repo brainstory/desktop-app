@@ -35,11 +35,7 @@ impl Secret {
 	}
 }
 
-const ALL: [Secret; 3] = [
-	Secret::HfToken,
-	Secret::ExtLlmApiKey,
-	Secret::ExtSttApiKey,
-];
+const ALL: [Secret; 3] = [Secret::HfToken, Secret::ExtLlmApiKey, Secret::ExtSttApiKey];
 
 fn entry(secret: Secret) -> Result<keyring::Entry, String> {
 	keyring::Entry::new(SERVICE, secret.account()).map_err(|e| format!("keychain unavailable: {e}"))
@@ -78,7 +74,10 @@ pub fn store(secret: Secret, value: &str, db: &Db) -> Result<(), String> {
 			Ok(())
 		}
 		Err(e) => {
-			log::warn!("keychain write for {} failed ({e}); storing in local DB instead", secret.account());
+			log::warn!(
+				"keychain write for {} failed ({e}); storing in local DB instead",
+				secret.account()
+			);
 			fallback(db)
 		}
 	}
@@ -105,7 +104,10 @@ pub fn migrate_from_db(db: &Db) {
 			continue;
 		};
 		let Ok(entry) = entry(secret) else {
-			log::warn!("no keychain service; {} stays in the local DB", secret.account());
+			log::warn!(
+				"no keychain service; {} stays in the local DB",
+				secret.account()
+			);
 			continue;
 		};
 		match entry.set_password(&value) {
@@ -114,7 +116,10 @@ pub fn migrate_from_db(db: &Db) {
 				log::info!("moved {} into the keychain", secret.account());
 			}
 			Err(e) => {
-				log::warn!("could not move {} into the keychain ({e}); keeping it in the local DB", secret.account());
+				log::warn!(
+					"could not move {} into the keychain ({e}); keeping it in the local DB",
+					secret.account()
+				);
 			}
 		}
 	}

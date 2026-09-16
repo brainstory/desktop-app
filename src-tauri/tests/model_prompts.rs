@@ -29,16 +29,21 @@ fn generate(llm: &LocalLlm, request: &PromptRequest) -> (String, String) {
 fn assert_clean(label: &str, returned: &str, streamed: &str) {
 	println!("--- {label}:\n{returned}\n");
 	assert!(!returned.trim().is_empty(), "{label} produced no output");
-	assert_eq!(returned, streamed, "{label}: streamed and returned text differ");
-	assert!(!returned.contains("<think>"), "{label}: reasoning leaked into output");
+	assert_eq!(
+		returned, streamed,
+		"{label}: streamed and returned text differ"
+	);
+	assert!(
+		!returned.contains("<think>"),
+		"{label}: reasoning leaked into output"
+	);
 }
 
 #[test]
 fn real_prompts_work_end_to_end() {
 	let path = std::env::var("LLM_MODEL_PATH").expect("set LLM_MODEL_PATH to a llama gguf");
-	let backend = Arc::new(
-		llama_cpp_2::llama_backend::LlamaBackend::init().expect("backend init failed"),
-	);
+	let backend =
+		Arc::new(llama_cpp_2::llama_backend::LlamaBackend::init().expect("backend init failed"));
 	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test").expect("load failed");
 
 	// A realistic brainstorming transcript, the same shape the chat command

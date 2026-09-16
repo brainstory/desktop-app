@@ -268,7 +268,9 @@ impl LocalLlm {
 			.str_to_token(&prompt, AddBos::Never)
 			.map_err(|e| e.to_string())?;
 		if tokens.is_empty() {
-			return Err("the model produced no tokens for this conversation; please try again".into());
+			return Err(
+				"the model produced no tokens for this conversation; please try again".into(),
+			);
 		}
 		let n_prompt = tokens.len();
 
@@ -458,9 +460,7 @@ impl ThinkFilter {
 			// matched bytes are ASCII, so the split point is a boundary.
 			let mut hold = 0;
 			for n in 1..=THINK_OPEN.len().min(self.buffer.len()) {
-				if THINK_OPEN.as_bytes()[..n]
-					== self.buffer.as_bytes()[self.buffer.len() - n..]
-				{
+				if THINK_OPEN.as_bytes()[..n] == self.buffer.as_bytes()[self.buffer.len() - n..] {
 					hold = n;
 					break;
 				}
@@ -754,7 +754,10 @@ mod tests {
 
 	#[test]
 	fn tags_split_across_pieces() {
-		assert_eq!(run(&["<th", "ink>reasoning</thi", "nk>ans", "wer"]), "answer");
+		assert_eq!(
+			run(&["<th", "ink>reasoning</thi", "nk>ans", "wer"]),
+			"answer"
+		);
 	}
 
 	#[test]
@@ -769,7 +772,10 @@ mod tests {
 
 	#[test]
 	fn think_mid_answer_is_stripped() {
-		assert_eq!(run(&["Wait. <think>reconsider</think> Done."]), "Wait. Done.");
+		assert_eq!(
+			run(&["Wait. <think>reconsider</think> Done."]),
+			"Wait. Done."
+		);
 	}
 
 	#[test]
@@ -793,4 +799,3 @@ mod tests {
 		assert_eq!(truncate_at_boundary(s, 100), s);
 	}
 }
-

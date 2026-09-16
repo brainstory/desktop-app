@@ -17,7 +17,11 @@ static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
 
 /// Append converted samples to the capture buffer unless the length cap is
 /// hit. Runs in the audio callback: lock briefly, no heavy work.
-fn queue_samples(queue: &Arc<Mutex<Vec<f32>>>, max_samples: usize, samples: impl Iterator<Item = f32>) {
+fn queue_samples(
+	queue: &Arc<Mutex<Vec<f32>>>,
+	max_samples: usize,
+	samples: impl Iterator<Item = f32>,
+) {
 	let mut buf = queue.lock().unwrap_or_else(|e| e.into_inner());
 	if buf.len() < max_samples {
 		buf.extend(samples);

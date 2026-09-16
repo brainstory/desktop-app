@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, lint, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (tsc + astro check)
+        run: pnpm -C app/frontend typecheck
+
+      - name: Lint
+        run: pnpm -C app/frontend lint
+
+      - name: Test
+        run: pnpm -C app/frontend test
+
+      - name: Build
+        run: pnpm -C app/frontend build
+
+  rust:
+    name: Rust (fmt, clippy, tests)
+    # macOS: the supported target (whisper-rs Metal feature, cpal CoreAudio)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Format
+        run: cargo fmt --check
+
+      # --all-targets also compile-checks the env-gated integration tests
+      # (engine_smoke, model_prompts) and examples without needing model files
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # Unit tests only: engine_smoke / model_prompts require real model
+      # files via env vars and are run manually (see README)
+      - name: Tests
+        run: cargo test --lib --locked

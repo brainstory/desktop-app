@@ -151,7 +151,10 @@ mod tests {
 
 	#[test]
 	fn leaves_unrelated_angle_brackets_alone() {
-		assert_eq!(sanitize_tag_content("use <b>bold</b>", "idea"), "use <b>bold</b>");
+		assert_eq!(
+			sanitize_tag_content("use <b>bold</b>", "idea"),
+			"use <b>bold</b>"
+		);
 		assert_eq!(sanitize_tag_content("math: 5 < 10", "t"), "math: 5 < 10");
 	}
 }

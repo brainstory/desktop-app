@@ -163,7 +163,10 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 		"feedback" => {
 			let feedback = &root["feedback"];
 			SharePayload::Feedback {
-				target_share_id: feedback["target_share_id"].as_str().unwrap_or("").to_string(),
+				target_share_id: feedback["target_share_id"]
+					.as_str()
+					.unwrap_or("")
+					.to_string(),
 				target_title: feedback["target_title"].as_str().unwrap_or("").to_string(),
 				title: feedback["title"].as_str().unwrap_or("").to_string(),
 				result: feedback["result"].as_str().unwrap_or("").to_string(),
@@ -252,9 +255,7 @@ pub async fn export_idea(
 	dialog.save_file(move |path| {
 		let _ = sender.send(path);
 	});
-	let path = receiver
-		.await
-		.map_err(|e| e.to_string())?;
+	let path = receiver.await.map_err(|e| e.to_string())?;
 	let Some(path) = path else {
 		// user cancelled the dialog
 		return Ok(json!({ "cancelled": true }));
@@ -287,9 +288,7 @@ pub async fn import_share(
 		.pick_file(move |path| {
 			let _ = sender.send(path);
 		});
-	let path = receiver
-		.await
-		.map_err(|e| e.to_string())?;
+	let path = receiver.await.map_err(|e| e.to_string())?;
 	let Some(path) = path else {
 		return Ok(json!({ "cancelled": true }));
 	};
@@ -403,14 +402,10 @@ pub async fn import_share(
 				title
 			};
 			// Same feedback file twice = no-op.
-			let duplicate = state
-				.db
-				.get_idea_children(&parent.id)?
-				.iter()
-				.any(|child| {
-					child.result.as_deref() == Some(result.as_str())
-						&& child.creator_name.as_deref() == Some(author.as_str())
-				});
+			let duplicate = state.db.get_idea_children(&parent.id)?.iter().any(|child| {
+				child.result.as_deref() == Some(result.as_str())
+					&& child.creator_name.as_deref() == Some(author.as_str())
+			});
 			if duplicate {
 				return Ok(json!({
 					"cancelled": false,
@@ -458,7 +453,7 @@ pub async fn import_share(
 
 #[cfg(test)]
 mod tests {
-	use super::{build_export_payload, parse_share_payload, SharePayload, ParsedShare};
+	use super::{build_export_payload, parse_share_payload, ParsedShare, SharePayload};
 
 	fn roundtrip(payload: SharePayload, author: &str) -> ParsedShare {
 		let envelope = build_export_payload(author, &payload);
@@ -530,7 +525,9 @@ mod tests {
 	#[test]
 	fn rejects_bad_json_and_wrong_format() {
 		assert!(parse_share_payload("not json").is_err());
-		assert!(parse_share_payload(r#"{"format": "other", "version": 1, "kind": "idea"}"#).is_err());
+		assert!(
+			parse_share_payload(r#"{"format": "other", "version": 1, "kind": "idea"}"#).is_err()
+		);
 	}
 
 	#[test]
@@ -555,7 +552,9 @@ mod tests {
 		assert_eq!(parsed.author, "Anonymous");
 		match parsed.payload {
 			SharePayload::Idea {
-				share_id, idea_type, ..
+				share_id,
+				idea_type,
+				..
 			} => {
 				assert_eq!(share_id, "");
 				assert_eq!(idea_type, "original");

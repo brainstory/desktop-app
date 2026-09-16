@@ -123,7 +123,13 @@ pub async fn update_idea(
 	let mut derived_title = title;
 	if derived_title.is_none() {
 		if let Some(r) = &result {
-			if !r.is_empty() && existing_title.as_deref().unwrap_or_default().trim().is_empty() {
+			if !r.is_empty()
+				&& existing_title
+					.as_deref()
+					.unwrap_or_default()
+					.trim()
+					.is_empty()
+			{
 				derived_title = Some(title_from_result(r));
 			}
 		}
