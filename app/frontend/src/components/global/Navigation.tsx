@@ -6,7 +6,7 @@ import TransparentButton from "@ds/TransparentButton";
 const buttons = [
 	{ icon: "add", text: "New", href: "/chat", label: "", id: "new-idea" },
 	{ icon: "home", text: "Dashboard", href: "/dashboard", label: "", id: "dashboard" },
-	{ icon: "person", text: "My Profile", href: "/profile", label: "", id: "profile" }
+	{ icon: "settings-outline", text: "Settings", href: "/profile", label: "", id: "profile" }
 ];
 
 function Navigation() {

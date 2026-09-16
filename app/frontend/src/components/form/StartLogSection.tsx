@@ -33,7 +33,7 @@ export default function StartLogSection({ logItems = [], setLogItems, disabled }
 					<p className="text-left md:text-center">
 						You can customize your questions in{" "}
 						<a className="text-blue-700 hover:underline" href="/profile?tab=dailyLog">
-							My Profile
+							Settings
 						</a>
 					</p>
 				</div>
