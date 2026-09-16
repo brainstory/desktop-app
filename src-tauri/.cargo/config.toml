@@ -20,3 +20,9 @@ rustflags = [
     # (see windows-xwin-stub/README.md)
     "-L", "native=windows-xwin-stub",
 ]
+
+# Linux linkers (lld/ld) hard-error the same duplicate ggml symbols that
+# macOS ld64 only warns about (see above and README) - allow them, first
+# definition wins, same tradeoff as /FORCE:MULTIPLE on Windows.
+[target.'cfg(all(unix, not(target_os = "macos")))']
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
