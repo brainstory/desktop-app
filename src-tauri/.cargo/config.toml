@@ -2,5 +2,7 @@
 # we target 12+ for Metal + WKWebView media capture. Cargo only supports the
 # [env] table at the top level (not per-target), which is fine since this
 # project only builds natively on macOS.
+# force = true is required: the tauri CLI injects MACOSX_DEPLOYMENT_TARGET=10.13
+# when unset, and non-forced [env] values only apply when the var is unset.
 [env]
-MACOSX_DEPLOYMENT_TARGET = "12.0"
+MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
