@@ -6,8 +6,7 @@ pub const STORY_INTERVIEW_CONTEXT_SYSTEM: &str =
 	include_str!("../../prompts/story_interview_context_system_message.txt");
 pub const STORY_INTERVIEW_REACT_SYSTEM: &str =
 	include_str!("../../prompts/story_interview_react_system_message.txt");
-pub const STORY_RESULT_SYSTEM: &str =
-	include_str!("../../prompts/story_result_system_message.txt");
+pub const STORY_RESULT_SYSTEM: &str = include_str!("../../prompts/story_result_system_message.txt");
 pub const FEEDBACK_RESULT_SYSTEM: &str =
 	include_str!("../../prompts/feedback_result_system_message.txt");
 pub const FEEDBACK_JSON_RESULT_SYSTEM: &str =
