@@ -104,6 +104,27 @@ cargo install cargo-xwin
 
 The binary is cross-compiled but never executed locally; runtime verification
 happens via the nightly/release Windows CI builds.
+
+### Updates
+
+Tagged releases (`v*`) automatically produce a signed updater feed
+(`latest.json`) that the app checks on startup (throttled to once per 6h);
+updates download in-app and relaunch. The feed is served from GitHub
+Releases directly - no server, no store.
+
+The updater uses Tauri's own signing keys (free, separate from Apple/Microsoft
+code-signing). The private key lives in `~/.tauri/brainstory.key` and as the
+repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+Local release builds need it too:
+
+```sh
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/brainstory.key)
+pnpm tauri:build
+```
+
+Without Apple notarization / a Microsoft cert, first installs show the usual
+Gatekeeper (System Settings -> Open Anyway) and SmartScreen (More info -> Run
+anyway) prompts; in-app updates replace the bundle without re-triggering them.
 The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
 `src-tauri/.cargo/config.toml`.
 

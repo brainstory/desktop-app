@@ -1,4 +1,5 @@
 import { useState } from "react";
+import UpdaterBanner from "@ds/UpdaterBanner";
 import PinkButton from "@ds/PinkButton";
 import TransparentButton from "@ds/TransparentButton";
 
@@ -9,6 +10,15 @@ const buttons = [
 ];
 
 function Navigation() {
+	return (
+		<>
+			<UpdaterBanner />
+			<NavigationInner />
+		</>
+	);
+}
+
+function NavigationInner() {
 	const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
 	const navButtons = buttons;

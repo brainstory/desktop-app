@@ -30,8 +30,11 @@ jobs:
             bundles: nsis
           - name: linux
             os: ubuntu-latest
-            bundles: deb rpm
+            bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
 
