@@ -1,0 +1,45 @@
+version: 2
+updates:
+  # All GitHub Actions bumps in one weekly PR
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Rust crates (llama-cpp-2 / whisper-rs are exact-pinned; Dependabot will
+  # still PR when newer versions land, which is the desired nudge)
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # pnpm workspace root (@tauri-apps/cli)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Frontend (Astro/React app)
+  - package-ecosystem: npm
+    directory: /app/frontend
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
