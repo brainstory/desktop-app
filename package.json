@@ -2,6 +2,7 @@
 	"name": "brainstory-desktop",
 	"version": "0.1.0",
 	"private": true,
+	"license": "GPL-3.0-only",
 	"scripts": {
 		"dev": "pnpm -C app/frontend dev",
 		"build": "pnpm -C app/frontend build",

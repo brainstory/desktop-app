@@ -2,6 +2,8 @@
 name = "brainstory"
 version = "0.1.0"
 description = "Brainstory - think out loud, locally"
+license = "GPL-3.0-only"
+repository = "https://github.com/brainstory/desktop-app"
 edition = "2021"
 rust-version = "1.82"
 

@@ -50,4 +50,4 @@ unused by the app.)
 
 ## License
 
-GPL-3.0. See `LICENSE`.
+GPL-3.0-only. See [LICENSE](../LICENSE) at the repo root.

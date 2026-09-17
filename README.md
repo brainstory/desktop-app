@@ -1,8 +1,10 @@
-# Brainstory Desktop
-
-Think out loud — rebuilt as a local-first desktop app. Everything (speech-to-text,
-the LLM, your ideas, streaks, settings) runs and lives on your machine. No accounts,
-no servers.
+<div align="center">
+  <img src="docs/og.png" alt="Brainstory" width="440" />
+  <p><strong>Think out loud — rebuilt as a local-first desktop app.</strong></p>
+  <p>Everything (speech-to-text, the LLM, your ideas, streaks, settings) runs and lives<br/>
+  on your machine. No accounts, no servers.</p>
+  <img src="docs/screenshot.png" alt="Brainstory dashboard" width="800" />
+</div>
 
 ## Layout
 
@@ -26,7 +28,7 @@ desktop-app/
 
 ## AI models
 
-First launch (or from **Profile → AI Models**), download:
+First launch (or from **Settings → AI Models**), download:
 
 - **LLM** — Google Gemma 4 E2B (QAT 4-bit GGUF, ~3.3 GB, default), Gemma 4 E4B
   (QAT 4-bit, ~5.2 GB), or MiniCPM5 2B (~1.6 GB) for lighter machines.
@@ -40,14 +42,14 @@ Downloads can be cancelled from the same card; a hard quit leaves no garbage
 behind (partial `.part` files are swept at the next launch). Switching models
 unloads the old engine only when the new one is ready to take over — if the
 new model fails to load, the previous one is restored and the app keeps
-working. Optionally paste a HuggingFace access token (Profile → AI Models) —
+working. Optionally paste a HuggingFace access token (Settings → AI Models) —
 authenticated downloads are faster and never hit anonymous rate limits. The
 token is stored locally and never sent back to the UI, only a `••••1234`
 style hint.
 
 Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 
-**External offload**: Profile → AI Models → External endpoints lets you point the LLM
+**External offload**: Settings → AI Models → External endpoints lets you point the LLM
 and/or STT at any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...).
 If an external STT URL is set it takes precedence over the local whisper model;
 likewise the LLM mode switch toggles local vs external.
@@ -65,11 +67,11 @@ you like (email, AirDrop, USB stick...):
 - Give feedback on any idea with **Give Feedback** (the normal feedback interview),
   then export the feedback and send it back.
 
-The author name shown to others is your profile name (Profile → General).
+The author name shown to others is your profile name (Settings → General).
 
 ## Daily reminders
 
-Set a time under Profile → General → Notifications (or toggle it from the tray icon
+Set a time under Settings → General → Notifications (or toggle it from the tray icon
 menu). The app keeps running in the system tray when the window is closed and sends
 a system notification once per day at the configured time. Quit fully from the tray
 menu.
@@ -156,3 +158,8 @@ Data locations (macOS): `~/Library/Application Support/ai.brainstory.desktop/`
 - Share files are plain signed-by-nothing JSON: anyone can author one with any
   author name or share id. That is inherent to the file-based flow; imports
   are still size-bounded so a hostile file can't exhaust memory.
+
+## License
+
+GPL-3.0-only — see [LICENSE](LICENSE). This covers the whole app: frontend,
+Rust backend, and the prompts under `prompts/`.
