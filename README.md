@@ -87,59 +87,6 @@ cargo install cargo-xwin
 The binary is cross-compiled but never executed locally; runtime verification
 happens via the nightly/release Windows CI builds.
 
-### Updates
-
-Tagged releases (`v*`) automatically produce a signed updater feed
-(`latest.json`) that the app checks on startup (throttled to once per 6h);
-updates download in-app and relaunch. The feed is served from GitHub
-Releases directly - no server, no store.
-
-The updater uses Tauri's own signing keys (free, separate from Apple/Microsoft
-code-signing). The private key lives in `~/.tauri/brainstory.key` and as the
-repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-Local release builds need it too:
-
-```sh
-export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/brainstory.key)
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""   # empty: the local key is unencrypted
-pnpm tauri:build
-```
-
-Without Apple notarization / a Microsoft cert, first installs show the usual
-Gatekeeper (System Settings -> Open Anyway) and SmartScreen (More info -> Run
-anyway) prompts; in-app updates replace the bundle without re-triggering them.
-The `MACOSX_DEPLOYMENT_TARGET=12.0` needed by llama.cpp/whisper.cpp is set in
-`src-tauri/.cargo/config.toml`.
-
-Platform support: macOS (Apple Silicon) is the only tested target. The code
-is mostly portable (the mic capture accepts F32/I16/U16 devices, and
-notifications/dialogs use cross-platform Tauri plugins), but Dock/tray
-presence handling and the release build are macOS-specific and
-Windows/Linux builds are unverified.
-
-Data locations (macOS): `~/Library/Application Support/ai.brainstory.desktop/`
-(`brainstory.db` + `models/`).
-
-## Notes / shortcuts taken
-
-- whisper.cpp and llama.cpp each vendor their own ggml, so the link emits
-  duplicate-symbol warnings; this is verified harmless by the
-  `engine_smoke` integration test (`WHISPER_MODEL_PATH=... LLM_MODEL_PATH=...
-  cargo test --release --test engine_smoke`), which runs both engines in one
-  process. The lint is suppressed in the binary.
-- HTTP 469 ("inappropriate input") moderation from the original backend is not
-  implemented locally; some external providers' content-filter errors map to it.
-- The daily-intent/context interview prompt is the original one; the other prompts
-  use the improved Claude Code rewrites (adapted back to system-message form).
-- Reminders fire while the app process is alive (tray). Scheduling while fully
-  quit would need native per-platform notification scheduling.
-- Logs (both stdout and a rotating file under `~/Library/Logs/ai.brainstory.desktop/`)
-  are written via `tauri-plugin-log`; include `brainstory.log` when reporting
-  model-load or storage problems.
-- Share files are plain signed-by-nothing JSON: anyone can author one with any
-  author name or share id. That is inherent to the file-based flow; imports
-  are still size-bounded so a hostile file can't exhaust memory.
-
 ## License
 
 GPL-3.0-only — see [LICENSE](LICENSE). This covers the whole app: frontend,
