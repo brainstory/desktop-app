@@ -8,8 +8,6 @@
 # src-tauri/windows-xwin-stub/README.md).
 rustflags = [
     "-C", "link-arg=/FORCE:MULTIPLE",
-    # stub resolvable from both repo root and src-tauri (invoker CWD varies)
-    "-L", "native=windows-xwin-stub",
     "-L", "native=src-tauri/windows-xwin-stub",
 ]
 

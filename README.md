@@ -121,6 +121,7 @@ Local release builds need it too:
 
 ```sh
 export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/brainstory.key)
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""   # empty: the local key is unencrypted
 pnpm tauri:build
 ```
 

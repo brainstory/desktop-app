@@ -29,6 +29,15 @@ export RUSTFLAGS="-C link-arg=/FORCE:MULTIPLE -L native=$(pwd)/src-tauri/windows
 
 STUB="src-tauri/windows-xwin-stub/ggml-blas.lib"
 
+# Updater signing (createUpdaterArtifacts): pick up the unencrypted local key
+# unless the environment already provides one. The password var must exist and
+# be empty for an unencrypted key - when absent, the signer tries to prompt
+# and dies headless ("Device not configured").
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ -f "$HOME/.tauri/brainstory.key" ]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/brainstory.key")"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+fi
+
 # Pass 1: compile + cmake configure (may fail at the missing ggml-blas)
 pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis ||
   echo "(pass 1: expected to stop at whisper-rs-sys on first run / after clean)"
