@@ -6,26 +6,6 @@
   <img src="docs/screenshot.png" alt="Brainstory dashboard" width="800" />
 </div>
 
-## Layout
-
-```
-desktop-app/
-├── app/frontend/       The Brainstory frontend (Astro + React), imported from the
-│                       original repo via `git subtree` (full git history preserved)
-│                       and modified for Tauri (no auth/sharing/paywall, local AI)
-├── prompts/            The prompting system, adapted from brainstory/prompts and the
-│                       improved Claude Code rewrites (see prompts/README.md)
-└── src-tauri/          The Rust backend
-    └── src/
-        ├── llm.rs        llama.cpp engine (Gemma 4) + OpenAI-compatible client
-        ├── stt.rs        whisper.cpp engine + OpenAI-compatible client, WAV decoding
-        ├── models.rs     model catalog, downloader with progress, engine runtime
-        ├── db.rs         SQLite storage (ideas, logs, surveys, streaks, settings)
-        ├── prompts.rs    system prompt assembly (<t>/<oid>/<idea> tag formats)
-        ├── reminders.rs  daily reminder scheduler
-        └── commands/     the Tauri command surface (the old REST API)
-```
-
 ## AI models
 
 First launch (or from **Settings → AI Models**), download:
