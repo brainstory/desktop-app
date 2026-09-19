@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           BASE="$(node -e "console.log(JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8')).version)")"
-          NIGHTLY="${BASE}-nightly.${GITHUB_SHA::7}"
+          NIGHTLY="${BASE}-nightly.sha${GITHUB_SHA::7}"
           echo "stamping nightly version $NIGHTLY"
           VERSION="$NIGHTLY" node -e "
             const fs = require('fs');
@@ -87,7 +87,7 @@ jobs:
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles deb rpm
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
 
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'
@@ -115,5 +115,6 @@ jobs:
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
           retention-days: 7
           if-no-files-found: error
