@@ -2,7 +2,7 @@
 
 The Brainstory prompting system, as used by the desktop app.
 
-These are adapted from two sources:
+These are adapted from three sources:
 
 - The original [brainstory/prompts](https://github.com/brainstory/prompts) system messages
   (interview flow, `<t>` / `<oid>` / `<idea>` tag input formats, and the feedback JSON schema
@@ -11,6 +11,11 @@ These are adapted from two sources:
 - The improved rewrites from the Claude Code plugin (`../claude-code-brainstory`): explicit
   no-information/no-affirmation rules, questioning strategies, conversation modes, thinking
   frameworks, thread tracking, and the extended synthesis sections in result documents.
+
+- Patterns from the `socratic-*` skills in tomzorz/congruens (a sibling Socratic-interviewing system):
+  a wrap-up signal when answers stop producing new content, per-stance response handling in the feedback
+  interview, permission to quote the shared document when asked, and "silence is not agreement" rules for
+  the generated documents.
 
 Claude Code specific mechanics (file/session storage, slash commands, frontmatter) were removed,
 and the input/output contracts the app relies on were preserved.

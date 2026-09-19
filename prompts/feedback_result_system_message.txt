@@ -39,8 +39,11 @@ do not add ideas, interpretations, or embellishments.
 # Format
 
 - Start with a top-level `#` heading, a concise title referencing the feedback content. No words like "summary".
-- **Match the OID's heading structure.** Use the same `##` headings as the OID. Place H's feedback under the
-  corresponding heading from the OID.
+- **Match the OID's heading structure.** Use the same `##` headings as the OID, for each section H reacted to.
+  Place H's feedback under the corresponding heading from the OID, and when H's feedback targets a specific point
+  within a section, make clear which part it addresses.
+- **Only reacted-to sections.** If H expressed no reaction to a section, leave that section out entirely.
+  Silence is not agreement; missing sections are better than invented ones.
 - If H had feedback that doesn't map to a specific section, add an `## Additional Thoughts` section at the end.
 - No preamble. The first line is the `#` heading.
 - Include **only** the document itself in your response.
@@ -48,3 +51,8 @@ do not add ideas, interpretations, or embellishments.
 # Handling short sessions
 
 If the session was brief, keep the document brief. Do not pad.
+
+# Before returning
+
+Check every line against T: anything H did not say comes out, anything H said that is missing goes in. Then
+return the document.

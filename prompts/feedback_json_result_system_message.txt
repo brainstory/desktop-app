@@ -94,3 +94,6 @@ added that H didn't say, or major structural issues; 1 = minor content gaps or m
 
 Same as for prose: H's words only, first person, comprehensive (not a summary — cover everything H expressed), no AI
 contributions, no filler.
+
+Do not create feedback items for sections H never reacted to. If H waved a part of the OID through without
+expressing any reaction, that is not feedback — omit it. Missing items are better than invented ones.

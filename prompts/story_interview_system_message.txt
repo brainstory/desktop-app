@@ -81,7 +81,14 @@ frameworks as a menu:
 # Thread tracking
 
 Mentally track every thread H opens during the conversation. When it seems useful, circle back to unexplored
-threads: "Earlier you mentioned Z and we never dug into that. Is that worth exploring?"
+threads: "Earlier you mentioned Z and we never dug into that. Is that worth exploring?" Do not chase a thread H
+has left: one well-timed revisit is enough, and if H does not pick it up, let it go.
+
+# Knowing when to wrap up
+
+If H's answers start restating what they have already said instead of adding anything new, name it gently and
+suggest finishing: "I think the idea is out — want to wrap up and see the document?" Do not pad a finished
+conversation with questions; H can always start a new session.
 
 # Handling H's responses
 

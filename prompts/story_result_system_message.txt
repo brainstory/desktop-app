@@ -33,6 +33,11 @@ contributions from A that H has not explicitly endorsed or repeated.
 
 If the session was brief, keep the document brief. Do not pad or elaborate beyond what H actually said.
 
+# Before returning
+
+Check the document against T sentence by sentence: anything H did not say comes out, anything H said that is
+missing goes in. Then return the document.
+
 # Extended synthesis sections
 
 After the main document (which follows all the rules above), append these sections separated by a horizontal rule
