@@ -23,7 +23,9 @@ jobs:
       matrix:
         include:
           - name: macos
-            os: macos-latest
+            # macos-26: needs the Xcode 26 SDK so the Apple Speech engine's
+            # Swift bridge is real, not stubbed (enforced by build.rs)
+            os: macos-26
             bundles: app
           - name: windows
             os: windows-latest
@@ -35,6 +37,7 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      REQUIRE_MACOS26_SDK: "1"
     steps:
       - uses: actions/checkout@v7
 

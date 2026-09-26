@@ -30,6 +30,8 @@ export interface AiSettingsResponse {
 	llmMode: string;
 	llmModel: string;
 	sttModel: string;
+	sttEngine: string;
+	sttLanguage: string;
 	hfTokenSet: boolean;
 	hfTokenHint: string | null;
 	extLlmBaseUrl: string;
@@ -42,6 +44,14 @@ export interface AiSettingsResponse {
 	extSttModel: string;
 }
 
+/** Built-in Apple Speech engine (macOS 26+) capability + locale support. */
+export interface AppleSttStatus {
+	available: boolean;
+	authorized: boolean;
+	supportedLocales: string[];
+	installedLocales: string[];
+}
+
 /** List the known local models with download/active status */
 export function listModelsApi(): Promise<ModelsResponse> {
 	return invoke("list_models");
@@ -50,6 +60,11 @@ export function listModelsApi(): Promise<ModelsResponse> {
 /** Get the status of the local inference engines (llm + stt) */
 export function getRuntimeStatusApi(): Promise<{ llm: EngineStatus; stt: EngineStatus }> {
 	return invoke("get_runtime_status");
+}
+
+/** Availability + locale support of the built-in Apple Speech engine */
+export function getAppleSttStatusApi(): Promise<AppleSttStatus> {
+	return invoke("get_apple_stt_status");
 }
 
 export interface DownloadEvent {

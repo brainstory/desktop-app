@@ -45,8 +45,11 @@ jobs:
 
   rust:
     name: Rust (fmt, clippy, tests)
-    # macOS: the supported target (whisper-rs Metal feature, cpal CoreAudio)
-    runs-on: macos-latest
+    # macos-26: Xcode 26 SDK keeps the Apple Speech engine real instead of
+    # stubbed; REQUIRE_MACOS26_SDK (below) makes a wrong image fail loudly
+    runs-on: macos-26
+    env:
+      REQUIRE_MACOS26_SDK: "1"
     defaults:
       run:
         working-directory: src-tauri

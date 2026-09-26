@@ -159,6 +159,8 @@ pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
 		"llmMode": s.llm_mode,
 		"llmModel": s.llm_model,
 		"sttModel": s.stt_model,
+		"sttEngine": s.stt_engine,
+		"sttLanguage": s.stt_language,
 		"hfTokenSet": hf_set,
 		"hfTokenHint": hf_hint,
 		"extLlmBaseUrl": s.ext_llm_base_url,
@@ -189,6 +191,30 @@ pub fn save_ai_settings(
 	}
 	if let Some(v) = get_str("sttModel") {
 		settings.stt_model = v;
+	}
+	if let Some(v) = get_str("sttEngine") {
+		if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
+			return Err(format!(
+				"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
+			));
+		}
+		settings.stt_engine = v;
+	}
+	if let Some(v) = get_str("sttLanguage") {
+		// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
+		let cleaned = v.trim();
+		if !cleaned.is_empty() {
+			let valid = cleaned.len() <= 16
+				&& cleaned
+					.chars()
+					.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+			if !valid {
+				return Err(format!(
+					"invalid sttLanguage '{cleaned}' (expected a locale like en-US)"
+				));
+			}
+			settings.stt_language = cleaned.to_string();
+		}
 	}
 	if let Some(v) = get_str("extLlmBaseUrl") {
 		settings.ext_llm_base_url = v;

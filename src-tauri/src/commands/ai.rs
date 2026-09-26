@@ -51,7 +51,7 @@ pub async fn transcribe(
 
 	let settings = AiSettings::load(&state.db);
 	// STT offload rule: if an external STT endpoint is configured, use it;
-	// otherwise use the local whisper model.
+	// otherwise the engine setting picks Apple Speech or local whisper.
 	if !settings.ext_stt_base_url.is_empty() {
 		let transcript = stt::transcribe_external(
 			&settings.ext_stt_base_url,
@@ -61,6 +61,32 @@ pub async fn transcribe(
 		)
 		.await?;
 		return Ok(serde_json::json!({ "transcript": transcript }));
+	}
+
+	// Apple Speech: tried whenever auto/apple is set; it errors fast on
+	// unsupported systems. Auto falls back to whisper on any failure; an
+	// explicit Apple choice surfaces real failures (permission prompts,
+	// asset problems) instead of hiding them behind whisper.
+	if settings.stt_engine == "apple" || settings.stt_engine == "auto" {
+		let apple_bytes = bytes.clone();
+		let locale = settings.stt_language.clone();
+		let result = tauri::async_runtime::spawn_blocking(move || {
+			crate::stt_apple::transcribe(&apple_bytes, &locale)
+		})
+		.await
+		.map_err(|e| e.to_string());
+		match result {
+			Ok(Ok(transcript)) => return Ok(serde_json::json!({ "transcript": transcript })),
+			Ok(Err(e)) => {
+				let explicit_supported =
+					settings.stt_engine == "apple" && crate::apple::speech_available();
+				if explicit_supported {
+					return Err(e);
+				}
+				log::warn!("Apple Speech unavailable ({e}); falling back to whisper");
+			}
+			Err(e) => log::warn!("Apple Speech task failed: {e}; falling back to whisper"),
+		}
 	}
 
 	let engine = {

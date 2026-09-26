@@ -35,7 +35,12 @@ pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
 				downloaded: state.is_model_downloaded(spec),
 				active: match kind {
 					ModelKind::Llm => settings.llm_mode == "local" && settings.llm_model == spec.id,
-					ModelKind::Stt => settings.stt_model == spec.id,
+					// A whisper model is only "active" when whisper actually
+					// handles local transcription (Apple Speech mode demotes it
+					// to fallback).
+					ModelKind::Stt => {
+						settings.stt_model == spec.id && settings.effective_stt_engine() != "apple"
+					}
 				},
 				downloading: progress.contains_key(spec.id),
 				progress: progress.get(spec.id).copied(),
@@ -55,6 +60,19 @@ pub fn get_runtime_status(state: State<'_, AppState>) -> serde_json::Value {
 	json!({
 		"llm": state.llm_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
 		"stt": state.stt_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+	})
+}
+
+/// Availability and locale support of the built-in Apple Speech engine
+/// (macOS 26+). Powers the engine selector and language picker in settings.
+#[tauri::command]
+pub fn get_apple_stt_status() -> serde_json::Value {
+	let status = crate::stt_apple::status();
+	json!({
+		"available": status.available,
+		"authorized": status.authorized,
+		"supportedLocales": status.supported_locales,
+		"installedLocales": status.installed_locales,
 	})
 }
 

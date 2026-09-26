@@ -1,3 +1,4 @@
+pub mod apple;
 mod commands;
 pub mod db;
 pub mod llm;
@@ -6,6 +7,7 @@ pub mod prompts;
 mod reminders;
 pub mod secrets;
 pub mod stt;
+pub mod stt_apple;
 pub mod types;
 pub mod voice;
 
@@ -95,6 +97,7 @@ pub fn run() {
 			commands::settings::test_stt_endpoint,
 			commands::models_cmd::list_models,
 			commands::models_cmd::get_runtime_status,
+			commands::models_cmd::get_apple_stt_status,
 			commands::models_cmd::download_model,
 			commands::models_cmd::cancel_download,
 			commands::models_cmd::delete_model,
@@ -438,13 +441,44 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 			return;
 		};
 
-		// STT: load local whisper unless an external endpoint is configured.
+		// STT: external endpoint wins; otherwise the engine setting picks
+		// Apple Speech (macOS 26+, zero downloads) or local whisper.
 		if settings.ext_stt_base_url.is_empty() {
-			if let Some(spec) = models::find_model(&settings.stt_model, ModelKind::Stt) {
-				if state.is_model_downloaded(spec) {
-					if let Err(e) = state.load_stt(&app, spec) {
-						log::error!("startup STT load failed: {e}");
+			let load_whisper = |state: &AppState, app: &AppHandle| {
+				if let Some(spec) = models::find_model(&settings.stt_model, ModelKind::Stt) {
+					if state.is_model_downloaded(spec) {
+						if let Err(e) = state.load_stt(app, spec) {
+							log::error!("startup STT load failed: {e}");
+						}
 					}
+				}
+			};
+			if settings.stt_engine == "apple" && !apple::speech_available() {
+				// Explicit Apple on an unsupported system: degrade to
+				// whisper but say why, instead of silently ignoring it.
+				load_whisper(&state, &app);
+				let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
+				*s = models::EngineStatus::new(
+					"error",
+					Some("apple-speech"),
+					Some("Apple Speech requires macOS 26+ - using whisper instead"),
+				);
+			} else {
+				match settings.effective_stt_engine() {
+					"apple" => {
+						if settings.stt_engine == "auto" {
+							// auto: keep a downloaded whisper model hot as
+							// the fallback behind the Apple engine.
+							load_whisper(&state, &app);
+						} else {
+							// explicit apple: whisper is not needed at all;
+							// free its memory.
+							state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
+						}
+						let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
+						*s = models::EngineStatus::new("ready", Some("apple-speech"), None);
+					}
+					_ => load_whisper(&state, &app),
 				}
 			}
 		} else {

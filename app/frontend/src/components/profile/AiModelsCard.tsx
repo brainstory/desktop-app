@@ -16,11 +16,13 @@ import {
 	activateModelApi,
 	testLlmEndpointApi,
 	testSttEndpointApi,
-	getRuntimeStatusApi
+	getRuntimeStatusApi,
+	getAppleSttStatusApi
 } from "@helpers/api/models";
 import { listen } from "@tauri-apps/api/event";
 import type {
 	AiSettingsResponse,
+	AppleSttStatus,
 	ModelsResponse,
 	EngineStatus,
 	ModelStatus
@@ -31,6 +33,14 @@ const formatSize = (bytes?: number): string => {
 	const gb = bytes / 1_000_000_000;
 	if (gb >= 1) return `${gb.toFixed(1)} GB`;
 	return `${Math.round(bytes / 1_000_000)} MB`;
+};
+
+const localeLabel = (id: string): string => {
+	try {
+		return new Intl.DisplayNames([id], { type: "language" }).of(id) ?? id;
+	} catch {
+		return id;
+	}
 };
 
 const STATUS_LABELS = {
@@ -52,6 +62,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		{ llm: {}, stt: {} }
 	);
 	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 
 	const refresh = () => {
 		listModelsApi()
@@ -70,6 +81,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			})
 			.catch((e) => console.log("list models failed", e));
 		getRuntimeStatusApi().then(setRuntime).catch((e) => console.log("status failed", e));
+		getAppleSttStatusApi().then(setAppleStt).catch((e) => console.log("apple stt status failed", e));
 	};
 
 	useEffect(() => {
@@ -235,7 +247,10 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		llmStatus.state === "missing" &&
 		settings.llmMode !== "external" &&
 		!settings.extLlmBaseUrl;
-	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl;
+	// mirrors the backend's effective_stt_engine resolution
+	const appleActive =
+		settings.sttEngine === "apple" || (settings.sttEngine === "auto" && !!appleStt?.available);
+	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl && !appleActive;
 
 	const usingExternalLlm = settings.llmMode === "external";
 	const usingExternalStt = !!settings.extSttBaseUrl;
@@ -249,12 +264,14 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		  })();
 	const activeSttLabel = usingExternalStt
 		? `External endpoint ${settings.extSttBaseUrl}`
-		: (() => {
-				const active = models.stt.find((m) => m.active);
-				if (active?.downloaded) return `Local ${active.label} (ready)`;
-				if (active) return `Local ${active.label} (not downloaded yet)`;
-				return "Local model (none selected)";
-		  })();
+		: appleActive
+			? `Apple Speech on-device (${localeLabel(settings.sttLanguage || "en-US")})`
+			: (() => {
+					const active = models.stt.find((m) => m.active);
+					if (active?.downloaded) return `Local ${active.label} (ready)`;
+					if (active) return `Local ${active.label} (not downloaded yet)`;
+					return "Local model (none selected)";
+			  })();
 
 	return (
 		<Card
@@ -351,7 +368,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 
 			<div className="flex flex-col gap-3">
 				<div className="flex justify-between items-center">
-					<h3 className="font-semibold">Speech-to-text model (transcribes you)</h3>
+					<h3 className="font-semibold">Speech-to-text (transcribes you)</h3>
 					<span
 						className={`text-xs font-medium uppercase rounded-full px-2 py-1 ${
 							sttStatus.state === "ready"
@@ -367,6 +384,91 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				{sttStatus.error && (
 					<p className="text-sm text-red-600">{sttStatus.error}</p>
 				)}
+				<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
+					<p className="font-semibold text-stone-900">Engine</p>
+					<div className="flex flex-wrap gap-2">
+						{(
+							[
+								{
+									id: "auto",
+									label: "Auto",
+									hint: "Apple Speech where available, whisper otherwise"
+								},
+								{
+									id: "apple",
+									label: "Apple Speech",
+									hint: "Built into macOS 26+ - no model download"
+								},
+								{
+									id: "whisper",
+									label: "Whisper",
+									hint: "Downloaded whisper model"
+								}
+							] as const
+						).map((opt) => {
+							const selected = settings.sttEngine === opt.id;
+							const disabled = opt.id === "apple" && !appleStt?.available;
+							return (
+								<button
+									key={opt.id}
+									type="button"
+									title={disabled ? "Requires macOS 26 or newer" : opt.hint}
+									disabled={disabled}
+									onClick={() => save({ sttEngine: opt.id })}
+									className={`text-sm rounded-lg px-3 py-2 border transition-colors ${
+										selected
+											? "bg-pink-500 border-pink-500 text-white"
+											: disabled
+												? "border-stone-200 text-stone-300 cursor-not-allowed"
+												: "border-stone-300 text-stone-700 hover:border-pink-400"
+									}`}
+								>
+									{opt.label}
+								</button>
+							);
+						})}
+					</div>
+					{settings.sttEngine === "auto" && (
+						<p className="text-sm text-stone-500">
+							{appleStt?.available
+								? "Apple Speech is available on this Mac and will be used; whisper is the automatic fallback."
+								: "Apple Speech is not available here, so whisper handles transcription."}
+						</p>
+					)}
+					{appleActive && appleStt && !appleStt.authorized && (
+						<p className="text-sm text-amber-700">
+							Apple Speech needs permission once: the next time you record, allow
+							Brainstory under System Settings &gt; Privacy &amp; Security &gt; Speech
+							Recognition.
+						</p>
+					)}
+					{appleActive && (
+						<div className="mt-1 max-w-xs">
+							<label className="block mb-1 text-sm font-medium text-stone-900">
+								Speech language
+							</label>
+							<select
+								value={settings.sttLanguage || "en-US"}
+								onChange={(e) => save({ sttLanguage: e.target.value })}
+								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 bg-white"
+							>
+								{(appleStt?.supportedLocales ?? ["en-US"]).map((loc) => (
+									<option key={loc} value={loc}>
+										{localeLabel(loc)} ({loc})
+										{appleStt?.installedLocales.includes(loc) ? "" : " - not installed yet"}
+									</option>
+								))}
+							</select>
+							<p className="text-sm text-stone-500 mt-1">
+								Applies to the Apple Speech engine. Missing languages are fetched
+								by macOS on first use.
+							</p>
+						</div>
+					)}
+				</div>
+				<h4 className="font-semibold text-stone-700 text-sm">
+					{appleActive ? "Whisper model (fallback)" : "Whisper model"}
+				</h4>
 				{models.stt.map(renderModelRow)}
 			</div>
 

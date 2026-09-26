@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "brainstory"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "cpal",
@@ -443,6 +443,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "speech",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -889,6 +890,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03e8bd762f7479489c70ed6c768ddca99d7296857de437a68dcb2a94365b3fae"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1186,6 +1196,16 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "tendril",
+]
+
+[[package]]
+name = "doom-fish-utils"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32707dcbfc8b3fd80d134a6d9e63f4f73ab6eece78192f0f213a192f08900c79"
+dependencies = [
+ "crossbeam-queue",
+ "futures-util",
 ]
 
 [[package]]
@@ -4490,6 +4510,17 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "speech"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e7e80720fb776e8c576ec17103b1dbd9123412930821d7c979917325e2a2816"
+dependencies = [
+ "doom-fish-utils",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

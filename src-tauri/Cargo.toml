@@ -1,6 +1,6 @@
 [package]
 name = "brainstory"
-version = "0.1.1"
+version = "0.2.0"
 description = "Brainstory - think out loud, locally"
 license = "GPL-3.0-only"
 repository = "https://github.com/brainstory/desktop-app"
@@ -60,6 +60,11 @@ keyring = "4"
 whisper-rs = { version = "=0.16.0", features = ["metal"] }
 objc2-app-kit = "0.3"
 objc2 = "0.6"
+# Pinned exactly: the crate ships a Swift bridge compiled by its build.rs;
+# a deliberate upgrade should re-verify the analyzer surface (see
+# tests/apple_stt_smoke.rs). Requires Xcode with the macOS 26 SDK for the
+# SpeechAnalyzer family; older SDKs compile those paths as stubs.
+speech = "=0.9.0"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = "=0.16.0"

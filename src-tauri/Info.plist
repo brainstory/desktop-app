@@ -4,5 +4,7 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Brainstory needs microphone access so you can think out loud during brainstorming sessions.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Brainstory uses on-device speech recognition to transcribe your brainstorming sessions. Audio is processed locally and never sent to Apple.</string>
 </dict>
 </plist>

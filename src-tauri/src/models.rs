@@ -124,6 +124,11 @@ pub struct AiSettings {
 	pub llm_mode: String,
 	pub llm_model: String,
 	pub stt_model: String,
+	/// Speech-to-text engine: "auto" (Apple Speech on macOS 26+, whisper
+	/// otherwise), "apple" (macOS 26 built-in only), or "whisper".
+	pub stt_engine: String,
+	/// BCP-47 locale for the Apple Speech engine (e.g. "en-US").
+	pub stt_language: String,
 	/// HuggingFace access token; sent with model downloads, where it
 	/// avoids anonymous rate limits and can speed up large transfers.
 	pub hf_token: String,
@@ -133,6 +138,22 @@ pub struct AiSettings {
 	pub ext_stt_base_url: String,
 	pub ext_stt_api_key: String,
 	pub ext_stt_model: String,
+}
+
+/// Engine default for the first launch after this setting was introduced:
+/// installs that already have AI configuration keep whisper (no behavior
+/// change), brand-new installs get "auto".
+fn default_stt_engine(db: &Db) -> String {
+	const PREVIOUS_AI_KEYS: [&str; 4] = [
+		"ai_llm_mode",
+		"ai_llm_model",
+		"ai_stt_model",
+		"ext_stt_base_url",
+	];
+	let existing_install = PREVIOUS_AI_KEYS.iter().any(|k| db.get_setting(k).is_some());
+	let default = if existing_install { "whisper" } else { "auto" };
+	let _ = db.set_setting("ai_stt_engine", default);
+	default.to_string()
 }
 
 impl AiSettings {
@@ -164,6 +185,18 @@ impl AiSettings {
 					m
 				}
 			},
+			stt_engine: match db.get_setting("ai_stt_engine") {
+				Some(v) if !v.is_empty() => v,
+				_ => default_stt_engine(db),
+			},
+			stt_language: {
+				let v = get("ai_stt_language");
+				if v.is_empty() {
+					"en-US".into()
+				} else {
+					v
+				}
+			},
 			hf_token: secret(crate::secrets::Secret::HfToken),
 			ext_llm_base_url: get("ext_llm_base_url"),
 			ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
@@ -171,6 +204,16 @@ impl AiSettings {
 			ext_stt_base_url: get("ext_stt_base_url"),
 			ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
 			ext_stt_model: get("ext_stt_model"),
+		}
+	}
+
+	/// "apple" when the built-in engine should handle local transcription
+	/// (explicit choice, or auto + available), "whisper" otherwise.
+	pub fn effective_stt_engine(&self) -> &'static str {
+		match self.stt_engine.as_str() {
+			"apple" => "apple",
+			"auto" if crate::apple::speech_available() => "apple",
+			_ => "whisper",
 		}
 	}
 
@@ -190,6 +233,8 @@ impl AiSettings {
 			("ai_llm_mode", self.llm_mode.clone()),
 			("ai_llm_model", self.llm_model.clone()),
 			("ai_stt_model", self.stt_model.clone()),
+			("ai_stt_engine", self.stt_engine.clone()),
+			("ai_stt_language", self.stt_language.clone()),
 			("ext_llm_base_url", self.ext_llm_base_url.clone()),
 			("ext_llm_model", self.ext_llm_model.clone()),
 			("ext_stt_base_url", self.ext_stt_base_url.clone()),
@@ -688,7 +733,72 @@ pub async fn download_model_file(
 
 #[cfg(test)]
 mod tests {
-	use super::download_model_file;
+	use super::{download_model_file, AiSettings, Db};
+
+	fn temp_db(name: &str) -> Db {
+		let path = std::env::temp_dir().join(format!(
+			"brainstory-settings-test-{name}-{}.db",
+			uuid::Uuid::new_v4()
+		));
+		let db = Db::open(&path).expect("open test db");
+		// WAL sidecars would linger in the temp dir; best effort is fine.
+		std::fs::remove_file(&path).ok();
+		db
+	}
+
+	#[test]
+	fn stt_engine_defaults_to_auto_for_new_installs() {
+		let db = temp_db("fresh");
+		let s = AiSettings::load(&db);
+		assert_eq!(s.stt_engine, "auto");
+		// the resolved default is persisted so later behavior is stable
+		assert_eq!(db.get_setting("ai_stt_engine").as_deref(), Some("auto"));
+	}
+
+	#[test]
+	fn stt_engine_defaults_to_whisper_for_existing_installs() {
+		let db = temp_db("existing");
+		db.set_setting("ai_stt_model", "whisper-small-en")
+			.expect("set");
+		let s = AiSettings::load(&db);
+		assert_eq!(s.stt_engine, "whisper");
+	}
+
+	#[test]
+	fn stt_engine_keeps_stored_value() {
+		let db = temp_db("stored");
+		db.set_setting("ai_stt_engine", "apple").expect("set");
+		let s = AiSettings::load(&db);
+		assert_eq!(s.stt_engine, "apple");
+	}
+
+	#[test]
+	fn stt_language_defaults_to_en_us_and_round_trips() {
+		let db = temp_db("lang");
+		let mut s = AiSettings::load(&db);
+		assert_eq!(s.stt_language, "en-US");
+		s.stt_language = "de-DE".into();
+		s.save(&db);
+		assert_eq!(AiSettings::load(&db).stt_language, "de-DE");
+	}
+
+	#[test]
+	fn effective_engine_matches_availability() {
+		let db = temp_db("effective");
+		let mut s = AiSettings::load(&db);
+		s.stt_engine = "apple".into();
+		assert_eq!(s.effective_stt_engine(), "apple");
+		s.stt_engine = "whisper".into();
+		assert_eq!(s.effective_stt_engine(), "whisper");
+		s.stt_engine = "auto".into();
+		let expected = if crate::apple::speech_available() {
+			"apple"
+		} else {
+			"whisper"
+		};
+		assert_eq!(s.effective_stt_engine(), expected);
+	}
+
 	use std::sync::atomic::AtomicBool;
 	use std::sync::Arc;
 

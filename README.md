@@ -14,7 +14,13 @@ First launch (or from **Settings → AI Models**), download:
   (QAT 4-bit, ~5.2 GB), or MiniCPM5 2B (~1.6 GB) for lighter machines.
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
 - **STT** — whisper.cpp tiny.en (~78 MB), base.en (~148 MB, default), small.en
-  (~488 MB), or large-v3-turbo (~1.6 GB).
+  (~488 MB), or large-v3-turbo (~1.6 GB). On macOS 26+, the built-in Apple
+  Speech engine (Speech.framework, on-device) is available instead — no model
+  download at all, with a selectable language and whisper as the automatic
+  fallback. New installs default to "Auto" (Apple Speech where available,
+  whisper otherwise); upgraded installs keep whisper and can switch under
+  Settings → AI Models. Apple Speech needs one-time permission under System
+  Settings → Privacy & Security → Speech Recognition.
 
 Downloads are verified against pinned file sizes and SHA-256 hashes before
 being activated, so a truncated or corrupted transfer can't brick a model slot.
@@ -31,8 +37,8 @@ Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 
 **External offload**: Settings → AI Models → External endpoints lets you point the LLM
 and/or STT at any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...).
-If an external STT URL is set it takes precedence over the local whisper model;
-likewise the LLM mode switch toggles local vs external.
+If an external STT URL is set it takes precedence over the local whisper model and
+Apple Speech; likewise the LLM mode switch toggles local vs external.
 
 ## Sharing without accounts
 
@@ -74,6 +80,14 @@ The frontend is TypeScript (`.ts` / `.tsx`; `.astro` pages stay `.astro`).
 Keep `pnpm -C app/frontend typecheck` green alongside tests and lint.
 
 Requirements: Rust, Node >= 24, pnpm, cmake (brew install cmake ninja), macOS 12+.
+Building on macOS additionally uses the active Xcode's Swift toolchain; with an
+Xcode 26 SDK the Apple Speech engine (macOS 26+) compiles in, and with an older
+SDK it is stubbed out with a build warning (the app still runs, whisper handles
+transcription). CI enforces the 26 SDK via `REQUIRE_MACOS26_SDK=1` so a stubbed
+build can never ship. The env-gated Apple Speech smoke test runs with
+`APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke` on a macOS 26 machine
+(synthesizes audio via `say`, needs speech-recognition permission for the
+terminal).
 
 Local Windows cross-compile (no Windows machine needed):
 
