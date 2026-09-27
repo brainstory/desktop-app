@@ -68,3 +68,7 @@ export const CHAT_TYPE = {
 	FEEDBACK: "feedback",
 	DAILY_INTENT: "daily_intent"
 };
+
+/** Sentinel user message recorded when the user asks for a different
+ * question. Transcripts must not display it as a real answer. */
+export const ASK_A_DIFFERENT_QUESTION = "Ask me a different question!";

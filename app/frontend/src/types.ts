@@ -45,6 +45,8 @@ export interface IdeaListItem extends CreatorInfo {
 	id: string;
 	title?: string | null;
 	summaryPreview: string;
+	/** true while the session has no generated result yet */
+	isDraft?: boolean;
 	isUnread?: boolean | null;
 	feedback?: IdeaListItem[] | null;
 	draftSummary?: string | null;

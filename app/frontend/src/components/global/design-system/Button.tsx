@@ -24,37 +24,55 @@ export default function Button({
 	href = null,
 	...props
 }: ButtonProps) {
+	const className = `flex items-center rounded-md ${
+		children !== undefined ? "px-4" : "px-2"
+	} py-2 text-sm font-medium focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 transition-all ${
+		full && "w-full"
+	} ${left ? "justify-start" : "justify-center"} ${
+		disabled && "opacity-50 cursor-not-allowed"
+	} ${classes}`;
+
+	const content = (
+		<>
+			{icon && (
+				<span
+					aria-hidden="true"
+					className={`inline-flex items-start ${
+						children !== undefined ? "w-4 mr-2" : "justify-center w-6 h-6"
+					} ${iconClasses}`}
+				>
+					<ion-icon
+						class={`hydrated ${children !== undefined ? "" : "w-6 h-6"}`}
+						name={icon}
+					/>
+				</span>
+			)}
+			<span className="sr-only">{sr}</span>
+			{children}
+		</>
+	);
+
+	// Real anchors (not role="link" buttons): cmd-click, middle-click and
+	// screen readers keep working. Never nest a button inside an anchor.
+	if (href) {
+		// the shared prop type is button-shaped; anchor-specific bits come
+		// through the same spread (id, onClick, aria-*, ref, ...)
+		const anchorProps = props as React.ComponentProps<"a">;
+		return (
+			<a href={href} className={className} {...anchorProps}>
+				{content}
+			</a>
+		);
+	}
+
 	return (
-		<a href={href ?? undefined}>
-			<button
-				type="button"
-				className={`flex items-center rounded-md ${
-					children !== undefined ? "px-4" : "px-2"
-				} py-2 text-sm font-medium focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 transition-all ${
-					full && "w-full"
-				} ${left ? "justify-start" : "justify-center"} ${
-					disabled && "opacity-50 cursor-not-allowed"
-				} ${classes}`}
-				disabled={disabled}
-				{...props}
-			>
-				{icon && (
-					<span
-						className={`inline-flex items-start ${
-							children !== undefined ? "w-4 mr-2" : "justify-center w-6 h-6"
-						} ${iconClasses}`}
-					>
-						<ion-icon
-							class={`hydrated ${children !== undefined ? "" : "w-6 h-6"}`}
-							name={icon}
-							role="img"
-							aria-label={icon}
-						/>
-					</span>
-				)}
-				<span className="sr-only">{sr}</span>
-				{children}
-			</button>
-		</a>
+		<button
+			type="button"
+			className={className}
+			disabled={disabled}
+			{...props}
+		>
+			{content}
+		</button>
 	);
 }

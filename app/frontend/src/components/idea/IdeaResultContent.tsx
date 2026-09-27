@@ -154,7 +154,7 @@ export default function IdeaResultContent() {
 	} else if (isLoading) {
 		return (
 			<div className="p-4">
-				<LoadingAnimation text="Loading user profile..." />
+				<LoadingAnimation text="Loading idea..." />
 			</div>
 		);
 	} else {
@@ -166,7 +166,12 @@ export default function IdeaResultContent() {
 					isFeedbackMissing={!parentIdea}
 					parentId={parentIdea?.id}
 				/>
-				<TailwindComposedTabs data={tabData} activeTab={activeTab} accentColor="pink" />
+				<TailwindComposedTabs
+					data={tabData}
+					activeTab={activeTab}
+					accentColor="pink"
+					tabParams={["summary", "transcript", "feedback"]}
+				/>
 			</div>
 		);
 	}

@@ -37,7 +37,6 @@ export function NotificationsCard({ notificationsData = [], saveSettings }: Noti
 				setHasChanged(true);
 			};
 			const setHour = (inputDate: Date): void => {
-				console.log("setHour", inputDate);
 				const hourDigitPadded = String(inputDate.getHours()).padStart(2, "0");
 				const updatedNotificationFields = [...notificationFields];
 				updatedNotificationFields[i].value = `${hourDigitPadded}:00:00`;
@@ -66,8 +65,11 @@ export function NotificationsCard({ notificationsData = [], saveSettings }: Noti
 									date={hourAsDate}
 									setDate={setHour}
 									disabled={!field.enabled}
+									aria-label={`${field.title} reminder hour`}
 								/>
-								<p className="font-mono tabular-nums text-sm">:00</p>
+								<p className="font-mono tabular-nums text-sm" aria-hidden="true">
+									:00
+								</p>
 							</div>
 						</div>
 					</div>

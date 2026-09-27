@@ -3,7 +3,8 @@ import {
 	CONVERSATION_STATE,
 	CHAT_SAVE_STATE,
 	MIN_CONVERSATION_LENGTH_BEFORE_SAVE,
-	CHAT_TYPE
+	CHAT_TYPE,
+	ASK_A_DIFFERENT_QUESTION
 } from "@src/const";
 import {
 	handleStreamResult,
@@ -72,7 +73,6 @@ export function ChatSection({
 	const [currConversation, setCurrConversation] = useState([
 		{ role: "assistant", content: firstPrompt }
 	]);
-	const askADifferentQuestionString = "Ask me a different question!";
 	const minConversationLenForCreateAndEnd =
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ||
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT;
@@ -298,7 +298,7 @@ export function ChatSection({
 	const askADifferentQuestion = async () => {
 		const isUser = true;
 		const next = addConversationMessage(
-			askADifferentQuestionString,
+			ASK_A_DIFFERENT_QUESTION,
 			isUser,
 			currConversation,
 			setCurrConversation

@@ -10,30 +10,17 @@ import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 
 const isDailyIntent = getQueryParam("dailyIntent") === "true";
 
-const INTENT_PROGRESS_STATE = {
-	start_log: 1,
-	conversation: 2,
-	end_survey: 3
-};
-
 export default function ChatApp() {
 	const [logId, setLogId] = useState<string | null | undefined>(null);
 	const [draftId, setDraftId] = useState(getQueryParam("id"));
-	const [intentProgressState, setIntentProgressState] = useState(
-		INTENT_PROGRESS_STATE.conversation
-	);
-	const [isOpen, setIsOpen] = useState(
-		intentProgressState === INTENT_PROGRESS_STATE.start_log
-		// || intentProgressState === INTENT_PROGRESS_STATE.end_survey
-	);
+	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 
 	useEffect(() => {
 		if (isDailyIntent) {
 			getUserDailyStatusApi()
 				.then((resp) => {
 					if (!resp.logId) {
-						setIsOpen(true);
-						setIntentProgressState(INTENT_PROGRESS_STATE.start_log);
+						setIsLogModalOpen(true);
 					}
 					setLogId(resp.logId);
 					if (resp.intentIdeaId) {
@@ -52,12 +39,10 @@ export default function ChatApp() {
 	return (
 		<AppWrapper>
 			<AiSetupNeeded />
-			{isOpen && (
+			{isLogModalOpen && (
 				<DailyIntentModal
-					logId={logId}
 					setLogId={setLogId}
-					onClose={() => setIsOpen(false)}
-					isAtStart={intentProgressState === INTENT_PROGRESS_STATE.start_log}
+					onClose={() => setIsLogModalOpen(false)}
 				/>
 			)}
 			{/* key field so that rerender happens if daily intent draft idea found */}
@@ -66,10 +51,7 @@ export default function ChatApp() {
 				dailyLogId={logId}
 				draftId={draftId ?? undefined}
 				conversationEndCallbacks={() => {
-					// if (logId) {
-					// 	setIsOpen(true);
-					// 	setIntentProgressState(INTENT_PROGRESS_STATE.end_survey);
-					// }
+					// end-of-session survey intentionally not part of the desktop app
 				}}
 			/>
 		</AppWrapper>

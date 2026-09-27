@@ -17,26 +17,45 @@ export default function DailyStreakSection() {
 	}, []);
 
 	const renderTodayStatus = () => {
-		let textEmphasis = "Great job!";
-		let text = "You set today's intent! See it ";
-		let link = `/idea?id=${intentIdeaId}`;
-		if (!isTodayIntentCompleted) {
-			if (streakCount > 0) {
-				textEmphasis = "Keep that streak going!";
-			} else {
-				textEmphasis = intentIdeaId ? "Almost there!" : "Start your streak!";
-			}
-			text = intentIdeaId ? "Finish today's daily intent " : "Do today's daily intent ";
-			link = "/chat?dailyIntent=true";
+		// Descriptive link text (never a bare "here")
+		if (isTodayIntentCompleted) {
+			return (
+				<div className="text-start text-sm sm:text-base text-stone-700">
+					<p className="font-semibold tracking-wide text-stone-900">Great job!</p>
+					<p>
+						You set today&rsquo;s intent.{" "}
+						<a className="text-accent-900 font-medium hover:underline" href={`/idea?id=${intentIdeaId}`}>
+							See today&rsquo;s idea
+						</a>
+					</p>
+				</div>
+			);
+		}
+
+		if (intentIdeaId) {
+			return (
+				<div className="text-start text-sm sm:text-base text-stone-700">
+					<p className="font-semibold tracking-wide text-stone-900">
+						{streakCount > 0 ? "Keep that streak going!" : "Almost there!"}
+					</p>
+					<p>
+						You&rsquo;re partway through.{" "}
+						<a className="text-accent-900 font-medium hover:underline" href={`/idea?id=${intentIdeaId}`}>
+							Finish today&rsquo;s daily intent
+						</a>
+					</p>
+				</div>
+			);
 		}
 
 		return (
 			<div className="text-start text-sm sm:text-base text-stone-700">
-				<p className="font-semibold tracking-wide text-stone-900">{textEmphasis}</p>
-				{text}
-				<a className="text-accent-900 font-medium hover:underline" href={link}>
-					here
-				</a>
+				<p className="font-semibold tracking-wide text-stone-900">Start your streak!</p>
+				<p>
+					<a className="text-accent-900 font-medium hover:underline" href="/chat?dailyIntent=true">
+						Do today&rsquo;s daily intent
+					</a>
+				</p>
 			</div>
 		);
 	};

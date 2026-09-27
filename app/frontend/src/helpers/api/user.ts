@@ -99,6 +99,9 @@ export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
 		id: idea.id,
 		title: idea?.title,
 		summaryPreview: stripResultPreview(idea?.result),
+		// explicit draft flag: the old "summaryPreview === '...'" sentinel
+		// could never match (stripResultPreview never returns '...')
+		isDraft: !idea?.result,
 		createdAt: idea?.created_at,
 		creatorEmail: idea?.creator_email,
 		creatorName: idea?.creator_name,

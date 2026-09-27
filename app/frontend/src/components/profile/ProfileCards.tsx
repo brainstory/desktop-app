@@ -90,7 +90,8 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 	const handleTimezoneSelect = (e: { value: string }): void => {
 		const input = e.value;
 		setSelectedTimezone(input);
-		const updateHasChanged = input !== userName || selectedTimezone !== timezone;
+		// compare against the *timezone*, not the user name
+		const updateHasChanged = editedName !== userName || input !== timezone;
 		setHasChanged(updateHasChanged);
 	};
 
@@ -103,25 +104,30 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 
 	return (
 		<Card columns={2} title="General Information">
-			<div className="mb-4">
-				<label className="block mb-2 text-sm font-medium text-stone-900">Your name</label>
-				<input
-					value={editedName}
-					type="text"
-					className={`border text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full ${
-						errorMessage ? "border-pink-600" : "border-stone-300"
-					}`}
-					onChange={handleNameChange}
-				/>
-				{errorMessage && <p className="mt-1 text-pink-600 text-sm">{errorMessage}</p>}
-			</div>
-			<div className="[&_:focus-visible]:ring-0">
-				<label className="block mb-2 text-sm font-medium text-stone-900">
-					Your timezone
-				</label>
-				<TimezoneSelect
-					value={selectedTimezone}
-					onChange={handleTimezoneSelect}
+		<div className="mb-4">
+			<label htmlFor="user-name-input" className="block mb-2 text-sm font-medium text-stone-900">
+				Your name
+			</label>
+			<input
+				id="user-name-input"
+				value={editedName}
+				type="text"
+				className={`border text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full ${
+					errorMessage ? "border-pink-600" : "border-stone-300"
+				}`}
+				onChange={handleNameChange}
+			/>
+			{errorMessage && <p className="mt-1 text-pink-600 text-sm">{errorMessage}</p>}
+		</div>
+		<div className="[&_:focus-visible]:ring-0">
+			<label htmlFor="timezone-select" className="block mb-2 text-sm font-medium text-stone-900">
+				Your timezone
+			</label>
+			<TimezoneSelect
+				inputId="timezone-select"
+				aria-label="Your timezone"
+				value={selectedTimezone}
+				onChange={handleTimezoneSelect}
 					classNames={{
 						control: () => "timezone-select-control",
 						menu: () => "timezone-select-menu",

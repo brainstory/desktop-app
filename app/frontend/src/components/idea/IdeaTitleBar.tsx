@@ -4,6 +4,7 @@ import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
 import { exportIdeaApi } from "@helpers/api/share";
 import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
+import { Snackbar } from "@ds/Snackbar";
 
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
@@ -20,6 +21,7 @@ export default function IdeaTitleBar({
 	parentId
 }: IdeaTitleBarProps) {
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
+	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState("Error: Title field is empty");
 	const [exportState, setExportState] = useState<string | null>(null);
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
@@ -40,13 +42,12 @@ export default function IdeaTitleBar({
 		const strippedTitle = (textarea.current?.innerText ?? "").replace(/\n/g, "").trim();
 		if (strippedTitle.length === 0) {
 			setSnackbarErrorOpen(true);
-			setTimeout(() => {
-				setSnackbarErrorOpen(false);
-			}, 4000);
 		} else {
 			setEditedTitle(strippedTitle);
-			updateIdeaTitleApi(idea.id, strippedTitle).then((res) => {
-				console.log("SAVED", res);
+			updateIdeaTitleApi(idea.id, strippedTitle).catch((err) => {
+				console.log("rename failed", err);
+				setSnackbarErrorMessage("Error: Could not save the new title");
+				setSnackbarErrorOpen(true);
 			});
 		}
 
@@ -96,6 +97,8 @@ export default function IdeaTitleBar({
 			})
 			.catch((err) => {
 				console.log("delete failed", err);
+				setSnackbarErrorMessage("Error: Could not delete this idea");
+				setSnackbarErrorOpen(true);
 				setConfirmingDelete(false);
 			});
 	};
@@ -151,9 +154,11 @@ export default function IdeaTitleBar({
 	return (
 		<div className="px-5 pt-5 md:px-7 md:pt-7">
 			{snackbarErrorOpen && (
-				<div className="mt-3 z-50 bg-red-500 p-4 rounded-md shadow-lg absolute left-1/2 -translate-x-1/2 -translate-y-1/2 text-center min-w-[300px]">
-					<p className="text-white">Error: Title field is empty</p>
-				</div>
+				<Snackbar
+					isSuccess={false}
+					message={snackbarErrorMessage}
+					onClose={() => setSnackbarErrorOpen(false)}
+				/>
 			)}
 			<div className="flex flex-wrap gap-4 justify-between">
 				<div className="flex flex-wrap gap-4 justify-between">

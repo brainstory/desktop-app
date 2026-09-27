@@ -18,6 +18,7 @@ export default function IdeaBranches({ kids = [] }: IdeaBranchesProps) {
 						summaryPreview={idea.summaryPreview}
 						createdAt={idea.createdAt}
 						creatorEmail={idea.creatorEmail}
+						creatorName={idea.creatorName}
 						isUnread={idea.isUnread}
 						shared={true}
 						isFeedback={true}

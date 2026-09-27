@@ -34,29 +34,31 @@ export default function ChatTopBar({
 					: undefined;
 
 	const renderLeftComponent = () => {
-		if (saveIconName) {
-			return (
-				<div className="flex items-center flex-nowrap gap-1 text-sm">
-					<ion-icon
-						name={saveIconName}
-						class="hydrated w-5 h-5 text-stone-500"
-					></ion-icon>
-					<p className="text-stone-500">{saveState}</p>
-				</div>
-			);
-		} else if (isLeftButton) {
-			return (
-				<TransparentButton
-					icon={leftButtonIcon}
-					onClick={() => {
-						window.location.href = leftButtonHref;
-					}}
-					classes="order-first"
-				/>
-			);
-		} else {
-			return <div />;
-		}
+		// The guide-flow back button must survive while a save is in
+		// flight - it used to be replaced by the save indicator, stranding
+		// users mid-onboarding. Both render side by side now.
+		return (
+			<div className="flex items-center flex-nowrap gap-2">
+				{isLeftButton && (
+					<TransparentButton
+						icon={leftButtonIcon}
+						href={leftButtonHref}
+						sr="Go back"
+						classes="order-first"
+					/>
+				)}
+				{saveIconName && (
+					<div className="flex items-center flex-nowrap gap-1 text-sm">
+						<ion-icon
+							name={saveIconName}
+							class="hydrated w-5 h-5 text-stone-500"
+						></ion-icon>
+						<p className="text-stone-500">{saveState}</p>
+					</div>
+				)}
+				{!isLeftButton && !saveIconName && <div />}
+			</div>
+		);
 	};
 
 	return (
@@ -66,6 +68,7 @@ export default function ChatTopBar({
 			{!parentIdea && (
 				<TransparentButton
 					classes="border border-stone-200 order-last ml-auto text-nowrap"
+					aria-pressed={showTranscript}
 					onClick={() => {
 						setShowTranscript(!showTranscript);
 					}}

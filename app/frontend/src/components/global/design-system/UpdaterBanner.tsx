@@ -28,7 +28,12 @@ export default function UpdaterBanner() {
 		localStorage.setItem(THROTTLE_KEY, String(Date.now()));
 		check()
 			.then((u) => {
-				if (u) setUpdate(u);
+				if (u) {
+					setUpdate(u);
+					// entering the "available" phase is what makes the banner
+					// render at all - without this the update is never shown
+					setPhase("available");
+				}
 			})
 			.catch((err) => console.log("update check failed", err));
 	}, []);

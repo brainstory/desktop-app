@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { TOPICS, CHAT_TYPE } from "@src/const";
+import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam } from "@helpers/helpers";
@@ -146,4 +146,60 @@ export function findMostRecentUserContent(
 		}
 	}
 	return null;
+}
+
+export interface TranscriptPair {
+	question: string;
+	answer?: string;
+}
+
+interface GroupTranscriptOptions {
+	/** Render a placeholder answer for an in-flight transcription. */
+	transcribing?: boolean;
+	/** Drop a trailing question that nobody answered yet (it's shown in the main chat UI). */
+	hideTrailingUnansweredQuestion?: boolean;
+}
+
+/**
+ * Pair each assistant question with the user answer(s) that follow it,
+ * walking the interleaved conversation instead of splitting it into two
+ * arrays and zipping by index (which misaligns after "ask a different
+ * question" or any repeated role).
+ */
+export function groupTranscript(
+	conversation: ChatMessage[],
+	{ transcribing = false, hideTrailingUnansweredQuestion = false }: GroupTranscriptOptions = {}
+): TranscriptPair[] {
+	const pairs: TranscriptPair[] = [];
+	let current: TranscriptPair | null = null;
+
+	for (const message of conversation) {
+		if (message.role === "assistant") {
+			if (current) {
+				pairs.push(current);
+			}
+			current = { question: message.content };
+		} else {
+			if (message.content === ASK_A_DIFFERENT_QUESTION) {
+				// meta message ("ask me a different question"), not a real answer
+				continue;
+			}
+			if (current) {
+				current.answer = current.answer
+					? `${current.answer} ${message.content}`
+					: message.content;
+			}
+		}
+	}
+
+	if (current) {
+		if (transcribing && current.answer === undefined) {
+			current.answer = "transcribing...";
+			pairs.push(current);
+		} else if (current.answer !== undefined || !hideTrailingUnansweredQuestion) {
+			pairs.push(current);
+		}
+	}
+
+	return pairs;
 }

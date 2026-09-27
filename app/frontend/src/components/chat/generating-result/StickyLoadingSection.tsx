@@ -9,24 +9,33 @@ interface StickyLoadingSectionProps {
 }
 
 export default function StickyLoadingSection({ isFinishedGenerating, ideaId }: StickyLoadingSectionProps) {
-	const title = isFinishedGenerating
-		? "Finished! Saved your summary ✅"
-		: "Hang tight! Writing your thoughts down...";
-
 	return (
 		<div className="sticky bottom-0 bg-white border-t px-7 py-9">
-			<h1 className={headingStyle}>{title}</h1>
 			{isFinishedGenerating ? (
-				<div>
-					<BorderedButton
-						onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
-						classes="ml-auto"
-					>
-					See more &rarr;
-				</BorderedButton>
-				</div>
+				<>
+					<h1 className={headingStyle}>
+						<ion-icon
+							name="checkmark-circle"
+							class="hydrated w-6 h-6 mr-2 align-middle text-green-600"
+							role="img"
+							aria-label="Saved"
+						></ion-icon>
+						Finished! Saved your summary
+					</h1>
+					<div>
+						<BorderedButton
+							onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
+							classes="ml-auto"
+						>
+						Open your idea &rarr;
+					</BorderedButton>
+					</div>
+				</>
 			) : (
-				<LoadingAnimation text="Saving. Don't close this tab." />
+				<>
+					<h1 className={headingStyle}>Hang tight! Writing your thoughts down...</h1>
+					<LoadingAnimation text="Saving your summary — keep the app open." />
+				</>
 			)}
 		</div>
 	);

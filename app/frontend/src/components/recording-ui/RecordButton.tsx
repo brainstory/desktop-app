@@ -34,6 +34,13 @@ function RecordButton({
 }: RecordButtonProps) {
 	const RECORDING_MAX_DURATION = 240000; // 4 minutes
 
+	/** mm:ss readout for the live recording timer */
+	function formatElapsed(totalSeconds: number): string {
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}:${String(seconds).padStart(2, "0")}`;
+	}
+
 	const [warningType, setWarningType] = useState<string | null>(null);
 	// derived: the parent drives when the coach should respond
 	const readyToSend =
@@ -183,27 +190,38 @@ function RecordButton({
 	}
 
 	function handleTextSend() {
-		onTranscript(userTextInput);
+		const trimmed = userTextInput.trim();
+		if (!trimmed) return;
+		onTranscript(trimmed);
 	}
+
+	const enterHint = (
+		<p className="w-full max-w-[500px] text-xs text-stone-400 text-left mt-1">
+			Enter to send &middot; Shift+Enter for a new line
+		</p>
+	);
 
 	function renderInputComponent() {
 		if (isTextInput) {
 			return (
 				<div className="flex justify-center items-end w-full">
-					<textarea
-						className="w-full max-w-[500px] text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-blue-500 resize-none md:resize-y"
-						placeholder="Type something..."
-						aria-label="Type your response"
-						rows={5}
-						value={userTextInput}
-						onChange={handleTextareaChange}
-						onKeyDown={handleKeyDown}
-					></textarea>
+					<div className="flex flex-col w-full max-w-[500px]">
+						<textarea
+							className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-blue-500 resize-none md:resize-y"
+							placeholder="Type something..."
+							aria-label="Type your response"
+							rows={5}
+							value={userTextInput}
+							onChange={handleTextareaChange}
+							onKeyDown={handleKeyDown}
+						></textarea>
+						{enterHint}
+					</div>
 					<button
-						className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring focus:border-blue-300"
+						className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring focus:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed"
 						aria-label="Send message"
+						disabled={!userTextInput.trim()}
 						onClick={handleTextSend}
-						onKeyDown={handleKeyDown}
 					>
 						<ion-icon class="w-8 h-8 hydrated" name="send" aria-hidden="true"></ion-icon>
 					</button>
@@ -251,6 +269,11 @@ function RecordButton({
 				isDisabledOverride ||
 				conversationState === CONVERSATION_STATE.WaitingForCoach ||
 				conversationState === CONVERSATION_STATE.TranscribingUser;
+			const micAriaLabel = micStarting
+				? "Starting microphone"
+				: isRecording
+					? "Stop recording"
+					: "Start recording";
 			let onClickHandler = () => {};
 
 			if (micStarting) {
@@ -278,6 +301,7 @@ function RecordButton({
 						></div>
 						<button
 							disabled={disabled}
+							aria-label={micAriaLabel}
 							className={baseStyleClasses}
 							onClick={onClickHandler}
 						>
@@ -292,7 +316,14 @@ function RecordButton({
 							)}
 						</button>
 					</div>
-					<p>{status === "idle" ? "ready to listen" : status}</p>
+					{isRecording ? (
+						<p className="text-sm text-stone-600 tabular-nums" aria-live="off">
+							<span className="inline-block w-2 h-2 mr-2 rounded-full bg-red-500 align-middle"></span>
+							recording &middot; {formatElapsed(time)}
+						</p>
+					) : (
+						<p>{status === "idle" ? "ready to listen" : status}</p>
+					)}
 				</div>
 			);
 		}
@@ -321,12 +352,12 @@ function RecordButton({
 			{renderInputComponent()}
 			{warningType && (
 				<div className={warningBoxStyle}>
-					<p className="text-sm font-semibold flex-1">
-						{warningType === "error"
-							? (errorMessage ??
-								"An error occurred while transcribing. Please try again.")
-							: "Maximum recording time 4 minutes reached. Send message to continue."}
-					</p>
+				<p className="text-sm font-semibold flex-1">
+					{warningType === "error"
+						? (errorMessage ??
+							"An error occurred while transcribing. Please try again.")
+						: "You hit the 4-minute limit for one recording. It's being transcribed now — keep going in your next message."}
+				</p>
 					<button
 						className="text-white/80 hover:text-white text-lg font-bold px-2 shrink-0"
 						aria-label="dismiss message"

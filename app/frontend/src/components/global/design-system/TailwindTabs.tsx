@@ -22,6 +22,7 @@ Usage (or look at TailwindComposedTabs):
 interface TabsContextValue {
 	activeIndex: number;
 	setActiveIndex: (index: number) => void;
+	tabCount: number;
 }
 
 const TabsContext = createContext<TabsContextValue | undefined>(undefined);
@@ -29,12 +30,27 @@ const TabsContext = createContext<TabsContextValue | undefined>(undefined);
 interface TailwindTabsProps {
 	children: ReactNode;
 	activeTab?: number;
+	/** Values for the ?tab= URL param, one per tab; keeps deep links alive on click/back. */
+	tabParams?: string[];
 }
 
-function TailwindTabs({ children, activeTab = 0 }: TailwindTabsProps) {
-	const [activeIndex, setActiveIndex] = useState(activeTab);
+function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps) {
+	const [activeIndex, setActiveIndexRaw] = useState(activeTab);
+
+	const setActiveIndex = (index: number) => {
+		setActiveIndexRaw(index);
+		const param = tabParams?.[index];
+		if (param) {
+			const url = new URL(window.location.href);
+			url.searchParams.set("tab", param);
+			history.replaceState(null, "", url);
+		}
+	};
+
 	return (
-		<TabsContext.Provider value={{ activeIndex, setActiveIndex }}>
+		<TabsContext.Provider
+			value={{ activeIndex, setActiveIndex, tabCount: Children.count(children) }}
+		>
 			<div className="h-full">{children}</div>
 		</TabsContext.Provider>
 	);
@@ -46,7 +62,11 @@ function TailwindTabList({ children }: { children: ReactNode }) {
 	const wrappedChildren = Children.map(children, (child, index) => (
 		<TabContext.Provider value={index}>{child}</TabContext.Provider>
 	));
-	return <ul className="flex flex-wrap justify-center mb-6 gap-1">{wrappedChildren}</ul>;
+	return (
+		<div role="tablist" className="flex flex-wrap justify-center mb-6 gap-1">
+			{wrappedChildren}
+		</div>
+	);
 }
 
 function TailwindTab({
@@ -58,31 +78,70 @@ function TailwindTab({
 	children?: ReactNode;
 	isDisabled?: boolean;
 	tooltipText?: string;
-} & Omit<ComponentProps<"li">, "children">) {
+} & Omit<ComponentProps<"button">, "children">) {
 	const index = useContext(TabContext);
 	const ctx = useContext(TabsContext);
 	const activeIndex = ctx?.activeIndex ?? 0;
 	const setActiveIndex = ctx?.setActiveIndex ?? (() => {});
+	const tabCount = ctx?.tabCount ?? 1;
 	const isActive = index === activeIndex;
+
+	const moveFocus = (nextIndex: number) => {
+		// roving tabindex: focus (and select) the sibling tab button by id
+		const sibling = document.getElementById(`tw-tab-${nextIndex}`);
+		sibling?.focus();
+		sibling?.click();
+	};
+
+	const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+		switch (event.key) {
+			case "ArrowRight":
+				event.preventDefault();
+				moveFocus((index + 1) % tabCount);
+				break;
+			case "ArrowLeft":
+				event.preventDefault();
+				moveFocus((index - 1 + tabCount) % tabCount);
+				break;
+			case "Home":
+				event.preventDefault();
+				moveFocus(0);
+				break;
+			case "End":
+				event.preventDefault();
+				moveFocus(tabCount - 1);
+				break;
+		}
+	};
 
 	return (
 		<div className="group inline-block relative">
-			<li
-				className={`cursor-pointer text-sm font-medium bg-white p-3 border-b-4 ${
+			<button
+				id={`tw-tab-${index}`}
+				type="button"
+				role="tab"
+				aria-selected={isActive}
+				aria-controls={`tw-tabpanel-${index}`}
+				tabIndex={isActive ? 0 : -1}
+				disabled={isDisabled}
+				className={`cursor-pointer text-sm font-medium bg-white p-3 border-b-4 focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 ${
 					isDisabled
-						? "disabled border-stone-200 opacity-50 cursor-not-allowed hover:unset"
+						? "border-stone-200 opacity-50 cursor-not-allowed"
 						: isActive
 						? `active border-pink-300`
-						: "border-stone-200 hover:text-pink-600 hover:border-accent-900"
+						: "border-stone-200 hover:text-pink-600 hover:border-accent-600"
 				}`}
 				onClick={isDisabled ? undefined : () => setActiveIndex(index)}
-				key={index + "tab"}
+				onKeyDown={handleKeyDown}
 				{...rest}
 			>
 				{children}
-			</li>
+			</button>
 			{tooltipText !== "" && (
-				<div className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-2 bg-stone-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+				<div
+					role="tooltip"
+					className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-2 bg-stone-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-300"
+				>
 					{tooltipText}
 				</div>
 			)}
@@ -108,14 +167,16 @@ interface ComposedTab {
 
 function TailwindComposedTabs({
 	data,
-	activeTab = 0
+	activeTab = 0,
+	tabParams
 }: {
 	data: ComposedTab[];
 	activeTab?: number;
 	accentColor?: string;
+	tabParams?: string[];
 }) {
 	return (
-		<TailwindTabs activeTab={activeTab}>
+		<TailwindTabs activeTab={activeTab} tabParams={tabParams}>
 			<TailwindTabList>
 				{data.map((tab, i) => (
 					<TailwindTab
@@ -129,7 +190,17 @@ function TailwindComposedTabs({
 			</TailwindTabList>
 			<TailwindTabPanels>
 				{data.map((tab, i) => (
-					<TailwindTabPanel key={`tw-tabp-${i}`}>{tab.content}</TailwindTabPanel>
+					<TailwindTabPanel key={`tw-tabp-${i}`}>
+						{/* only the active panel is in the DOM, so ids stay unique */}
+						<div
+							id={`tw-tabpanel-${i}`}
+							role="tabpanel"
+							aria-labelledby={`tw-tab-${i}`}
+							className="outline-none"
+						>
+							{tab.content}
+						</div>
+					</TailwindTabPanel>
 				))}
 			</TailwindTabPanels>
 		</TailwindTabs>

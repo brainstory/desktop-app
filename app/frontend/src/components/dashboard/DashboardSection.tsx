@@ -7,7 +7,9 @@ import { setGettingStartedDone } from "@helpers/storage";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
 import TransparentButton from "@ds/TransparentButton";
+import PinkButton from "@ds/PinkButton";
 import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
+import ErrorSection from "@components/error/ErrorSection";
 
 import IdeaGrid from "./IdeaGrid";
 import FeedbackGrid from "./FeedbackGrid";
@@ -16,6 +18,7 @@ import AiSetupNeeded from "./AiSetupNeeded";
 export default function DashboardSection() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
 	const [isLoading, setIsLoading] = useState(true);
+	const [errorFound, setErrorFound] = useState(false);
 	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
 	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
@@ -26,7 +29,12 @@ export default function DashboardSection() {
 			.then((ideas) => {
 				setUserIdeas(ideas);
 			})
-			.catch((err) => console.log("error getting ideas data", err))
+			.catch((err) => {
+				// surface the failure instead of falling through to the
+				// first-run empty state, which would mislead the user
+				console.log("error getting ideas data", err);
+				setErrorFound(true);
+			})
 			.finally(() => setIsLoading(false));
 	}, []);
 
@@ -53,23 +61,36 @@ export default function DashboardSection() {
 						? `Imported feedback from ${res.author}`
 						: `Imported "${res.title}" from ${res.author}`
 				);
-				setTimeout(() => setSnackbarSuccessOpen(false), 5000);
 				setIsLoading(true);
 				getAllIdeasApi()
-					.then((ideas) => setUserIdeas(ideas))
+					.then((ideas) => {
+						setUserIdeas(ideas);
+						setErrorFound(false);
+					})
 					.finally(() => setIsLoading(false));
 			})
 			.catch((err) => {
 				setSnackbarErrorOpen(true);
 				setSnackbarErrorMessage(err);
-				setTimeout(() => setSnackbarErrorOpen(false), 5000);
 			});
 	};
 
 	return (
 		<section>
-			{snackbarSuccessOpen && <Snackbar isSuccess={true} message={snackbarSuccessMessage} closeAfterTime={() => setSnackbarSuccessOpen(false)} />}
-			{snackbarErrorOpen && <Snackbar isSuccess={false} message={snackbarErrorMessage} closeAfterTime={() => setSnackbarErrorOpen(false)} />}
+			{snackbarSuccessOpen && (
+				<Snackbar
+					isSuccess={true}
+					message={snackbarSuccessMessage}
+					onClose={() => setSnackbarSuccessOpen(false)}
+				/>
+			)}
+			{snackbarErrorOpen && (
+				<Snackbar
+					isSuccess={false}
+					message={snackbarErrorMessage}
+					onClose={() => setSnackbarErrorOpen(false)}
+				/>
+			)}
 			<div className="flex items-center justify-center relative">
 				<h1 className="mb-2 text-2xl font-bold tracking-tight text-center text-stone-900 md:text-2xl lg:text-4xl">
 					Dashboard
@@ -84,15 +105,30 @@ export default function DashboardSection() {
 				</TransparentButton>
 			</div>
 			<AiSetupNeeded />
-			{isLoading ? (
+			{errorFound ? (
+				<ErrorSection
+					title="Couldn't load your ideas"
+					paragraphs={["Something went wrong while loading your library."]}
+					action={
+						<PinkButton onClick={() => window.location.reload()}>Try again</PinkButton>
+					}
+					hideDashboardLink
+				/>
+			) : isLoading ? (
 				<LoadingAnimation />
 			) : showGetStarted ? (
 				<div className="flex flex-col-reverse sm:flex-col gap-8 justify-between items-center my-6">
 					<div className="">
+						{/* CSS-driven art swap so it tracks window resizes */}
 						<img
-							src={window.innerWidth <= 768 ? "/comic2-2.png" : "/comic1-4.png"}
-							className="pointer-events-none pb-1"
-							alt="comic inspired by oh no"
+							src="/comic2-2.png"
+							className="pointer-events-none pb-1 sm:hidden"
+							alt="Comic: someone unsure how to start, encouraged to think out loud"
+						/>
+						<img
+							src="/comic1-4.png"
+							className="pointer-events-none pb-1 hidden sm:block"
+							alt="Comic: someone unsure how to start, encouraged to think out loud"
 						/>
 
 						<div>
@@ -112,9 +148,7 @@ export default function DashboardSection() {
 								role="img"
 							/>
 							<p>Find a quiet place</p>
-							<p className="text-xl font-bold">
-								Tap here for your first Brainstory!
-							</p>
+							<p className="text-xl font-bold">Start your first Brainstory!</p>
 						</div>
 					</Button>
 				</div>

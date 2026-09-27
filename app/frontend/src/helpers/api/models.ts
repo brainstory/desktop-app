@@ -67,6 +67,11 @@ export function getAppleSttStatusApi(): Promise<AppleSttStatus> {
 	return invoke("get_apple_stt_status");
 }
 
+/** Free bytes on the volume holding the models directory (warn-only UI) */
+export function getFreeDiskSpaceApi(): Promise<number> {
+	return invoke("get_free_disk_space");
+}
+
 export interface DownloadEvent {
 	kind: "progress" | "done" | "error";
 	pct?: number;

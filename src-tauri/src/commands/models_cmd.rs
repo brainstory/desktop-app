@@ -76,6 +76,15 @@ pub fn get_apple_stt_status() -> serde_json::Value {
 	})
 }
 
+/// Free space (bytes) on the volume holding the models directory, so the
+/// UI can warn before a multi-GB download. Warn-only: an actual download
+/// that runs out of space still fails cleanly through the normal error
+/// path (hash/size verification catches the truncated file).
+#[tauri::command]
+pub fn get_free_disk_space(state: State<'_, AppState>) -> Result<u64, String> {
+	fs4::available_space(state.models_dir()).map_err(|e| e.to_string())
+}
+
 /// Removes the download's bookkeeping entries when dropped, so even a
 /// panicking task can't wedge future downloads with a stale entry.
 struct DownloadGuard {

@@ -16,7 +16,7 @@ export default function Tooltip({
 		positionClasses = position;
 	}
 
-	const tooltipClass = `${positionClasses} pointer-events-none group-hover:opacity-100 transition-opacity bg-stone-800 p-2 px-4 text-xs text-white rounded-md absolute translate-y-10 opacity-0 z-50 text-center`;
+	const tooltipClass = `${positionClasses} pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity bg-stone-800 p-2 px-4 text-xs text-white rounded-md absolute translate-y-10 opacity-0 z-50 text-center`;
 	const containerClass = `group flex relative ${classes}`;
 
 	return (

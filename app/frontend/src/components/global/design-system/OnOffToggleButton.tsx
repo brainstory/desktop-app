@@ -38,11 +38,11 @@ export default function OnOffToggleButton({
 		<label
 			id={id === null ? undefined : String(id)}
 			aria-disabled={disabled}
-			className={`m-1 border shadow rounded-full relative inline-flex cursor-pointer select-none items-center ${
-				isChecked
-					? "transition-colors duration-500 bg-green-200 border-green-400"
-					: "transition-colors duration-500 bg-stone-200 border-stone-300"
-			} ${disabled && "opacity-70"}`}
+		className={`m-1 border shadow rounded-full relative inline-flex cursor-pointer select-none items-center ${
+			isChecked
+				? "transition-colors duration-150 bg-pink-200 border-pink-400"
+				: "transition-colors duration-150 bg-stone-200 border-stone-300"
+		} ${disabled && "opacity-70"}`}
 			tabIndex={0}
 			role="switch"
 			aria-checked={isChecked}
@@ -55,33 +55,33 @@ export default function OnOffToggleButton({
 				tabIndex={-1}
 				className="sr-only index-0"
 			/>
-			<div
-				className={`h-[30px] w-[30px] bg-white absolute rounded-full transition-transform duration-500 ml-[4px] mr-[4px] ${
-					isChecked && "transform translate-x-[42px]"
-				}`}
-			></div>
-			<div className={`flex h-[36px] rounded-md`}>
-				<span
-					aria-label={checkedState}
-					className={`${
-						isChecked
-							? "transition-opacity opacity-100 duration-500"
-							: "transition-none opacity-0"
-					} pl-1 text-xs font-medium flex w-[40px] items-center justify-center rounded`}
-				>
-					{checkedState}
-				</span>
-				<span
-					aria-label={uncheckedState}
-					className={`${
-						!isChecked
-							? "transition-opacity opacity-100 duration-500"
-							: "transition-none opacity-0"
-					} pr-1 text-xs font-medium flex w-[40px] items-center justify-center rounded`}
-				>
-					{uncheckedState}
-				</span>
-			</div>
+		<div
+			className={`h-[30px] w-[30px] bg-white absolute rounded-full transition-transform duration-150 ml-[4px] mr-[4px] ${
+				isChecked && "transform translate-x-[42px]"
+			}`}
+		></div>
+		<div className={`flex h-[36px] rounded-md`}>
+			<span
+				aria-hidden="true"
+				className={`${
+					isChecked
+						? "transition-opacity opacity-100 duration-150"
+						: "transition-none opacity-0"
+				} pl-1 text-xs font-medium flex w-[40px] items-center justify-center rounded`}
+			>
+				{checkedState}
+			</span>
+			<span
+				aria-hidden="true"
+				className={`${
+					!isChecked
+						? "transition-opacity opacity-100 duration-150"
+						: "transition-none opacity-0"
+				} pr-1 text-xs font-medium flex w-[40px] items-center justify-center rounded`}
+			>
+				{uncheckedState}
+			</span>
+		</div>
 		</label>
 	);
 }

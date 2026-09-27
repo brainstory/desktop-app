@@ -15,6 +15,8 @@ interface SecretFieldProps {
 	saveLabel?: string;
 	onSave: (value: string) => void;
 	inputClasses?: string;
+	/** id for the input, so a <label htmlFor> can point at it */
+	inputId?: string;
 }
 
 export default function SecretField({
@@ -23,7 +25,8 @@ export default function SecretField({
 	hint,
 	saveLabel = "Save",
 	onSave,
-	inputClasses = ""
+	inputClasses = "",
+	inputId
 }: SecretFieldProps) {
 	const [value, setValue] = useState("");
 
@@ -41,6 +44,7 @@ export default function SecretField({
 			)}
 			<div className="flex flex-wrap gap-2">
 				<input
+					id={inputId}
 					type="password"
 					value={value}
 					onChange={(e) => setValue(e.target.value)}

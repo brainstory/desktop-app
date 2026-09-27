@@ -1,8 +1,32 @@
 ---
 import BaseLayout from "@layouts/BaseLayout.astro";
-import IndexWrapper from "@components/IndexWrapper"
 ---
 
-<BaseLayout>
-	<IndexWrapper client:only/>
+<BaseLayout title="Brainstory">
+	<script is:inline>
+		// First-run onboarding runs before first paint: everyone goes through
+		// the guide once, then straight to the dashboard. Inline script = no
+		// React mount, no blank flash (localStorage mirrors storage.ts flags).
+		(function () {
+			var done = false;
+			var seen = false;
+			try {
+				done = localStorage.getItem("has_done_getting_started") !== null;
+				seen = localStorage.getItem("has_seen_index") !== null;
+			} catch (e) {
+				/* storage unavailable - default to the dashboard */
+			}
+			if (!done && !seen) {
+				try {
+					localStorage.setItem("has_seen_index", "true");
+				} catch (e) {}
+				location.replace("/get-started");
+			} else {
+				location.replace("/dashboard");
+			}
+		})();
+	</script>
+	<div class="flex justify-center items-center min-h-[50vh]">
+		<p class="text-stone-500 text-sm">Loading Brainstory...</p>
+	</div>
 </BaseLayout>

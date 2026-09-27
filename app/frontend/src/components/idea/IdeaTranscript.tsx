@@ -1,4 +1,5 @@
 import type { ChatMessage } from "@src/types";
+import { groupTranscript } from "@helpers/chat";
 
 export default function IdeaTranscript({
 	transcript,
@@ -7,37 +8,23 @@ export default function IdeaTranscript({
 	transcript?: ChatMessage[] | null;
 	title?: string | null;
 }) {
-	const splitConversation = (conversation: ChatMessage[]) => {
-		const userContent: string[] = [];
-		const assistantContent: string[] = [];
-		conversation.forEach((message: ChatMessage) => {
-			if (message.role === "user") {
-				userContent.push(message.content);
-			} else {
-				assistantContent.push(message.content);
-			}
-		});
-
-		return { assistantContent, userContent };
-	};
-
-	const { assistantContent, userContent } = splitConversation(transcript ?? []);
+	const pairs = groupTranscript(transcript ?? []);
 
 	return (
 		<div className="mx-10 divide-y-2 divide-stone-200">
-			{assistantContent.map((question, index) => (
+			{pairs.map((pair, index) => (
 				<div
 					className="grid grid-cols-1 gap-4 py-6 lg:grid-cols-3 lg:py-12 first:pt-2"
 					key={`transcript-${index}`}
 				>
 					<div className="flex flex-col flex-shrink-0 mb-6 lg:pr-12 md:mb-0">
 						<span className="text-lg font-semibold leading-6 text-black font-display tracking-tight">
-							{question}
+							{pair.question}
 						</span>
 					</div>
 					<div className="lg:col-span-2">
 						<p className="text-stone-500 text-sm">
-							{userContent[index] ? userContent[index] : ""}
+							{pair.answer ?? ""}
 						</p>
 					</div>
 				</div>

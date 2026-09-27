@@ -35,7 +35,6 @@ export default function Profile() {
 	const [notifications, setNotifications] = useState<NotificationSetting[]>([]);
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
-	// TODO stupid snack bar makes component rerender way too much
 	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
 	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
@@ -67,18 +66,6 @@ export default function Profile() {
 			setSnackbarErrorOpen(true);
 			setSnackbarErrorMessage(message);
 		}
-	};
-
-	const closeSnackbarAfterTime = (isSuccess: boolean): void => {
-		setTimeout(() => {
-			if (isSuccess) {
-				setSnackbarSuccessOpen(false);
-				setSnackbarSuccessMessage("");
-			} else {
-				setSnackbarErrorOpen(false);
-				setSnackbarErrorMessage("");
-			}
-		}, 5000);
 	};
 
 	const handleUserSettingsSave = (
@@ -165,21 +152,26 @@ export default function Profile() {
 				<Snackbar
 					isSuccess={true}
 					message={snackbarSuccessMessage}
-					closeAfterTime={() => closeSnackbarAfterTime(true)}
+					onClose={() => setSnackbarSuccessOpen(false)}
 				/>
 			)}
 			{snackbarErrorOpen && (
 				<Snackbar
 					isSuccess={false}
 					message={snackbarErrorMessage}
-					closeAfterTime={() => closeSnackbarAfterTime(false)}
+					onClose={() => setSnackbarErrorOpen(false)}
 				/>
 			)}
 
 			{isLoading ? (
-				<LoadingAnimation text="Loading user profile..." />
+				<LoadingAnimation text="Loading your settings..." />
 			) : (
-				<TailwindComposedTabs data={tabData} activeTab={activeTab} accentColor="pink" />
+				<TailwindComposedTabs
+					data={tabData}
+					activeTab={activeTab}
+					accentColor="pink"
+					tabParams={["general", "dailyLog", "aiModels"]}
+				/>
 			)}
 		</div>
 	);

@@ -1,5 +1,3 @@
-import { useEffect } from "react";
-
 export default function ChangeInputTypeButton({
 	isTextInput,
 	onToggle
@@ -8,8 +6,6 @@ export default function ChangeInputTypeButton({
 	onToggle: (e?: unknown) => void;
 }) {
 	const buttonStyle = "text-stone-500 text-sm underline underline-offset-2 hover:no-underline";
-
-	useEffect(() => {}, [isTextInput]);
 
 	if (isTextInput) {
 		return (

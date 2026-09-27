@@ -8,11 +8,12 @@ interface EndChatButtonProps {
 }
 
 export default function EndChatButton({ conversationState, handleGetResult, classes = "" }: EndChatButtonProps) {
+	const isFinishing = conversationState === CONVERSATION_STATE.FinishWithResult;
 	return (
 		<div className={`inline-block ${classes}`}>
 			<p className="text-xs sm:text-sm mb-1">Ready to end your session?</p>
 			<BlackButton
-				icon={CONVERSATION_STATE.FinishWithResult ? null : "exit-outline"}
+				icon={isFinishing ? null : "exit-outline"}
 				disabled={
 					!(
 						conversationState === CONVERSATION_STATE.Start ||
@@ -22,9 +23,7 @@ export default function EndChatButton({ conversationState, handleGetResult, clas
 				}
 				onClick={() => handleGetResult()}
 			>
-				{conversationState === CONVERSATION_STATE.FinishWithResult
-					? "Loading summary..."
-					: "Generate Summary & Save"}
+				{isFinishing ? "Loading summary..." : "Generate Summary & Save"}
 			</BlackButton>
 		</div>
 	);

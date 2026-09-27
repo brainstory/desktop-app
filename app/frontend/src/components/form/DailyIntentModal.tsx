@@ -1,23 +1,15 @@
-import { useState, useEffect } from "react";
-import { getQueryParam } from "@helpers/helpers";
+import { useState, useEffect, useRef } from "react";
 
 import {
 	getDailyLogQuestionsApi,
-	submitDailyLogQuestionsApi,
-	submitSurveyResponseApi
+	submitDailyLogQuestionsApi
 } from "@helpers/api/forms";
+import type { LogFormAnswer } from "@helpers/api/forms";
 
 import PinkButton from "@ds/PinkButton";
 import ModalTitleBar from "@components/global/ModalTitleBar";
+import LoadingAnimation from "@components/global/LoadingAnimation";
 import StartLogSection from "./StartLogSection";
-import EndSurveySection from "./EndSurveySection";
-
-const TAB_NAME = {
-	START_LOG: "Status Log",
-	END_SURVEY: "Feelings Survey"
-};
-
-import type { SurveyItem, LogFormAnswer } from "@helpers/api/forms";
 
 interface DailyIntentModalProps {
 	logId?: string | null;
@@ -26,17 +18,11 @@ interface DailyIntentModalProps {
 	isAtStart?: boolean;
 }
 
-export default function DailyIntentModal({ logId, setLogId, onClose }: DailyIntentModalProps) {
-	// const [modalTab, setModalTab] = useState(logId ? TAB_NAME.END_SURVEY : TAB_NAME.END_SURVEY);
-	const [modalTab] = useState(logId ? TAB_NAME.END_SURVEY : TAB_NAME.START_LOG);
-	// state for start log
+export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModalProps) {
 	const [isLogLoading, setIsLogLoading] = useState(true);
 	const [logItems, setLogItems] = useState<LogFormAnswer[]>([]);
-
 	const [isSaving, setIsSaving] = useState(false);
-	// state for end survey
-	const [surveyItems, setSurveyItems] = useState<SurveyItem[]>([]);
-	const [surveyStarRange] = useState();
+	const modalRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
 		getDailyLogQuestionsApi()
@@ -51,42 +37,59 @@ export default function DailyIntentModal({ logId, setLogId, onClose }: DailyInte
 			})
 			.catch((err) => {
 				console.log("Error getting daily log questions", err);
+				setIsLogLoading(false);
 			});
-		// getSurveyFieldsApi()
-		// 	.then((resp) => {
-		// 		setSurveyStarRange(resp.range);
-		// 		setSurveyItems(resp.labels.map((label) => ({ id: label, value: 0 })));
-		// 	})
-		// 	.catch((e) => console.log("Error from get survey fields api", e));
 	}, []);
 
 	const onSubmit = () => {
-		if (modalTab === TAB_NAME.START_LOG) {
-			submitDailyLogQuestionsApi(logItems)
-				.then((logId) => {
-					onClose();
-					setLogId(logId);
-				})
-				.catch((err) => {
-					console.log("Error submitting daily log answers", err);
-				})
-				.finally(() => setIsSaving(false));
-		} else if (modalTab === TAB_NAME.END_SURVEY) {
-			submitSurveyResponseApi(surveyItems, getQueryParam("id"))
-				.then(() => onClose())
-				.catch((e) => console.log("Error in submitting survey api", e));
-		}
+		submitDailyLogQuestionsApi(logItems)
+			.then((logId) => {
+				onClose();
+				setLogId(logId);
+			})
+			.catch((err) => {
+				console.log("Error submitting daily log answers", err);
+			})
+			.finally(() => setIsSaving(false));
 	};
 
-	// Escape closes the modal; without this, keyboard users are trapped.
+	// Escape closes the modal; Tab is trapped inside it. Focus starts on
+	// the first control and returns to the opener on close.
 	useEffect(() => {
+		const modal = modalRef.current;
+		const previouslyFocused = document.activeElement as HTMLElement | null;
+
+		const focusableSelector =
+			'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+		const focusables = (): HTMLElement[] =>
+			Array.from(modal?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
+
+		focusables()[0]?.focus();
+
 		const onKeyDown = (event: globalThis.KeyboardEvent): void => {
 			if (event.key === "Escape") {
 				onClose();
+				return;
+			}
+			if (event.key === "Tab") {
+				const items = focusables();
+				if (items.length === 0) return;
+				const first = items[0];
+				const last = items[items.length - 1];
+				if (event.shiftKey && document.activeElement === first) {
+					event.preventDefault();
+					last.focus();
+				} else if (!event.shiftKey && document.activeElement === last) {
+					event.preventDefault();
+					first.focus();
+				}
 			}
 		};
 		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			previouslyFocused?.focus();
+		};
 	}, [onClose]);
 
 	return (
@@ -94,46 +97,46 @@ export default function DailyIntentModal({ logId, setLogId, onClose }: DailyInte
 			role="dialog"
 			aria-modal="true"
 			aria-label="Daily Intent Log"
-			className={`fixed inset-0 z-50 flex items-center justify-center ${
-				!isLogLoading ? "" : "hidden"
-			}`}
+			className="fixed inset-0 z-50 flex items-center justify-center"
 		>
-			<div className="fixed inset-0 bg-black opacity-40" aria-hidden="true"></div>
-			<div className="flex flex-col max-w-[600px] w-[90vw] max-h-[95vh] bg-white mx-auto rounded-lg relative shadow-md p-5 md:p-7">
+			{/* backdrop: click to dismiss */}
+			<div
+				className="fixed inset-0 bg-black opacity-40"
+				aria-hidden="true"
+				onClick={onClose}
+			></div>
+			<div
+				ref={modalRef}
+				className="flex flex-col max-w-[600px] w-[90vw] max-h-[95vh] bg-white mx-auto rounded-lg relative shadow-md p-5 md:p-7"
+				onClick={(e) => e.stopPropagation()}
+			>
 				<ModalTitleBar title="Daily Intent Log" onClose={onClose} classes="mb-2" />
-				{/* <ModalTabBar
-					allTabs={Object.values(TAB_NAME)}
-					currentTab={modalTab}
-					setTab={setModalTab}
-					disabledTabs={disabledTabs}
-				/> */}
-				{modalTab === TAB_NAME.START_LOG ? (
-					<StartLogSection
-						logItems={logItems}
-						// logItems={logItems.concat(logItems)}
-						setLogItems={setLogItems}
-						disabled={isSaving}
-					/>
+				{isLogLoading ? (
+					<div className="py-10">
+						<LoadingAnimation text="Loading your daily questions..." />
+					</div>
 				) : (
-					<EndSurveySection
-						surveyItems={surveyItems}
-						setSurveyItems={setSurveyItems}
-						starRange={surveyStarRange}
-					/>
+					<>
+						<StartLogSection
+							logItems={logItems}
+							setLogItems={setLogItems}
+							disabled={isSaving}
+						/>
+						<PinkButton
+							disabled={isSaving}
+							onClick={() => {
+								setIsSaving(true);
+								onSubmit();
+							}}
+							classes="mx-auto mt-auto flex-end w-6em"
+						>
+							{isSaving && (
+								<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />
+							)}
+							{isSaving ? "Saving" : "Submit"}
+						</PinkButton>
+					</>
 				)}
-				<PinkButton
-					disabled={isSaving}
-					onClick={() => {
-						setIsSaving(true);
-						onSubmit();
-					}}
-					classes="mx-auto mt-auto flex-end w-6em"
-				>
-					{isSaving && (
-						<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />
-					)}
-					{isSaving ? "Saving" : "Submit"}
-				</PinkButton>
 			</div>
 		</div>
 	);

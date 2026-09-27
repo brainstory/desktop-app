@@ -4,7 +4,8 @@ import {
 	addConversationMessage,
 	removeLastConversationMessage,
 	findMostRecentAssistantContent,
-	findMostRecentUserContent
+	findMostRecentUserContent,
+	groupTranscript
 } from "./chat";
 
 describe("addConversationMessage", () => {
@@ -82,5 +83,75 @@ describe("findMostRecent*", () => {
 
 	it("returns null when nothing matches", () => {
 		expect(findMostRecentAssistantContent([{ role: "user", content: "x" }])).toBeNull();
+	});
+});
+
+describe("groupTranscript", () => {
+	it("pairs each question with the answer that follows it", () => {
+		const conversation: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "a1" },
+			{ role: "assistant", content: "q2" },
+			{ role: "user", content: "a2" }
+		];
+		expect(groupTranscript(conversation)).toEqual([
+			{ question: "q1", answer: "a1" },
+			{ question: "q2", answer: "a2" }
+		]);
+	});
+
+	it("keeps answers attached to the right question after a skip message", () => {
+		const conversation: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "Ask me a different question!" },
+			{ role: "assistant", content: "q2" },
+			{ role: "user", content: "real answer" }
+		];
+		expect(groupTranscript(conversation)).toEqual([
+			{ question: "q1", answer: undefined },
+			{ question: "q2", answer: "real answer" }
+		]);
+	});
+
+	it("keeps a trailing answered question, drops a trailing unanswered one on demand", () => {
+		const answered: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "a1" }
+		];
+		expect(
+			groupTranscript(answered, { hideTrailingUnansweredQuestion: true })
+		).toEqual([{ question: "q1", answer: "a1" }]);
+
+		const unanswered: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "a1" },
+			{ role: "assistant", content: "q2" }
+		];
+		expect(
+			groupTranscript(unanswered, { hideTrailingUnansweredQuestion: true })
+		).toEqual([{ question: "q1", answer: "a1" }]);
+	});
+
+	it("shows a transcribing placeholder for the pending answer", () => {
+		const conversation: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "a1" },
+			{ role: "assistant", content: "q2" }
+		];
+		expect(groupTranscript(conversation, { transcribing: true })).toEqual([
+			{ question: "q1", answer: "a1" },
+			{ question: "q2", answer: "transcribing..." }
+		]);
+	});
+
+	it("concatenates consecutive user messages into one answer", () => {
+		const conversation: ChatMessage[] = [
+			{ role: "assistant", content: "q1" },
+			{ role: "user", content: "part one" },
+			{ role: "user", content: "part two" }
+		];
+		expect(groupTranscript(conversation)).toEqual([
+			{ question: "q1", answer: "part one part two" }
+		]);
 	});
 });

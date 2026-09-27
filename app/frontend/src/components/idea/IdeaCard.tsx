@@ -20,14 +20,20 @@ export default function IdeaCard({
 	title,
 	createdAt,
 	creatorName,
+	isUnread = false,
 	shared = false,
 	feedback,
 	isFeedback = false
 }: IdeaCardProps) {
 	const feedbackList = feedback ?? [];
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
-	// Feedback cards don't show shared / feedback sections
-	const cardHeight = isFeedback ? `min-h-[240px]` : `min-h-[310px]`;
+	// Feedback cards don't show shared / feedback sections. Cards without
+	// feedback don't need the extra room the feedback stack effect reserves.
+	const cardHeight = isFeedback
+		? `min-h-[240px]`
+		: feedbackList.length > 0
+			? `min-h-[310px]`
+			: `min-h-[240px]`;
 
 	return (
 		<a
@@ -36,6 +42,11 @@ export default function IdeaCard({
 			rel={isFeedback ? "noreferrer" : undefined}
 			className={`relative w-80 sm:w-[275px] ${cardHeight} group cursor-pointer bg-white rounded-lg border border-stone-200 shadow hover:shadow-lg hover:-translate-y-1 transition-transform`}
 		>
+			{isUnread && (
+				<span className="absolute top-3 right-3 z-10 bg-pink-500 text-white text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full shadow">
+					New
+				</span>
+			)}
 			<FeedbackStack ideaId={id} feedback={feedback} />
 			<div className="relative bg-white border border-stone-200 rounded-lg">
 				<div className={`${cardHeight} p-6 rounded-lg`}>
@@ -65,28 +76,18 @@ export default function IdeaCard({
 							</div>
 						</div>
 					</div>
-					{!isFeedback && (
-						<div>
-							{feedbackList.length > 0 ? (
-								<div className="flex justify-end mt-4 mt-max">
-									<button
-										onClick={(e) => {
-											e.preventDefault();
-											window.location.href = `/idea?id=${id}&tab=feedback`;
-										}}
-										className="hover:underline font-bold w-[130px] text-blue-600 uppercase p-1 text-xs rounded-full"
-									>
-										{feedbackList.length}{" "}
-										{feedbackList.length > 1 ? "feedback items" : "feedback item"}
-									</button>
-								</div>
-							) : (
-								<div className="flex justify-end mt-4">
-									<p className="font-bold w-[130px] text-stone-600 uppercase p-1 text-xs rounded-full">
-										0 feedback items
-									</p>
-								</div>
-							)}
+					{!isFeedback && feedbackList.length > 0 && (
+						<div className="flex justify-end mt-4">
+							<button
+								onClick={(e) => {
+									e.preventDefault();
+									window.location.href = `/idea?id=${id}&tab=feedback`;
+								}}
+								className="hover:underline font-bold w-[130px] text-blue-600 uppercase p-1 text-xs rounded-full"
+							>
+								{feedbackList.length}{" "}
+								{feedbackList.length > 1 ? "feedback items" : "feedback item"}
+							</button>
 						</div>
 					)}
 				</div>

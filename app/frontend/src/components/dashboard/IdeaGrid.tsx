@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import IdeaCard from "@components/idea/IdeaCard";
 import IdeaPlaceholder from "@components/idea/IdeaPlaceholder";
 import DraftIdeaCard from "@components/idea/DraftIdeaCard";
@@ -10,8 +9,6 @@ interface IdeaGridProps {
 }
 
 export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
-	useEffect(() => {}, [userIdeas]);
-
 	if (userIdeas === null) {
 		return (
 			<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -24,8 +21,7 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 		return (
 			<div className="flex flex-wrap items-stretch justify-center sm:justify-start gap-5 mx-auto">
 				{userIdeas.map((idea: IdeaListItem, index: number) => {
-					// If summaryPreview is ... then is a draft summary
-					if (idea.summaryPreview === "...") {
+					if (idea.isDraft) {
 						return (
 							<DraftIdeaCard
 								key={`draft-idea-card-${index}-${idea.id}`}
