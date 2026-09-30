@@ -73,14 +73,16 @@ export function getFreeDiskSpaceApi(): Promise<number> {
 }
 
 export interface DownloadEvent {
-	kind: "progress" | "done" | "error";
+	kind: "progress" | "done" | "error" | "load-error";
 	pct?: number;
 	message?: string;
 }
 
 /**
  * Download a model. Progress events arrive on the returned channel:
- * {kind: "progress", pct} | {kind: "done"} | {kind: "error", message}
+ * {kind: "progress", pct} | {kind: "done"} | {kind: "error", message} |
+ * {kind: "load-error", message} (download succeeded but activating the
+ * model failed)
  */
 export function downloadModelApi(modelId: string): {
 	channel: Channel<DownloadEvent>;

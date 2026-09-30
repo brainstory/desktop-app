@@ -204,6 +204,11 @@ pub async fn download_model(
 						"model-download",
 						json!({ "modelId": model_id, "kind": "done" }),
 					);
+					// The download itself is finished: release the
+					// bookkeeping before the auto-load below, so the
+					// model stops reporting "downloading" while its
+					// engine spins up.
+					drop(_guard);
 					// If this model is the active one, load it right away.
 					let state = app_handle.state::<AppState>();
 					let settings = AiSettings::load(&state.db);
@@ -213,17 +218,33 @@ pub async fn download_model(
 					let is_active_stt =
 						spec.kind == ModelKind::Stt && settings.stt_model == spec.id;
 					if is_active_llm || is_active_stt {
+						// A load failure must not read as a successful
+						// activation (the runtime-status event fires from
+						// inside the loader too); report it on the same
+						// channel/event the download UI already listens to.
 						let app2 = app_handle.clone();
-						tauri::async_runtime::spawn_blocking(move || {
+						let spec_id = spec.id;
+						let load_result = tauri::async_runtime::spawn_blocking(move || {
 							let state = app2.state::<AppState>();
-							let result = match spec.kind {
+							match spec.kind {
 								ModelKind::Llm => state.load_llm(&app2, &spec),
 								ModelKind::Stt => state.load_stt(&app2, &spec),
-							};
-							if let Err(e) = result {
-								log::error!("auto-load of {} failed: {e}", spec.id);
 							}
-						});
+						})
+						.await
+						.unwrap_or_else(|e| Err(format!("load task failed: {e}")));
+						if let Err(e) = load_result {
+							log::error!("auto-load of {spec_id} failed: {e}");
+							let _ = on_event.send(json!({ "kind": "load-error", "message": e }));
+							let _ = app_handle.emit(
+								"model-download",
+								json!({
+									"modelId": model_id,
+									"kind": "load-error",
+									"message": e
+								}),
+							);
+						}
 					}
 				}
 				Err(e) => {
@@ -343,13 +364,16 @@ pub async fn activate_model(
 	}
 
 	let app_handle = app.clone();
-	tauri::async_runtime::spawn_blocking(move || {
+	// Await the load so the invoke result tells the caller whether the
+	// engine actually activated: load_llm/load_stt refuse concurrent
+	// loads ("a model is already loading") and fail on bad files, and
+	// fire-and-forgetting made the UI believe activation succeeded.
+	let outcome = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
 		let state = app_handle.state::<AppState>();
-		let result = match spec.kind {
+		match match spec.kind {
 			ModelKind::Llm => state.load_llm(&app_handle, &spec),
 			ModelKind::Stt => state.load_stt(&app_handle, &spec),
-		};
-		match result {
+		} {
 			Ok(()) => {
 				let mut settings = AiSettings::load(&state.db);
 				match spec.kind {
@@ -361,18 +385,17 @@ pub async fn activate_model(
 						settings.stt_model = spec.id.to_string();
 					}
 				}
-				if let Err(e) = settings.save(&state.db) {
-					log::error!("failed to persist activation of {}: {e}", spec.id);
-				}
+				// the settings row is only updated once the engine
+				// actually loaded, so the recorded active model can never
+				// disagree with the runtime
+				settings.save(&state.db)
 			}
-			Err(e) => {
-				// The status event already carries the error to the UI;
-				// this keeps it in the (now real) log file too.
-				log::error!("activate_model({}) failed: {e}", spec.id);
-			}
+			Err(e) => Err(e),
 		}
-	});
-	Ok(())
+	})
+	.await
+	.map_err(|e| format!("activation task failed: {e}"))?;
+	outcome
 }
 
 #[cfg(test)]

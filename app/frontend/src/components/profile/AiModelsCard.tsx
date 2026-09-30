@@ -109,33 +109,37 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		const unlisteners = [
 			listen("llm-status", refresh),
 			listen("stt-status", refresh),
-			// downloads continue in the backend across page navigation
-			listen<{
-				modelId: string;
-				kind: "progress" | "done" | "error";
-				pct?: number;
-				message?: string;
-			}>("model-download", (event) => {
-				const { modelId, kind, pct, message } = event.payload ?? {};
-				if (kind === "progress") {
-					setDownloadProgress((prev: Record<string, number>) => ({ ...prev, [modelId]: pct ?? 0 }));
-				} else if (kind === "done") {
-					setDownloadProgress((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					});
-					openSnackbar(true, "Model downloaded");
-					refresh();
-				} else if (kind === "error") {
-					setDownloadProgress((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					});
-					openSnackbar(false, `Download failed: ${message}`);
-				}
-			})
+		// downloads continue in the backend across page navigation
+		listen<{
+			modelId: string;
+			kind: "progress" | "done" | "error" | "load-error";
+			pct?: number;
+			message?: string;
+		}>("model-download", (event) => {
+			const { modelId, kind, pct, message } = event.payload ?? {};
+			if (kind === "progress") {
+				setDownloadProgress((prev: Record<string, number>) => ({ ...prev, [modelId]: pct ?? 0 }));
+			} else if (kind === "done") {
+				setDownloadProgress((prev) => {
+					const next = { ...prev };
+					delete next[modelId];
+					return next;
+				});
+				openSnackbar(true, "Model downloaded");
+				refresh();
+			} else if (kind === "error") {
+				setDownloadProgress((prev) => {
+					const next = { ...prev };
+					delete next[modelId];
+					return next;
+				});
+				openSnackbar(false, `Download failed: ${message}`);
+			} else if (kind === "load-error") {
+				// the download itself succeeded; activating the model failed
+				openSnackbar(false, `Model downloaded, but activating it failed: ${message}`);
+				refresh();
+			}
+		})
 		];
 		return () => {
 			unlisteners.forEach((p) => p.then((fn) => fn()));
