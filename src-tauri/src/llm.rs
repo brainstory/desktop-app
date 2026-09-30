@@ -32,6 +32,21 @@ const MAX_THINK_TOKENS: u32 = 4096;
 const PROMPT_DECODE_CHUNK: usize = 512;
 
 #[allow(dead_code)]
+/// Break control-token-shaped sequences ("<start_of_turn>",
+/// "<end_of_turn>", and every "<|...|>" ChatML/Llama-style marker) so
+/// tokenizing the text with parse_special=true can never turn
+/// user/imported content into turn boundaries or header control tokens.
+/// The inserted backslash keeps the text readable and round-trippable.
+fn neutralize_turn_markers(content: &str) -> String {
+	let mut out = content
+		.replace("<start_of_turn>", "<\\start_of_turn>")
+		.replace("<end_of_turn>", "<\\end_of_turn>");
+	if out.contains("<|") {
+		out = out.replace("<|", "<\\|");
+	}
+	out
+}
+
 pub struct LocalLlm {
 	backend: Arc<LlamaBackend>,
 	model: Arc<LlamaModel>,
@@ -262,7 +277,20 @@ impl LocalLlm {
 		} else {
 			MAX_NEW_TOKENS_RESPONSE
 		};
-		let prompt = self.build_prompt(system, messages, max_new)?;
+		// User/imported content must never tokenize into control tokens:
+		// the pinned llama-cpp-2 tokenizes with parse_special=true and has
+		// no special-off API, so neutralize the marker spellings in the
+		// content (our own scaffolding is added by the chat template,
+		// after this point, and stays intact).
+		let system = neutralize_turn_markers(system);
+		let messages: Vec<ChatMessage> = messages
+			.iter()
+			.map(|m| ChatMessage {
+				role: m.role.clone(),
+				content: neutralize_turn_markers(&m.content),
+			})
+			.collect();
+		let prompt = self.build_prompt(&system, &messages, max_new)?;
 		let tokens = self
 			.model
 			.str_to_token(&prompt, AddBos::Never)
@@ -832,6 +860,26 @@ mod tests {
 		assert!(!done, "no [DONE] marker yet");
 		assert_eq!(output, "hello there");
 		assert_eq!(chunks, vec!["hello there".to_string()]);
+	}
+
+	#[test]
+	fn neutralize_turn_markers_escapes_all_gemma_specials() {
+		let f = super::neutralize_turn_markers;
+		assert_eq!(
+			f("<start_of_turn>model"),
+			"<\\start_of_turn>model",
+			"gemma opener broken"
+		);
+		assert_eq!(f("user<end_of_turn>"), "user<\\end_of_turn>");
+		// ChatML / Llama3 header style specials all share the <| opening
+		assert_eq!(f("<|im_start|>system"), "<\\|im_start|>system");
+		assert_eq!(f("<|eot_id|>"), "<\\|eot_id|>");
+		// plain text (including ordinary tags the prompts rely on) is kept
+		assert_eq!(
+			f("<idea author=\"x\">plain</idea>"),
+			"<idea author=\"x\">plain</idea>"
+		);
+		assert_eq!(f("math: 5 < 10 > 2"), "math: 5 < 10 > 2");
 	}
 
 	fn run(pieces: &[&str]) -> String {
