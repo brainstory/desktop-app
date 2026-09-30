@@ -38,12 +38,15 @@ export default function DailyStreakSection() {
 					<p className="font-semibold tracking-wide text-stone-900">
 						{streakCount > 0 ? "Keep that streak going!" : "Almost there!"}
 					</p>
-					<p>
-						You&rsquo;re partway through.{" "}
-						<a className="text-accent-900 font-medium hover:underline" href={`/idea?id=${intentIdeaId}`}>
-							Finish today&rsquo;s daily intent
-						</a>
-					</p>
+				<p>
+					You&rsquo;re partway through.{" "}
+					<a
+						className="text-accent-900 font-medium hover:underline"
+						href={`/chat?dailyIntent=true&id=${intentIdeaId}`}
+					>
+						Finish today&rsquo;s daily intent
+					</a>
+				</p>
 				</div>
 			);
 		}
