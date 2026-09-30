@@ -523,8 +523,11 @@ impl Db {
 				None,
 			)?;
 			conn.execute(
+				// A new intent for the day replaces the old one as a fresh
+				// draft: is_completed must reset, or a later empty draft
+				// still shows the day as finished.
 				"INSERT INTO daily (date, intent_idea_id, is_completed) VALUES (?1, ?2, 0)
-				 ON CONFLICT(date) DO UPDATE SET intent_idea_id = ?2",
+				 ON CONFLICT(date) DO UPDATE SET intent_idea_id = ?2, is_completed = 0",
 				params![today, id],
 			)
 			.map_err(|e| format!("failed to save daily intent: {e}"))?;
@@ -998,6 +1001,26 @@ mod tests {
 		);
 		assert_eq!(status.survey_id.as_deref(), Some("s1"));
 		assert_eq!(status.streak, 1, "the survey still counts as activity");
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn new_intent_draft_resets_completion() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		// the day is completed by a finished intent...
+		db.create_daily_intent_idea("done", "T", "## Result", &[], &serde_json::json!({}))
+			.unwrap();
+		assert!(db.get_daily_status().is_completed);
+		// ...so a new empty draft for the same day must not inherit it
+		db.create_daily_intent_idea("draft", "T", "", &[], &serde_json::json!({}))
+			.unwrap();
+		let status = db.get_daily_status();
+		assert!(
+			!status.is_completed,
+			"a new draft intent resets the completed flag"
+		);
+		assert_eq!(status.intent_idea_id.as_deref(), Some("draft"));
 		std::fs::remove_file(path).ok();
 	}
 
