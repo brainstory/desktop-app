@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { formatISO8601ToHumanReadable, parseBackendUtc } from "./helpers";
-import { isModerationError, normalizeApiError } from "./helpers";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	callApiWithRetry,
+	formatISO8601ToHumanReadable,
+	isModerationError,
+	normalizeApiError,
+	parseBackendUtc
+} from "./helpers";
 
 describe("normalizeApiError", () => {
 	it("passes strings through", () => {
@@ -82,5 +87,67 @@ describe("formatISO8601ToHumanReadable", () => {
 			minute: "2-digit"
 		});
 		expect(formatISO8601ToHumanReadable("2026-09-15T10:30:00")).toBe(expected);
+	});
+});
+
+describe("callApiWithRetry", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("retries once after 500 ms and resolves on the second attempt", async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const promise = callApiWithRetry(async () => {
+			calls++;
+			if (calls === 1) throw new Error("transient");
+			return "ok";
+		});
+		await vi.advanceTimersByTimeAsync(500);
+		await expect(promise).resolves.toBe("ok");
+		expect(calls).toBe(2);
+	});
+
+	it("does not retry moderation errors", async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const promise = callApiWithRetry(async () => {
+			calls++;
+			throw new Error("HttpError 469: Inappropriate input");
+		});
+		promise.catch(() => {});
+		await vi.advanceTimersByTimeAsync(5000);
+		await expect(promise).rejects.toThrow("469");
+		expect(calls).toBe(1);
+	});
+
+	it("rejects with the last error after exhausting retries", async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const promise = callApiWithRetry(async () => {
+			calls++;
+			throw new Error("still broken");
+		});
+		promise.catch(() => {});
+		await vi.advanceTimersByTimeAsync(5000);
+		await expect(promise).rejects.toThrow("still broken");
+		expect(calls).toBe(2);
+	});
+
+	it("does not retry when the predicate says the error is permanent", async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const promise = callApiWithRetry(
+			async () => {
+				calls++;
+				throw new Error("Speech model not downloaded yet.");
+			},
+			1,
+			(err) => !normalizeApiError(err).includes("not downloaded yet")
+		);
+		promise.catch(() => {});
+		await vi.advanceTimersByTimeAsync(5000);
+		await expect(promise).rejects.toThrow("not downloaded yet");
+		expect(calls).toBe(1);
 	});
 });

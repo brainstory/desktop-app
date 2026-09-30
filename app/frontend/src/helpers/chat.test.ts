@@ -3,6 +3,7 @@ import type { ChatMessage } from "@src/types";
 import { TOPICS, CHAT_TYPE } from "@src/const";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import {
+	handleStreamResult,
 	addConversationMessage,
 	removeLastConversationMessage,
 	findMostRecentAssistantContent,
@@ -208,5 +209,86 @@ describe("groupTranscript", () => {
 		expect(groupTranscript(conversation)).toEqual([
 			{ question: "q1", answer: "part one part two" }
 		]);
+	});
+});
+describe("handleStreamResult", () => {
+	function makeStream() {
+		let resolve!: (v: import("./chat").GenerationResult) => void;
+		let reject!: (e: unknown) => void;
+		const invokePromise = new Promise<import("./chat").GenerationResult>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		const handle = {
+			channel: {
+				onmessage: (_event: import("./chat").StreamChunk) => {}
+			},
+			invokePromise
+		};
+		return {
+			start: () => handle,
+			emit: (event: import("./chat").StreamChunk) => handle.channel.onmessage(event),
+			resolve,
+			reject
+		};
+	}
+
+	it("concatenates chunk events and lets cumulative replace", async () => {
+		const { start, emit, resolve } = makeStream();
+		const updates: string[] = [];
+		const done = handleStreamResult(start, (m) => updates.push(m), async () => {});
+		emit({ type: "chunk", content: "hel" });
+		emit({ type: "chunk", content: "lo" });
+		emit({ type: "cumulative", content: "hello there" });
+		resolve({});
+		await done;
+		expect(updates).toEqual(["hel", "hello", "hello there"]);
+	});
+
+	it("the final response overrides the streamed text", async () => {
+		const { start, emit, resolve } = makeStream();
+		const updates: string[] = [];
+		const successes: string[] = [];
+		const done = handleStreamResult(
+			start,
+			(m) => updates.push(m),
+			async (message) => {
+				successes.push(message);
+			}
+		);
+		emit({ type: "chunk", content: "partial" });
+		resolve({ response: "the real thing" });
+		await done;
+		expect(updates.at(-1)).toBe("the real thing");
+		expect(successes).toEqual(["the real thing"]);
+	});
+
+	it("passes structured_result to the success callback", async () => {
+		const { start, resolve } = makeStream();
+		const structured: unknown[] = [];
+		const done = handleStreamResult(start, () => {}, async (_m, s) => {
+			structured.push(s);
+		});
+		resolve({ response: "x", structured_result: { items: 1 } });
+		await done;
+		expect(structured).toEqual([{ items: 1 }]);
+	});
+
+	it("calls onError and skips success when the invoke rejects", async () => {
+		const { start, reject } = makeStream();
+		const errors: unknown[] = [];
+		let successRan = false;
+		const done = handleStreamResult(
+			start,
+			() => {},
+			async () => {
+				successRan = true;
+			},
+			(err) => errors.push(err)
+		);
+		reject(new Error("endpoint down"));
+		await done;
+		expect(errors).toHaveLength(1);
+		expect(successRan).toBe(false);
 	});
 });
