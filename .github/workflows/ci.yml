@@ -40,8 +40,11 @@ jobs:
       - name: Typecheck (tsc + astro check)
         run: pnpm -C app/frontend typecheck
 
-      - name: Lint
-        run: pnpm -C app/frontend lint
+      - name: Lint (zero warnings allowed)
+        run: pnpm -C app/frontend lint --max-warnings 0
+
+      - name: Format check
+        run: pnpm -C app/frontend format:check
 
       - name: Test
         run: pnpm -C app/frontend test
