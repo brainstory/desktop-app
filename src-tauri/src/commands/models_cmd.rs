@@ -41,7 +41,7 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 					downloaded: state.is_model_downloaded(spec),
 					active: match kind {
 						ModelKind::Llm => {
-							settings.llm_mode == "local" && settings.llm_model == spec.id
+							!settings.uses_external_llm() && settings.llm_model == spec.id
 						}
 						// A whisper model is only "active" when whisper actually
 						// handles local transcription (Apple Speech mode demotes it
@@ -240,7 +240,7 @@ pub async fn download_model(
 					let state = app_handle.state::<AppState>();
 					let settings = AiSettings::load(&state.db);
 					let is_active_llm = spec.kind == ModelKind::Llm
-						&& settings.llm_mode == "local"
+						&& !settings.uses_external_llm()
 						&& settings.llm_model == spec.id;
 					let is_active_stt =
 						spec.kind == ModelKind::Stt && settings.stt_model == spec.id;

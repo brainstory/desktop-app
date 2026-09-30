@@ -186,64 +186,7 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
 		let mut settings = AiSettings::load(&state.db);
-		let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
-
-		if let Some(v) = get_str("llmMode") {
-			settings.llm_mode = v;
-		}
-		if let Some(v) = get_str("llmModel") {
-			settings.llm_model = v;
-		}
-		if let Some(v) = get_str("sttModel") {
-			settings.stt_model = v;
-		}
-		if let Some(v) = get_str("sttEngine") {
-			if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
-				return Err(format!(
-					"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
-				));
-			}
-			settings.stt_engine = v;
-		}
-		if let Some(v) = get_str("sttLanguage") {
-			// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
-			let cleaned = v.trim();
-			if !cleaned.is_empty() {
-				let valid = cleaned.len() <= 16
-					&& cleaned
-						.chars()
-						.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-				if !valid {
-					return Err(format!(
-						"invalid sttLanguage '{cleaned}' (expected a locale like en-US)"
-					));
-				}
-				settings.stt_language = cleaned.to_string();
-			}
-		}
-		if let Some(v) = get_str("extLlmBaseUrl") {
-			settings.ext_llm_base_url = v;
-		}
-		if let Some(v) = get_str("extLlmModel") {
-			settings.ext_llm_model = v;
-		}
-		if let Some(v) = get_str("extSttBaseUrl") {
-			settings.ext_stt_base_url = v;
-		}
-		if let Some(v) = get_str("extSttModel") {
-			settings.ext_stt_model = v;
-		}
-		// Secrets: the real value never comes back to the webview, so an
-		// absent/null field keeps the stored value and an explicit "" clears it.
-		if let Some(v) = get_str("hfToken") {
-			settings.hf_token = v;
-		}
-		if let Some(v) = get_str("extLlmApiKey") {
-			settings.ext_llm_api_key = v;
-		}
-		if let Some(v) = get_str("extSttApiKey") {
-			settings.ext_stt_api_key = v;
-		}
+		settings.apply_updates(&ai)?;
 		settings.save(&state.db)?;
 
 		// Activate models that are ready to go with the new settings.
@@ -294,7 +237,7 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	if output.trim().is_empty() && !got_any {
 		return Err("endpoint responded with an empty reply".into());
 	}
-	if settings.llm_mode != "external" {
+	if !settings.uses_external_llm() {
 		return Ok(format!(
 			"endpoint OK ({}) - but chats still use the local model. Turn on 'Use external LLM endpoint' above to route chats here.",
 			settings.ext_llm_base_url

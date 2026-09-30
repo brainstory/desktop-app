@@ -519,7 +519,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 		}
 
 		// LLM: load local model unless external mode is active.
-		if settings.llm_mode != "local" {
+		if settings.uses_external_llm() {
 			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
 			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
 				models::EngineStatus::new("external", None, None);

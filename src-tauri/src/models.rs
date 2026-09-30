@@ -162,11 +162,14 @@ impl AiSettings {
 		let secret = |s: crate::secrets::Secret| crate::secrets::load(s, db).unwrap_or_default();
 		Self {
 			llm_mode: {
+				// Only two modes exist; an unknown stored value (legacy or
+				// hand-edited) degrades to local - the same rule generation
+				// applies, so the loader's status can never disagree with
+				// what chats actually use.
 				let m = get("ai_llm_mode");
-				if m.is_empty() {
-					"local".into()
-				} else {
-					m
+				match m.as_str() {
+					"external" | "local" => m,
+					_ => "local".into(),
 				}
 			},
 			llm_model: {
@@ -215,6 +218,101 @@ impl AiSettings {
 			"auto" if crate::apple::speech_available() => "apple",
 			_ => "whisper",
 		}
+	}
+
+	/// True when chat generation should use the external OpenAI-compatible
+	/// endpoint. Single source of truth for the mode check: anything but
+	/// "external" means the local engine, so callers can never disagree
+	/// about which backend a setting routes to.
+	pub fn uses_external_llm(&self) -> bool {
+		self.llm_mode == "external"
+	}
+
+	/// Validate and apply a partial update from the settings form
+	/// (absent/null fields keep their value). Err rejects the whole
+	/// update; nothing is applied on failure.
+	pub fn apply_updates(&mut self, ai: &serde_json::Value) -> Result<(), String> {
+		let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
+
+		if let Some(v) = get_str("llmMode") {
+			if !matches!(v.as_str(), "local" | "external") {
+				return Err(format!(
+					"invalid llmMode '{v}' (expected local or external)"
+				));
+			}
+			self.llm_mode = v;
+		}
+		if let Some(v) = get_str("llmModel") {
+			if find_model(&v, ModelKind::Llm).is_none() {
+				return Err(format!("unknown llmModel '{v}'"));
+			}
+			self.llm_model = v;
+		}
+		if let Some(v) = get_str("sttModel") {
+			if find_model(&v, ModelKind::Stt).is_none() {
+				return Err(format!("unknown sttModel '{v}'"));
+			}
+			self.stt_model = v;
+		}
+		if let Some(v) = get_str("sttEngine") {
+			if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
+				return Err(format!(
+					"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
+				));
+			}
+			self.stt_engine = v;
+		}
+		if let Some(v) = get_str("sttLanguage") {
+			// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
+			let cleaned = v.trim();
+			if !cleaned.is_empty() {
+				let valid = cleaned.len() <= 16
+					&& cleaned
+						.chars()
+						.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+				if !valid {
+					return Err(format!(
+						"invalid sttLanguage '{cleaned}' (expected a locale like en-US)"
+					));
+				}
+				self.stt_language = cleaned.to_string();
+			}
+		}
+		let base_url = |field: &str, v: &str| -> Result<(), String> {
+			if v.is_empty() || v.starts_with("http://") || v.starts_with("https://") {
+				Ok(())
+			} else {
+				Err(format!(
+					"invalid {field} '{v}' (include http:// or https://)"
+				))
+			}
+		};
+		if let Some(v) = get_str("extLlmBaseUrl") {
+			base_url("extLlmBaseUrl", &v)?;
+			self.ext_llm_base_url = v;
+		}
+		if let Some(v) = get_str("extLlmModel") {
+			self.ext_llm_model = v;
+		}
+		if let Some(v) = get_str("extSttBaseUrl") {
+			base_url("extSttBaseUrl", &v)?;
+			self.ext_stt_base_url = v;
+		}
+		if let Some(v) = get_str("extSttModel") {
+			self.ext_stt_model = v;
+		}
+		// Secrets: the real value never comes back to the webview, so an
+		// absent/null field keeps the stored value and an explicit "" clears it.
+		if let Some(v) = get_str("hfToken") {
+			self.hf_token = v;
+		}
+		if let Some(v) = get_str("extLlmApiKey") {
+			self.ext_llm_api_key = v;
+		}
+		if let Some(v) = get_str("extSttApiKey") {
+			self.ext_stt_api_key = v;
+		}
+		Ok(())
 	}
 
 	/// Persist these settings. Err means the settings row or one of the
@@ -825,6 +923,57 @@ mod tests {
 			"whisper"
 		};
 		assert_eq!(s.effective_stt_engine(), expected);
+	}
+
+	#[test]
+	fn unknown_llm_mode_degrades_to_local_everywhere() {
+		let db = temp_db("mode");
+		// a garbage stored mode (legacy/hand-edited row) must not split the
+		// callers: generation and the model loader agree on local
+		db.set_setting("ai_llm_mode", "banana").expect("set");
+		let s = AiSettings::load(&db);
+		assert_eq!(s.llm_mode, "local");
+		assert!(!s.uses_external_llm());
+		db.set_setting("ai_llm_mode", "external").expect("set");
+		assert!(AiSettings::load(&db).uses_external_llm());
+		db.set_setting("ai_llm_mode", "local").expect("set");
+		assert!(!AiSettings::load(&db).uses_external_llm());
+	}
+
+	#[test]
+	fn apply_updates_validates_and_applies_atomically() {
+		let db = temp_db("apply");
+		let mut s = AiSettings::load(&db);
+		s.apply_updates(&serde_json::json!({
+			"llmMode": "external",
+			"llmModel": "gemma-4-E4B",
+			"sttModel": "whisper-small-en",
+			"extLlmBaseUrl": "http://localhost:1234/v1",
+		}))
+		.expect("valid update applies");
+		assert!(s.uses_external_llm());
+		assert_eq!(s.llm_model, "gemma-4-E4B");
+		assert_eq!(s.stt_model, "whisper-small-en");
+
+		let mut bad = AiSettings::load(&db);
+		for field in [
+			serde_json::json!({ "llmMode": "sometimes" }),
+			serde_json::json!({ "llmModel": "not-a-model" }),
+			serde_json::json!({ "sttModel": "gemma-4-E2B-qat" }), // llm id, wrong catalog
+			serde_json::json!({ "extLlmBaseUrl": "localhost:1234" }), // no scheme
+			serde_json::json!({ "extSttBaseUrl": "ftp://example.com" }),
+		] {
+			assert!(
+				bad.apply_updates(&field).is_err(),
+				"update must be rejected: {field}"
+			);
+		}
+		// nothing from a rejected update leaked into the settings
+		assert_eq!(bad.llm_mode, "local");
+		assert_eq!(bad.ext_llm_base_url, "");
+		// an empty base URL is fine (the endpoint is simply unused)
+		bad.apply_updates(&serde_json::json!({ "extLlmBaseUrl": "" }))
+			.expect("empty base url allowed");
 	}
 
 	use std::sync::atomic::AtomicBool;

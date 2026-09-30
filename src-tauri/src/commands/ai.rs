@@ -350,7 +350,7 @@ async fn run_generation(
 	} else {
 		crate::llm::MAX_NEW_TOKENS_RESPONSE
 	};
-	if settings.llm_mode == "external" {
+	if settings.uses_external_llm() {
 		let client = external_llm(settings)?;
 		let (text, _prompt_tokens) = client
 			.generate(&system, messages, &cancel, max_tokens, on_chunk)
