@@ -16,8 +16,10 @@ export default function IdeaSidebar({
 	canShare
 }: IdeaSidebarProps) {
 	const renderCommentCards = () => {
-		const sortedHeadingIndices = Object.keys(headingIdxToComments);
-		sortedHeadingIndices.sort();
+		// numeric order: lexicographic sorting puts "10" before "2"
+		const sortedHeadingIndices = Object.keys(headingIdxToComments).sort(
+			(a, b) => Number(a) - Number(b)
+		);
 
 		if (sortedHeadingIndices.length === 0) {
 			return (
@@ -41,7 +43,7 @@ export default function IdeaSidebar({
 			return (
 				<IdeaFeedbackCard
 					feedback={comment as never}
-					key={`${comment.creatorName}_${index}`}
+					key={comment.commentId ?? `${comment.ideaId}_${index}`}
 					focusSection={focusSection}
 					focusedIdea={currentFocusedFeedback}
 				/>

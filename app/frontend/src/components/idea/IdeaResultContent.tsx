@@ -202,10 +202,21 @@ async function fetchIdeaChildrenData(ideaId: string): Promise<[IdeaFeedbackItem[
 	const result = await getIdeaChildrenApi(ideaId).then((res) => {
 		const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
 		const ideaChildren = res.map((idea) => {
-			(idea.feedbackComments ?? []).map((comment: FeedbackComment) => {
+			(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
 				const headingIdx = Number((comment.oidHeadingText ?? "").split("#")[0]);
+				if (!Number.isInteger(headingIdx)) {
+					// a comment whose heading reference can't be parsed can
+					// never be attached to a section; keep it out loudly
+					// instead of filing it under a silent NaN key
+					console.warn(
+						"feedback comment with unparsable heading reference:",
+						comment.oidHeadingText
+					);
+					return;
+				}
 				const currMap: FeedbackComment[] = oidHeadingToFeedbackComments[headingIdx] || [];
 				currMap.push({
+					commentId: `${idea.id}:${headingIdx}:${currMap.length}`,
 					ideaId: idea.id,
 					creatorEmail: idea.creatorEmail,
 					creatorName: idea.creatorName,

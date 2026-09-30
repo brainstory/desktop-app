@@ -1,4 +1,4 @@
-import type { FeedbackComment, FeedbackLabel } from "@src/types";
+import type { FeedbackComment } from "@src/types";
 import { useState, useEffect, useRef } from "react";
 
 import EmojiItem from "@components/idea/feedback-aggregation/EmojiItem";
@@ -11,7 +11,7 @@ interface IdeaFeedbackCardProps {
 		creatorName?: string | null;
 		createdAt?: string | null;
 	};
-	focusedIdea?: { ideaId: string; labels?: FeedbackLabel[] } | null;
+	focusedIdea?: (FeedbackComment & { ideaId: string }) | null;
 	focusSection: (feedback: FeedbackComment & { hid: string | number }) => void;
 }
 
@@ -19,8 +19,11 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText, labels } = feedback;
 	const ref = useRef<HTMLDivElement | null>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
-	// derived: this card is the one the sidebar currently has focused
-	const isFocused = focusedIdea?.ideaId === ideaId && focusedIdea?.labels === labels;
+	// derived: this card is the one the sidebar currently has focused,
+	// identified by its stable comment id (never by array identity, which
+	// breaks on every re-render)
+	const isFocused =
+		feedback.commentId != null && focusedIdea?.commentId === feedback.commentId;
 	const [isShowingMore, setIsShowingMore] = useState(false);
 
 
@@ -34,10 +37,10 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 		}
 
 		// Currently focused -> scroll into view
-		if (focusedIdea?.ideaId === ideaId && focusedIdea?.labels === labels) {
+		if (feedback.commentId != null && focusedIdea?.commentId === feedback.commentId) {
 			ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
 		}
-	}, [ref, focusedIdea, ideaId, labels]);
+	}, [ref, focusedIdea, feedback.commentId]);
 
 	const containerClasses = `border-stone-200 ${
 		isFocused && "outline outline-blue-500 outline-2"

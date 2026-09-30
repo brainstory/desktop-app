@@ -18,6 +18,9 @@ export interface StructuredFeedback {
 
 /** A feedback comment grouped under a result-document heading. */
 export interface FeedbackComment {
+	/** Stable identity (`ideaId:headingIdx:indexInGroup`) for focus
+	 * comparisons - array/identity comparison breaks on re-render. */
+	commentId?: string;
 	ideaId?: string;
 	creatorEmail?: string | null;
 	creatorName?: string | null;
