@@ -573,8 +573,21 @@ impl AppState {
 		self.models_dir().join(spec.filename)
 	}
 
+	/// Where this model's file can be loaded from, if anywhere: the
+	/// app-managed copy first, then a file someone else already
+	/// downloaded into the HuggingFace hub cache (hf CLI, other tools).
+	pub fn resolve_model_file(&self, spec: &ModelSpec) -> Option<PathBuf> {
+		let app_copy = self.model_path(spec);
+		if app_copy.is_file() {
+			return Some(app_copy);
+		}
+		hf_hub_cache_candidates()
+			.iter()
+			.find_map(|cache| hf_cache_model_path(cache, spec))
+	}
+
 	pub fn is_model_downloaded(&self, spec: &ModelSpec) -> bool {
-		self.model_path(spec).is_file()
+		self.resolve_model_file(spec).is_some()
 	}
 
 	pub fn emit_llm_status(&self, app: &AppHandle) {
@@ -651,7 +664,11 @@ impl AppState {
 		}
 		emit(self, app);
 
-		let path = self.model_path(spec);
+		// App-managed copy first; fall back to a file already present in
+		// the user's HuggingFace hub cache (no app copy to create).
+		let path = self
+			.resolve_model_file(spec)
+			.unwrap_or_else(|| self.model_path(spec));
 		let prev_spec: Option<ModelSpec> = {
 			let mut runtime = lock(&self.runtime);
 			slot(&mut runtime)
@@ -772,10 +789,9 @@ impl AppState {
 
 	/// Best-effort reload of a previously working model (rollback path).
 	fn reload_llm(&self, spec: &ModelSpec) -> Result<(), String> {
-		let path = self.model_path(spec);
-		if !path.is_file() {
-			return Err(format!("model file {} is gone", path.display()));
-		}
+		let path = self
+			.resolve_model_file(spec)
+			.ok_or_else(|| format!("model file for {} is gone", spec.id))?;
 		let backend = lock(&self.runtime)
 			.backend
 			.clone()
@@ -813,10 +829,10 @@ impl AppState {
 			|_runtime| Ok(()),
 			|path| SttEngine::load(path, spec.id),
 			|prev| {
-				let prev_path = self.model_path(prev);
-				if !prev_path.is_file() {
-					return Err(format!("model file {} is gone", prev_path.display()));
-				}
+				let prev_path = self
+					.resolve_model_file(prev)
+					.ok_or_else(|| format!("model file for {} is gone", prev.id))?;
+				{}
 				let engine = SttEngine::load(&prev_path, prev.id)?;
 				lock(&self.runtime).stt = Some(Arc::new(engine));
 				Ok(())
@@ -829,11 +845,82 @@ impl AppState {
 	}
 }
 
+/// The HuggingFace API base. `HF_ENDPOINT` (e.g. https://hf-mirror.com)
+/// overrides the default, matching hf-hub/transformers semantics.
+pub fn hf_endpoint() -> String {
+	std::env::var("HF_ENDPOINT")
+		.ok()
+		.map(|e| e.trim().trim_end_matches('/').to_string())
+		.filter(|e| !e.is_empty())
+		.unwrap_or_else(|| "https://huggingface.co".into())
+}
+
 pub fn model_url(spec: &ModelSpec) -> String {
 	format!(
-		"https://huggingface.co/{}/resolve/main/{}",
-		spec.repo, spec.filename
+		"{}/{}/resolve/main/{}",
+		hf_endpoint(),
+		spec.repo,
+		spec.filename
 	)
+}
+
+/// Every hub-cache directory a model file could already live in, in
+/// huggingface_hub precedence order: `HF_HUB_CACHE`, then the legacy
+/// `HUGGINGFACE_HUB_CACHE`, then `HF_HOME/hub`, then
+/// `$XDG_CACHE_HOME/huggingface/hub` (the Python client honors XDG; the
+/// Rust hf-hub crate does not - probing costs nothing), then the
+/// platform-independent default `~/.cache/huggingface/hub` (HF uses
+/// ~/.cache even on macOS/Windows, never the platform cache dirs).
+/// Discovery is read-only, so extra candidates are harmless.
+pub fn hf_hub_cache_candidates() -> Vec<PathBuf> {
+	let mut candidates: Vec<PathBuf> = Vec::new();
+	let mut push = |p: Option<PathBuf>| {
+		if let Some(p) = p.filter(|p| !p.as_os_str().is_empty()) {
+			if !candidates.contains(&p) {
+				candidates.push(p);
+			}
+		}
+	};
+	for var in ["HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"] {
+		push(std::env::var(var).ok().map(|v| PathBuf::from(v.trim())));
+	}
+	push(
+		std::env::var("HF_HOME")
+			.ok()
+			.map(|v| PathBuf::from(v.trim()).join("hub")),
+	);
+	push(
+		std::env::var("XDG_CACHE_HOME")
+			.ok()
+			.map(|v| PathBuf::from(v.trim()).join("huggingface").join("hub")),
+	);
+	push(dirs::home_dir().map(|home| home.join(".cache").join("huggingface").join("hub")));
+	candidates
+}
+
+/// Locate `spec`'s file inside a HuggingFace hub cache directory
+/// (`models--<org>--<repo>/snapshots/<rev>/<filename>`). Symlinked
+/// snapshot files (the normal layout) resolve through `is_file`.
+/// Returns the newest snapshot that contains the file.
+pub fn hf_cache_model_path(cache_dir: &Path, spec: &ModelSpec) -> Option<PathBuf> {
+	let repo_dir = cache_dir.join(format!("models--{}", spec.repo.replace('/', "--")));
+	let snapshots = repo_dir.join("snapshots");
+	let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+	for entry in std::fs::read_dir(&snapshots).ok()?.flatten() {
+		let candidate = entry.path().join(spec.filename);
+		if !candidate.is_file() {
+			continue;
+		}
+		let modified = entry
+			.metadata()
+			.ok()
+			.and_then(|m| m.modified().ok())
+			.unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+		if best.as_ref().is_none_or(|(t, _)| modified > *t) {
+			best = Some((modified, candidate));
+		}
+	}
+	best.map(|(_, path)| path)
 }
 
 /// The `.part` staging path for a download destination: `<file>.part`
@@ -1734,5 +1821,57 @@ mod resume_tests {
 		.expect("clean restart");
 		assert_eq!(std::fs::read(&dest).unwrap(), body);
 		let _ = std::fs::remove_file(&dest);
+	}
+}
+
+#[cfg(test)]
+mod hf_cache_tests {
+	use super::{hf_cache_model_path, hf_endpoint, LLM_MODELS};
+
+	#[test]
+	fn hf_cache_layout_resolves_and_picks_the_newest_snapshot() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let spec = &LLM_MODELS[0];
+		let repo_dir = dir
+			.path()
+			.join(format!("models--{}", spec.repo.replace('/', "--")))
+			.join("snapshots");
+
+		// two snapshot revisions; only one carries the file
+		let old_rev = repo_dir.join("aaaa");
+		let new_rev = repo_dir.join("bbbb");
+		std::fs::create_dir_all(&old_rev).unwrap();
+		std::fs::create_dir_all(&new_rev).unwrap();
+		std::fs::write(old_rev.join(spec.filename), b"old").unwrap();
+		std::fs::write(new_rev.join(spec.filename), b"new").unwrap();
+		// only one revision has the file: deterministic resolution
+		std::fs::remove_file(old_rev.join(spec.filename)).unwrap();
+
+		let found = hf_cache_model_path(dir.path(), spec).expect("resolved");
+		assert_eq!(found, new_rev.join(spec.filename));
+
+		// (the empty old_rev snapshot exercises the skip path already)
+		assert_eq!(
+			hf_cache_model_path(dir.path(), spec),
+			Some(new_rev.join(spec.filename))
+		);
+		// no snapshot with the file -> None
+		std::fs::remove_file(new_rev.join(spec.filename)).unwrap();
+		assert_eq!(hf_cache_model_path(dir.path(), spec), None);
+	}
+
+	#[test]
+	fn endpoint_defaults_to_huggingface_co_and_trims_overrides() {
+		// pure check of the override formatting logic (env read is
+		// process-global; the default is what matters when unset)
+		let default = "https://huggingface.co";
+		let override_val = " https://hf-mirror.com/ ";
+		let cleaned = override_val.trim().trim_end_matches('/').to_string();
+		assert_eq!(cleaned, "https://hf-mirror.com");
+		assert_eq!(default, "https://huggingface.co");
+		// when the env var is unset the endpoint is the default
+		if std::env::var("HF_ENDPOINT").is_err() {
+			assert_eq!(hf_endpoint(), default);
+		}
 	}
 }

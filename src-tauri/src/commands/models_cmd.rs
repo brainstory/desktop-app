@@ -321,7 +321,23 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 				}
 			}
 		}
-		let path = state.model_path(spec);
+		// The app-managed copy is the only file deletion owns: a model
+		// that lives in the user's HuggingFace hub cache was put there by
+		// another tool, and removing other tools' cache entries is not
+		// ours to do.
+		let app_path = state.model_path(spec);
+		if !app_path.is_file() {
+			let cache_path = crate::models::hf_hub_cache_candidates()
+				.iter()
+				.find_map(|cache| crate::models::hf_cache_model_path(cache, spec));
+			if let Some(cache) = cache_path {
+				return Err(format!(
+					"this model is only present in your HuggingFace cache ({}); Brainstory does not delete files it does not own - remove it there if you want the space back",
+					cache.display()
+				));
+			}
+			return Err("model file not found".into());
+		}
 		// Unload the engine BEFORE deleting the file: the loaded engine mmaps
 		// the model, and on Windows an open mmap makes remove_file fail.
 		let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
@@ -337,9 +353,7 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		}
 		drop(runtime);
 
-		if path.exists() {
-			std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-		}
+		std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
 
 		if llm_gone {
 			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
