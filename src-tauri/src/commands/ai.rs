@@ -67,7 +67,10 @@ pub async fn transcribe(
 	// unsupported systems. Auto falls back to whisper on any failure; an
 	// explicit Apple choice surfaces real failures (permission prompts,
 	// asset problems) instead of hiding them behind whisper.
-	if settings.stt_engine == "apple" || settings.stt_engine == "auto" {
+	if matches!(
+		settings.stt_engine,
+		crate::models::SpeechEngine::Apple | crate::models::SpeechEngine::Auto
+	) {
 		let apple_bytes = bytes.clone();
 		let locale = settings.stt_language.clone();
 		let result = tauri::async_runtime::spawn_blocking(move || {
@@ -78,8 +81,8 @@ pub async fn transcribe(
 		match result {
 			Ok(Ok(transcript)) => return Ok(serde_json::json!({ "transcript": transcript })),
 			Ok(Err(e)) => {
-				let explicit_supported =
-					settings.stt_engine == "apple" && crate::apple::speech_available();
+				let explicit_supported = settings.stt_engine == crate::models::SpeechEngine::Apple
+					&& crate::apple::speech_available();
 				if explicit_supported {
 					return Err(e);
 				}

@@ -48,7 +48,8 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 						// to fallback).
 						ModelKind::Stt => {
 							settings.stt_model == spec.id
-								&& settings.effective_stt_engine() != "apple"
+								&& settings.effective_stt_engine()
+									== crate::models::SpeechEngine::Whisper
 						}
 					},
 					downloading: progress.contains_key(spec.id),
@@ -408,7 +409,7 @@ pub async fn activate_model(
 				let mut settings = AiSettings::load(&state.db);
 				match spec.kind {
 					ModelKind::Llm => {
-						settings.llm_mode = "local".into();
+						settings.llm_mode = crate::models::LlmMode::Local;
 						settings.llm_model = spec.id.to_string();
 					}
 					ModelKind::Stt => {

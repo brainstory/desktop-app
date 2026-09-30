@@ -118,15 +118,94 @@ pub fn find_model(id: &str, kind: ModelKind) -> Option<&'static ModelSpec> {
 	list.iter().find(|m| m.id == id)
 }
 
+/// Where chat generation runs. Parsed at the settings boundary; an
+/// unknown stored/form value is rejected here instead of being compared
+/// as a raw string by every caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmMode {
+	/// local llama.cpp engine
+	Local,
+	/// the user-configured OpenAI-compatible endpoint
+	External,
+}
+
+impl LlmMode {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Local => "local",
+			Self::External => "external",
+		}
+	}
+}
+
+impl std::str::FromStr for LlmMode {
+	type Err = String;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			"local" => Ok(Self::Local),
+			"external" => Ok(Self::External),
+			_ => Err(format!(
+				"invalid llmMode '{s}' (expected local or external)"
+			)),
+		}
+	}
+}
+
+/// Local speech-to-text engine selection. (Named `SpeechEngine` because
+/// `SttEngine` is the loaded whisper engine itself.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeechEngine {
+	/// Apple Speech on macOS 26+, whisper otherwise
+	Auto,
+	/// the macOS 26+ built-in engine only
+	Apple,
+	/// local whisper.cpp only
+	Whisper,
+}
+
+impl SpeechEngine {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Auto => "auto",
+			Self::Apple => "apple",
+			Self::Whisper => "whisper",
+		}
+	}
+
+	/// The engine that actually handles local transcription for this
+	/// choice: Apple when explicitly selected or when auto + available,
+	/// whisper otherwise.
+	pub fn effective(self) -> Self {
+		match self {
+			Self::Apple => Self::Apple,
+			Self::Auto if crate::apple::speech_available() => Self::Apple,
+			_ => Self::Whisper,
+		}
+	}
+}
+
+impl std::str::FromStr for SpeechEngine {
+	type Err = String;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			"auto" => Ok(Self::Auto),
+			"apple" => Ok(Self::Apple),
+			"whisper" => Ok(Self::Whisper),
+			_ => Err(format!(
+				"invalid sttEngine '{s}' (expected auto, apple, or whisper)"
+			)),
+		}
+	}
+}
+
 /// AI-related settings resolved from the settings table.
 #[derive(Debug, Clone)]
 pub struct AiSettings {
-	pub llm_mode: String,
+	pub llm_mode: LlmMode,
 	pub llm_model: String,
 	pub stt_model: String,
-	/// Speech-to-text engine: "auto" (Apple Speech on macOS 26+, whisper
-	/// otherwise), "apple" (macOS 26 built-in only), or "whisper".
-	pub stt_engine: String,
+	/// Speech-to-text engine selection.
+	pub stt_engine: SpeechEngine,
 	/// BCP-47 locale for the Apple Speech engine (e.g. "en-US").
 	pub stt_language: String,
 	/// HuggingFace access token; sent with model downloads, where it
@@ -143,7 +222,7 @@ pub struct AiSettings {
 /// Engine default for the first launch after this setting was introduced:
 /// installs that already have AI configuration keep whisper (no behavior
 /// change), brand-new installs get "auto".
-fn default_stt_engine(db: &Db) -> String {
+fn default_stt_engine(db: &Db) -> SpeechEngine {
 	const PREVIOUS_AI_KEYS: [&str; 4] = [
 		"ai_llm_mode",
 		"ai_llm_model",
@@ -151,9 +230,13 @@ fn default_stt_engine(db: &Db) -> String {
 		"ext_stt_base_url",
 	];
 	let existing_install = PREVIOUS_AI_KEYS.iter().any(|k| db.get_setting(k).is_some());
-	let default = if existing_install { "whisper" } else { "auto" };
-	let _ = db.set_setting("ai_stt_engine", default);
-	default.to_string()
+	let default = if existing_install {
+		SpeechEngine::Whisper
+	} else {
+		SpeechEngine::Auto
+	};
+	let _ = db.set_setting("ai_stt_engine", default.as_str());
+	default
 }
 
 impl AiSettings {
@@ -166,11 +249,9 @@ impl AiSettings {
 				// hand-edited) degrades to local - the same rule generation
 				// applies, so the loader's status can never disagree with
 				// what chats actually use.
-				let m = get("ai_llm_mode");
-				match m.as_str() {
-					"external" | "local" => m,
-					_ => "local".into(),
-				}
+				get("ai_llm_mode")
+					.parse::<LlmMode>()
+					.unwrap_or(LlmMode::Local)
 			},
 			llm_model: {
 				let m = get("ai_llm_model");
@@ -189,8 +270,10 @@ impl AiSettings {
 				}
 			},
 			stt_engine: match db.get_setting("ai_stt_engine") {
-				Some(v) if !v.is_empty() => v,
-				_ => default_stt_engine(db),
+				Some(v) => v
+					.parse::<SpeechEngine>()
+					.unwrap_or_else(|_| default_stt_engine(db)),
+				None => default_stt_engine(db),
 			},
 			stt_language: {
 				let v = get("ai_stt_language");
@@ -210,22 +293,18 @@ impl AiSettings {
 		}
 	}
 
-	/// "apple" when the built-in engine should handle local transcription
-	/// (explicit choice, or auto + available), "whisper" otherwise.
-	pub fn effective_stt_engine(&self) -> &'static str {
-		match self.stt_engine.as_str() {
-			"apple" => "apple",
-			"auto" if crate::apple::speech_available() => "apple",
-			_ => "whisper",
-		}
+	/// The engine that handles local transcription for the current
+	/// choice (Apple when selected/available, whisper otherwise).
+	pub fn effective_stt_engine(&self) -> SpeechEngine {
+		self.stt_engine.effective()
 	}
 
 	/// True when chat generation should use the external OpenAI-compatible
 	/// endpoint. Single source of truth for the mode check: anything but
-	/// "external" means the local engine, so callers can never disagree
+	/// External means the local engine, so callers can never disagree
 	/// about which backend a setting routes to.
 	pub fn uses_external_llm(&self) -> bool {
-		self.llm_mode == "external"
+		self.llm_mode == LlmMode::External
 	}
 
 	/// Validate and apply a partial update from the settings form
@@ -235,12 +314,7 @@ impl AiSettings {
 		let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
 
 		if let Some(v) = get_str("llmMode") {
-			if !matches!(v.as_str(), "local" | "external") {
-				return Err(format!(
-					"invalid llmMode '{v}' (expected local or external)"
-				));
-			}
-			self.llm_mode = v;
+			self.llm_mode = v.parse::<LlmMode>()?;
 		}
 		if let Some(v) = get_str("llmModel") {
 			if find_model(&v, ModelKind::Llm).is_none() {
@@ -255,12 +329,7 @@ impl AiSettings {
 			self.stt_model = v;
 		}
 		if let Some(v) = get_str("sttEngine") {
-			if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
-				return Err(format!(
-					"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
-				));
-			}
-			self.stt_engine = v;
+			self.stt_engine = v.parse::<SpeechEngine>()?;
 		}
 		if let Some(v) = get_str("sttLanguage") {
 			// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
@@ -319,10 +388,10 @@ impl AiSettings {
 	/// secrets could not be written - callers must not report success.
 	pub fn save(&self, db: &Db) -> Result<(), String> {
 		db.set_settings(&[
-			("ai_llm_mode", self.llm_mode.clone()),
+			("ai_llm_mode", self.llm_mode.as_str().to_string()),
 			("ai_llm_model", self.llm_model.clone()),
 			("ai_stt_model", self.stt_model.clone()),
-			("ai_stt_engine", self.stt_engine.clone()),
+			("ai_stt_engine", self.stt_engine.as_str().to_string()),
 			("ai_stt_language", self.stt_language.clone()),
 			("ext_llm_base_url", self.ext_llm_base_url.clone()),
 			("ext_llm_model", self.ext_llm_model.clone()),
@@ -855,7 +924,7 @@ mod tests {
 	fn stt_engine_defaults_to_auto_for_new_installs() {
 		let db = temp_db("fresh");
 		let s = AiSettings::load(&db);
-		assert_eq!(s.stt_engine, "auto");
+		assert_eq!(s.stt_engine, super::SpeechEngine::Auto);
 		// the resolved default is persisted so later behavior is stable
 		assert_eq!(db.get_setting("ai_stt_engine").as_deref(), Some("auto"));
 	}
@@ -866,7 +935,7 @@ mod tests {
 		db.set_setting("ai_stt_model", "whisper-small-en")
 			.expect("set");
 		let s = AiSettings::load(&db);
-		assert_eq!(s.stt_engine, "whisper");
+		assert_eq!(s.stt_engine, super::SpeechEngine::Whisper);
 	}
 
 	#[test]
@@ -874,7 +943,7 @@ mod tests {
 		let db = temp_db("stored");
 		db.set_setting("ai_stt_engine", "apple").expect("set");
 		let s = AiSettings::load(&db);
-		assert_eq!(s.stt_engine, "apple");
+		assert_eq!(s.stt_engine, super::SpeechEngine::Apple);
 	}
 
 	#[test]
@@ -912,17 +981,29 @@ mod tests {
 	fn effective_engine_matches_availability() {
 		let db = temp_db("effective");
 		let mut s = AiSettings::load(&db);
-		s.stt_engine = "apple".into();
-		assert_eq!(s.effective_stt_engine(), "apple");
-		s.stt_engine = "whisper".into();
-		assert_eq!(s.effective_stt_engine(), "whisper");
-		s.stt_engine = "auto".into();
+		s.stt_engine = super::SpeechEngine::Apple;
+		assert_eq!(s.effective_stt_engine(), super::SpeechEngine::Apple);
+		s.stt_engine = super::SpeechEngine::Whisper;
+		assert_eq!(s.effective_stt_engine(), super::SpeechEngine::Whisper);
+		s.stt_engine = super::SpeechEngine::Auto;
 		let expected = if crate::apple::speech_available() {
-			"apple"
+			super::SpeechEngine::Apple
 		} else {
-			"whisper"
+			super::SpeechEngine::Whisper
 		};
 		assert_eq!(s.effective_stt_engine(), expected);
+	}
+
+	#[test]
+	fn mode_and_engine_parsing_reject_unknown_values() {
+		use super::{LlmMode, SpeechEngine};
+		assert_eq!("local".parse::<LlmMode>().unwrap(), LlmMode::Local);
+		assert_eq!("external".parse::<LlmMode>().unwrap(), LlmMode::External);
+		assert!("banana".parse::<LlmMode>().is_err());
+		for raw in ["auto", "apple", "whisper"] {
+			raw.parse::<SpeechEngine>().expect(raw);
+		}
+		assert!("sometimes".parse::<SpeechEngine>().is_err());
 	}
 
 	#[test]
@@ -932,7 +1013,7 @@ mod tests {
 		// callers: generation and the model loader agree on local
 		db.set_setting("ai_llm_mode", "banana").expect("set");
 		let s = AiSettings::load(&db);
-		assert_eq!(s.llm_mode, "local");
+		assert_eq!(s.llm_mode, super::LlmMode::Local);
 		assert!(!s.uses_external_llm());
 		db.set_setting("ai_llm_mode", "external").expect("set");
 		assert!(AiSettings::load(&db).uses_external_llm());
@@ -969,7 +1050,7 @@ mod tests {
 			);
 		}
 		// nothing from a rejected update leaked into the settings
-		assert_eq!(bad.llm_mode, "local");
+		assert_eq!(bad.llm_mode, super::LlmMode::Local);
 		assert_eq!(bad.ext_llm_base_url, "");
 		// an empty base URL is fine (the endpoint is simply unused)
 		bad.apply_updates(&serde_json::json!({ "extLlmBaseUrl": "" }))

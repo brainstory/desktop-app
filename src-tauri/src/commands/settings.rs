@@ -159,10 +159,10 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 		let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
 		// camelCase to match the frontend's field access
 		Ok(serde_json::json!({
-			"llmMode": s.llm_mode,
+			"llmMode": s.llm_mode.as_str(),
 			"llmModel": s.llm_model,
 			"sttModel": s.stt_model,
-			"sttEngine": s.stt_engine,
+			"sttEngine": s.stt_engine.as_str(),
 			"sttLanguage": s.stt_language,
 			"hfTokenSet": hf_set,
 			"hfTokenHint": hf_hint,

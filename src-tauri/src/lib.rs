@@ -479,7 +479,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 					}
 				}
 			};
-			if settings.stt_engine == "apple" && !apple::speech_available() {
+			if settings.stt_engine == models::SpeechEngine::Apple && !apple::speech_available() {
 				// Explicit Apple on an unsupported system: degrade to
 				// whisper but say why, instead of silently ignoring it.
 				load_whisper(&state, &app);
@@ -492,8 +492,8 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				state.emit_stt_status(&app);
 			} else {
 				match settings.effective_stt_engine() {
-					"apple" => {
-						if settings.stt_engine == "auto" {
+					models::SpeechEngine::Apple => {
+						if settings.stt_engine == models::SpeechEngine::Auto {
 							// auto: keep a downloaded whisper model hot as
 							// the fallback behind the Apple engine.
 							load_whisper(&state, &app);
@@ -506,6 +506,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 							models::EngineStatus::new("ready", Some("apple-speech"), None);
 						state.emit_stt_status(&app);
 					}
+					// whisper (effective() never reports Auto)
 					_ => load_whisper(&state, &app),
 				}
 			}
