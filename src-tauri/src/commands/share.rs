@@ -16,6 +16,11 @@ use crate::AppState;
 const MAX_SHARE_FILE_BYTES: u64 = 10 * 1024 * 1024;
 /// Largest structured feedback document we will store.
 const MAX_STRUCTURED_BYTES: usize = 1024 * 1024;
+/// Longest title accepted from a share file (longer means the file is
+/// hostile, not chatty).
+const MAX_TITLE_CHARS: usize = 200;
+/// Longest result document accepted from a share file.
+const MAX_RESULT_BYTES: usize = 1024 * 1024;
 
 pub const SHARE_FORMAT: &str = "brainstory-share";
 pub const SHARE_VERSION: i64 = 1;
@@ -149,27 +154,40 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 	let payload = match kind {
 		"idea" => {
 			let idea = &root["idea"];
+			let title = idea["title"].as_str().unwrap_or("Imported idea");
+			let result = idea["result"].as_str().unwrap_or("");
+			let idea_type = idea["type"].as_str().unwrap_or("original");
+			validate_imported_fields(title, result)?;
+			if idea_type != "original" {
+				// A share file can claim any type string; only original
+				// ideas exist in exports, so anything else is a crafted
+				// file trying to smuggle e.g. "daily_intent" into the
+				// library.
+				return Err(format!(
+					"share files can only contain original ideas, not '{idea_type}'"
+				));
+			}
 			SharePayload::Idea {
 				share_id: idea["share_id"].as_str().unwrap_or("").to_string(),
-				title: idea["title"]
-					.as_str()
-					.unwrap_or("Imported idea")
-					.to_string(),
-				result: idea["result"].as_str().unwrap_or("").to_string(),
-				idea_type: idea["type"].as_str().unwrap_or("original").to_string(),
+				title: title.to_string(),
+				result: result.to_string(),
+				idea_type: idea_type.to_string(),
 				created_at: parse_created_at(idea["created_at"].as_str()),
 			}
 		}
 		"feedback" => {
 			let feedback = &root["feedback"];
+			let title = feedback["title"].as_str().unwrap_or("");
+			let result = feedback["result"].as_str().unwrap_or("");
+			validate_imported_fields(title, result)?;
 			SharePayload::Feedback {
 				target_share_id: feedback["target_share_id"]
 					.as_str()
 					.unwrap_or("")
 					.to_string(),
 				target_title: feedback["target_title"].as_str().unwrap_or("").to_string(),
-				title: feedback["title"].as_str().unwrap_or("").to_string(),
-				result: feedback["result"].as_str().unwrap_or("").to_string(),
+				title: title.to_string(),
+				result: result.to_string(),
 				// only objects are accepted as structured documents
 				structured_result: feedback["structured_result"]
 					.as_object()
@@ -180,6 +198,23 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 		other => return Err(format!("unknown share kind: {other}")),
 	};
 	Ok(ParsedShare { author, payload })
+}
+
+/// Titles and results from untrusted files are bounded independently of
+/// the file-size limit so they cannot flood the library UI.
+fn validate_imported_fields(title: &str, result: &str) -> Result<(), String> {
+	if title.chars().count() > MAX_TITLE_CHARS {
+		return Err(format!(
+			"share file title is too long (limit {MAX_TITLE_CHARS} characters)"
+		));
+	}
+	if result.len() > MAX_RESULT_BYTES {
+		return Err(format!(
+			"share file result is too large (limit {} bytes)",
+			MAX_RESULT_BYTES
+		));
+	}
+	Ok(())
 }
 
 /// Export an idea (or a feedback document) as a portable JSON file. The user
@@ -308,8 +343,17 @@ pub async fn import_share(
 	}
 
 	let raw = std::fs::read_to_string(&path).map_err(|e| format!("could not read file: {e}"))?;
-	let ParsedShare { author, payload } = parse_share_payload(&raw)?;
+	let parsed = parse_share_payload(&raw)?;
+	import_parsed(&state.db, parsed)
+}
 
+/// Everything after the file dialog: dedupe, attach and store. Split out
+/// of the command so the untrusted-file handling can be unit-tested
+/// without a native dialog.
+fn import_parsed(
+	db: &crate::db::Db,
+	ParsedShare { author, payload }: ParsedShare,
+) -> Result<serde_json::Value, String> {
 	match payload {
 		SharePayload::Idea {
 			share_id,
@@ -321,7 +365,7 @@ pub async fn import_share(
 			// Importing the same file twice should be a no-op, not a
 			// duplicate library entry with a colliding share id.
 			if !share_id.is_empty() {
-				if let Some(existing) = state.db.get_idea_by_share_id(&share_id) {
+				if let Some(existing) = db.get_idea_by_share_id(&share_id) {
 					return Ok(json!({
 						"cancelled": false,
 						"kind": "idea",
@@ -338,7 +382,9 @@ pub async fn import_share(
 			} else {
 				share_id
 			};
-			state.db.insert_idea(
+			// insert_imported_idea keeps the original timestamp but does
+			// not count the row as the importer's own activity.
+			db.insert_imported_idea(
 				&id,
 				&title,
 				&idea_type,
@@ -353,9 +399,14 @@ pub async fn import_share(
 				Some(&share_id),
 				created_at.as_deref(),
 			)?;
-			Ok(
-				json!({ "cancelled": false, "kind": "idea", "id": id, "title": title, "author": author }),
-			)
+			Ok(json!({
+				"cancelled": false,
+				"kind": "idea",
+				"duplicate": false,
+				"id": id,
+				"title": title,
+				"author": author
+			}))
 		}
 		SharePayload::Feedback {
 			target_share_id,
@@ -365,8 +416,7 @@ pub async fn import_share(
 			structured_result,
 			created_at,
 		} => {
-			let parent = state
-				.db
+			let parent = db
 				.get_idea_by_share_id(&target_share_id)
 				.or_else(|| {
 					// Fall back to a title match only when it is
@@ -376,8 +426,7 @@ pub async fn import_share(
 					if target_title.is_empty() {
 						return None;
 					}
-					let matches: Vec<_> = state
-						.db
+					let matches: Vec<_> = db
 						.list_ideas()
 						.unwrap_or_else(|e| {
 							log::error!("library read failed during feedback import: {e}");
@@ -402,7 +451,7 @@ pub async fn import_share(
 				title
 			};
 			// Same feedback file twice = no-op.
-			let duplicate = state.db.get_idea_children(&parent.id)?.iter().any(|child| {
+			let duplicate = db.get_idea_children(&parent.id)?.iter().any(|child| {
 				child.result.as_deref() == Some(result.as_str())
 					&& child.creator_name.as_deref() == Some(author.as_str())
 			});
@@ -422,7 +471,7 @@ pub async fn import_share(
 				}
 			}
 			let id = uuid::Uuid::new_v4().to_string();
-			state.db.insert_idea(
+			db.insert_imported_idea(
 				&id,
 				&title,
 				"feedback",
@@ -438,7 +487,7 @@ pub async fn import_share(
 				created_at.as_deref(),
 			)?;
 			// Imported feedback arrives unread so it surfaces in the UI.
-			state.db.set_idea_unread(&id, true)?;
+			db.set_idea_unread(&id, true)?;
 			Ok(json!({
 				"cancelled": false,
 				"kind": "feedback",
@@ -453,7 +502,130 @@ pub async fn import_share(
 
 #[cfg(test)]
 mod tests {
-	use super::{build_export_payload, parse_share_payload, ParsedShare, SharePayload};
+	use super::{
+		build_export_payload, import_parsed, parse_share_payload, ParsedShare, SharePayload,
+	};
+	use crate::db::Db;
+
+	fn temp_db(name: &str) -> Db {
+		let path = std::env::temp_dir().join(format!(
+			"brainstory-share-test-{name}-{}.db",
+			uuid::Uuid::new_v4()
+		));
+		let db = Db::open(&path).expect("open test db");
+		std::fs::remove_file(&path).ok();
+		db
+	}
+
+	fn idea_share(share_id: &str, title: &str) -> ParsedShare {
+		ParsedShare {
+			author: "Ada".into(),
+			payload: SharePayload::Idea {
+				share_id: share_id.into(),
+				title: title.into(),
+				result: "r".into(),
+				idea_type: "original".into(),
+				created_at: None,
+			},
+		}
+	}
+
+	fn feedback_share(target_share_id: &str, target_title: &str) -> ParsedShare {
+		ParsedShare {
+			author: "Grace".into(),
+			payload: SharePayload::Feedback {
+				target_share_id: target_share_id.into(),
+				target_title: target_title.into(),
+				title: "Feedback".into(),
+				result: "notes".into(),
+				structured_result: None,
+				created_at: None,
+			},
+		}
+	}
+
+	fn local_idea(db: &Db, id: &str, title: &str, share_id: Option<&str>) {
+		db.insert_idea(
+			id,
+			title,
+			"original",
+			"r",
+			None,
+			&[],
+			&serde_json::json!({}),
+			None,
+			None,
+			None,
+			None,
+			share_id,
+			None,
+		)
+		.expect("seed local idea");
+	}
+
+	#[test]
+	fn import_idea_twice_is_duplicate() {
+		let db = temp_db("dup");
+		let first = import_parsed(&db, idea_share("share-1", "My Idea")).expect("first import");
+		assert_eq!(first["duplicate"], false);
+		assert_eq!(first["kind"], "idea");
+		let second = import_parsed(&db, idea_share("share-1", "My Idea"))
+			.expect("second import is a no-op, not an error");
+		assert_eq!(second["duplicate"], true, "second import: {second}");
+		assert_eq!(second["id"], first["id"], "points at the existing row");
+		assert_eq!(db.list_ideas().expect("list").len(), 1);
+	}
+
+	#[test]
+	fn import_feedback_attaches_by_share_id_then_unambiguous_title_else_refuses() {
+		let db = temp_db("attach");
+		// nothing to attach to: clean refusal
+		let err = import_parsed(&db, feedback_share("ghost", "No Such"))
+			.expect_err("missing target must refuse");
+		assert!(err.contains("not in your library"), "unexpected: {err}");
+
+		// share id wins even when the title is wrong
+		local_idea(&db, "t1", "Real Title", Some("share-1"));
+		let by_id = import_parsed(&db, feedback_share("share-1", "Wrong Title"))
+			.expect("attach by share id");
+		assert_eq!(by_id["parent_id"], "t1");
+		assert_eq!(db.get_idea_children("t1").expect("children").len(), 1);
+
+		// no share id match + exactly one title match: attach by title
+		local_idea(&db, "t2", "Unique Title", None);
+		let by_title = import_parsed(&db, feedback_share("ghost", "Unique Title"))
+			.expect("attach by unambiguous title");
+		assert_eq!(by_title["parent_id"], "t2");
+
+		// no share id match + two title matches: refuse rather than guess
+		local_idea(&db, "t3", "Twin", None);
+		local_idea(&db, "t4", "Twin", None);
+		let err = import_parsed(&db, feedback_share("ghost", "Twin"))
+			.expect_err("ambiguous title match must refuse");
+		assert!(err.contains("not in your library"), "unexpected: {err}");
+	}
+
+	#[test]
+	fn import_rejects_oversized_title_and_bad_type() {
+		let long_title = "x".repeat(201);
+		let raw = json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "idea",
+			"idea": { "title": long_title }
+		}));
+		let err = parse_share_payload(&raw).expect_err("oversized title");
+		assert!(err.contains("title"), "unexpected: {err}");
+
+		let raw = json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "idea",
+			"idea": { "title": "T", "type": "daily_intent" }
+		}));
+		let err = parse_share_payload(&raw).expect_err("non-original idea type");
+		assert!(err.contains("original ideas"), "unexpected: {err}");
+	}
+
+	fn json_string(value: serde_json::Value) -> String {
+		serde_json::to_string(&value).unwrap()
+	}
 
 	fn roundtrip(payload: SharePayload, author: &str) -> ParsedShare {
 		let envelope = build_export_payload(author, &payload);

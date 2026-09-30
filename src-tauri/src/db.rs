@@ -410,11 +410,20 @@ impl Db {
 		creator_email: Option<&str>,
 		share_id: Option<&str>,
 		created_at: Option<&str>,
+		imported: bool,
 	) -> Result<(), String> {
 		let transcript_json = serde_json::to_string(transcript).unwrap_or_else(|_| "[]".into());
 		let structured_json = structured_result.map(|v| v.to_string());
 		let now = now_iso();
 		let created_at = created_at.unwrap_or(&now);
+		// Imported rows keep their original timestamp but never count as
+		// the importer's own activity: an empty local_date excludes them
+		// from the streak and has_activity_today queries.
+		let local_date = if imported {
+			String::new()
+		} else {
+			local_date_for(created_at)
+		};
 		conn.execute(
 			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at, local_date)
 			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14)",
@@ -432,7 +441,7 @@ impl Db {
 				creator_email,
 				share_id,
 				created_at,
-				local_date_for(created_at),
+				local_date,
 			],
 		)
 		.map_err(|e| format!("failed to save idea: {e}"))?;
@@ -459,6 +468,81 @@ impl Db {
 		creator_email: Option<&str>,
 		share_id: Option<&str>,
 		created_at: Option<&str>,
+	) -> Result<(), String> {
+		self.insert_idea_internal(
+			id,
+			title,
+			idea_type,
+			result,
+			structured_result,
+			transcript,
+			metadata,
+			parent_idea_id,
+			log_id,
+			creator_name,
+			creator_email,
+			share_id,
+			created_at,
+			false,
+		)
+	}
+
+	/// Insert an idea imported from a share file: like insert_idea, but
+	/// the row never counts toward the importer's own activity (its
+	/// local_date stays empty, excluding it from streak/has_activity
+	/// queries) because the activity happened on the author's machine.
+	#[allow(clippy::too_many_arguments)]
+	pub fn insert_imported_idea(
+		&self,
+		id: &str,
+		title: &str,
+		idea_type: &str,
+		result: &str,
+		structured_result: Option<&serde_json::Value>,
+		transcript: &[ChatMessage],
+		metadata: &serde_json::Value,
+		parent_idea_id: Option<&str>,
+		log_id: Option<&str>,
+		creator_name: Option<&str>,
+		creator_email: Option<&str>,
+		share_id: Option<&str>,
+		created_at: Option<&str>,
+	) -> Result<(), String> {
+		self.insert_idea_internal(
+			id,
+			title,
+			idea_type,
+			result,
+			structured_result,
+			transcript,
+			metadata,
+			parent_idea_id,
+			log_id,
+			creator_name,
+			creator_email,
+			share_id,
+			created_at,
+			true,
+		)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn insert_idea_internal(
+		&self,
+		id: &str,
+		title: &str,
+		idea_type: &str,
+		result: &str,
+		structured_result: Option<&serde_json::Value>,
+		transcript: &[ChatMessage],
+		metadata: &serde_json::Value,
+		parent_idea_id: Option<&str>,
+		log_id: Option<&str>,
+		creator_name: Option<&str>,
+		creator_email: Option<&str>,
+		share_id: Option<&str>,
+		created_at: Option<&str>,
+		imported: bool,
 	) -> Result<(), String> {
 		self.with_tx(|conn| {
 			if let Some(parent_id) = parent_idea_id {
@@ -488,6 +572,7 @@ impl Db {
 				creator_email,
 				share_id,
 				created_at,
+				imported,
 			)
 		})
 	}
@@ -521,6 +606,7 @@ impl Db {
 				None,
 				None,
 				None,
+				false,
 			)?;
 			conn.execute(
 				// A new intent for the day replaces the old one as a fresh
@@ -1001,6 +1087,54 @@ mod tests {
 		);
 		assert_eq!(status.survey_id.as_deref(), Some("s1"));
 		assert_eq!(status.streak, 1, "the survey still counts as activity");
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn imported_ideas_do_not_count_toward_activity() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let yesterday = (Utc::now().naive_utc() - chrono::Duration::days(1))
+			.format("%Y-%m-%dT%H:%M:%S")
+			.to_string();
+		// an imported idea dated yesterday must not feed the streak: the
+		// activity happened on the author's machine, not here
+		db.insert_imported_idea(
+			"imp",
+			"Imported",
+			"original",
+			"r",
+			None,
+			&[],
+			&serde_json::json!({ "imported": true }),
+			None,
+			None,
+			Some("Ada"),
+			None,
+			None,
+			Some(&yesterday),
+		)
+		.expect("insert imported");
+		assert_eq!(db.get_daily_status().streak, 0, "import must not count");
+		assert!(!db.has_activity_today());
+		// a local idea dated today still counts normally
+		db.insert_idea(
+			"mine",
+			"Mine",
+			"original",
+			"r",
+			None,
+			&[],
+			&serde_json::json!({}),
+			None,
+			None,
+			None,
+			None,
+			None,
+			None,
+		)
+		.expect("insert local");
+		assert!(db.has_activity_today());
 		std::fs::remove_file(path).ok();
 	}
 
