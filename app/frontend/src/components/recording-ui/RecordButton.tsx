@@ -4,7 +4,7 @@ import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
 import { ICON } from "./RecordIcons";
 import { transcribeApi } from "@helpers/api/ai";
-import { normalizeApiError } from "@helpers/helpers";
+import { callApiWithRetry, normalizeApiError } from "@helpers/helpers";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 
 interface RecordButtonProps {
@@ -177,12 +177,18 @@ function RecordButton({
 		setWarningType("error");
 	}
 
-	function generateTranscript(blobby: Blob, retriesLeft = 1): void {
+	function generateTranscript(blobby: Blob): void {
 		setIsTranscribing(true);
 
-		const apiCall = transcribeApi;
+		// Transient transport hiccups deserve one retry; configuration
+		// problems ("no model downloaded") never fix themselves, so retrying
+		// just doubles the wait before the real error shows.
+		const isTransient = (error: unknown): boolean => {
+			const message = normalizeApiError(error);
+			return !message.includes("not downloaded yet");
+		};
 
-		apiCall(blobby)
+		callApiWithRetry(() => transcribeApi(blobby), 1, isTransient)
 			.then((transcript) => {
 				onTranscript(transcript);
 				setIsTranscribing(false);
@@ -191,15 +197,7 @@ function RecordButton({
 				// the parent sets only after the user message is appended.
 			})
 			.catch((error) => {
-				if (retriesLeft >= 1) {
-					retriesLeft--;
-					setTimeout(() => {
-						console.log("Error in API, retrying once");
-						generateTranscript(blobby, retriesLeft);
-					}, 500);
-				} else {
-					handleError(error);
-				}
+				handleError(error);
 			});
 	}
 

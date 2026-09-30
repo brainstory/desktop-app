@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@src/types";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { CONVERSATION_STATE } from "../../const";
 import RecordButton from "./RecordButton";
 
@@ -51,6 +51,9 @@ const AudioRecorder = ({
 	// Timer
 	useTimer(isRunning, setTime);
 
+	// stable identity: RecordButton keeps this in effect dependencies
+	const resetTimer = useCallback(() => setTime(0), []);
+
 	useEffect(() => {
 		if (isRunning) {
 			startRecordingCallback?.();
@@ -81,7 +84,7 @@ const AudioRecorder = ({
 					onTranscript={onTranscript}
 					getCoachResponse={getCoachResponse}
 					time={time}
-					resetTimer={() => setTime(0)}
+					resetTimer={resetTimer}
 				/>
 			</div>
 		</div>

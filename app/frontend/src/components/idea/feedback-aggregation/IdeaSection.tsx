@@ -1,7 +1,8 @@
 import type { ResultSection, FeedbackComment, IdeaFeedbackItem } from "@src/types";
 import IdeaDocument from "@components/idea/feedback-aggregation/IdeaDocument";
 import IdeaSidebar from "@components/idea/feedback-aggregation/IdeaSidebar";
-import { useState, useRef } from "react";
+import { useState } from "react";
+import { useTimeout } from "@src/hooks/useTimeout";
 
 interface IdeaSectionProps {
 	resultSections: ResultSection[];
@@ -20,33 +21,19 @@ export default function IdeaSection({
 	type FocusedFeedback = FeedbackComment & { ideaId: string };
 	const [focusedFeedback, setFocusedFeedback] = useState<FocusedFeedback | null>(null);
 	const [focusedSection, setFocusedSection] = useState<string | number | null>(null);
-	const focusFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const focusSectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [scheduleFeedbackReset] = useTimeout();
+	const [scheduleSectionReset] = useTimeout();
 
 	function onDocumentReactionClick(reaction: FocusedFeedback): void {
-		if (focusFeedbackTimeoutRef.current) {
-			clearTimeout(focusFeedbackTimeoutRef.current);
-		}
-
 		setFocusedFeedback(reaction);
-
-		// Set a timeout to reset focusedSection to null after 3 seconds
-		focusFeedbackTimeoutRef.current = setTimeout(() => {
-			setFocusedFeedback(null);
-		}, 3000);
+		// reset the highlight after 3 seconds (the timer dies with the section)
+		scheduleFeedbackReset(() => setFocusedFeedback(null), 3000);
 	}
 
 	function onFeedbackClick(feedback: { hid: string | number }): void {
-		if (focusSectionTimeoutRef.current) {
-			clearTimeout(focusSectionTimeoutRef.current);
-		}
-
 		setFocusedSection(feedback.hid);
-
-		// Set a timeout to reset focusedSection to null after 3 seconds
-		focusSectionTimeoutRef.current = setTimeout(() => {
-			setFocusedSection(null);
-		}, 3000);
+		// reset the section highlight after 3 seconds
+		scheduleSectionReset(() => setFocusedSection(null), 3000);
 	}
 
 	return (

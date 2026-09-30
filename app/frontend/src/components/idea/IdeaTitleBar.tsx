@@ -2,6 +2,7 @@ import type { IdeaDetail } from "@src/types";
 import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
 import { exportIdeaApi } from "@helpers/api/share";
+import { useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
 import { Snackbar } from "@ds/Snackbar";
@@ -23,7 +24,8 @@ export default function IdeaTitleBar({
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState("Error: Title field is empty");
 	const [exportState, setExportState] = useState<string | null>(null);
-	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const { isConfirming: confirmingDelete, confirm: confirmDelete } = useConfirmClick();
+	const [scheduleExportReset] = useTimeout();
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedTitle, setEditedTitle] = useState(idea.title);
 	const textarea = useRef<HTMLHeadingElement | null>(null);
@@ -74,23 +76,18 @@ export default function IdeaTitleBar({
 					setExportState(null);
 				} else {
 					setExportState("done");
-					setTimeout(() => setExportState(null), 4000);
+					scheduleExportReset(() => setExportState(null), 4000);
 				}
 			})
 			.catch((err) => {
 				console.log("export failed", err);
 				setExportState("error");
-				setTimeout(() => setExportState(null), 4000);
+				scheduleExportReset(() => setExportState(null), 4000);
 			});
 	};
 
 	const handleDelete = () => {
-		if (!confirmingDelete) {
-			setConfirmingDelete(true);
-			// require a fresh confirmation click; reset if they wander off
-			setTimeout(() => setConfirmingDelete(false), 5000);
-			return;
-		}
+		if (!confirmDelete()) return;
 		deleteIdeaApi(idea.id)
 			.then(() => {
 				window.location.href = "/dashboard";
@@ -99,7 +96,6 @@ export default function IdeaTitleBar({
 				console.log("delete failed", err);
 				setSnackbarErrorMessage("Error: Could not delete this idea");
 				setSnackbarErrorOpen(true);
-				setConfirmingDelete(false);
 			});
 	};
 

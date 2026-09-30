@@ -63,7 +63,10 @@ export function isModerationError(message: unknown): boolean {
 
 export async function callApiWithRetry<T>(
 	apiCall: () => Promise<T>,
-	retriesLeft = 1
+	retriesLeft = 1,
+	/** Decide whether an error is worth retrying; defaults to always
+	 * (except moderation errors, which never retry). */
+	shouldRetry: (error: unknown) => boolean = () => true
 ): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		apiCall()
@@ -71,13 +74,16 @@ export async function callApiWithRetry<T>(
 				resolve(message);
 			})
 			.catch((error: unknown) => {
-				if (isModerationError(error)) {
+				if (isModerationError(error) || !shouldRetry(error)) {
 					reject(error);
 					return;
 				}
 				if (retriesLeft >= 1) {
 					setTimeout(() => {
-						callApiWithRetry(apiCall, retriesLeft - 1).then(resolve, reject);
+						callApiWithRetry(apiCall, retriesLeft - 1, shouldRetry).then(
+							resolve,
+							reject
+						);
 					}, 500);
 				} else {
 					reject(error);

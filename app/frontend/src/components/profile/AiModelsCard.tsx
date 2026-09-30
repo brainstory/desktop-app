@@ -3,6 +3,7 @@ import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
 import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
+import { useTimeout } from "@src/hooks/useTimeout";
 import { useState } from "react";
 import { useEffect } from "react";
 
@@ -72,6 +73,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
 	/** model id awaiting a second "really delete?" click */
 	const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+	const [scheduleDeleteReset] = useTimeout();
 
 	const refresh = () => {
 		listModelsApi()
@@ -209,14 +211,15 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		const isDownloading = downloadProgress[model.id] !== undefined;
 		const isConfirmingDelete = confirmingDeleteId === model.id;
 		const handleDeleteClick = (): void => {
-			if (!isConfirmingDelete) {
-				setConfirmingDeleteId(model.id);
-				// require a fresh confirmation click; reset if they wander off
-				setTimeout(() => {
-					setConfirmingDeleteId((current) => (current === model.id ? null : current));
-				}, 5000);
-				return;
-			}
+		if (!isConfirmingDelete) {
+			setConfirmingDeleteId(model.id);
+			// require a fresh confirmation click; reset if they wander off
+			// (the timer never outlives this card)
+			scheduleDeleteReset(() => {
+				setConfirmingDeleteId((current) => (current === model.id ? null : current));
+			}, 5000);
+			return;
+		}
 			setConfirmingDeleteId(null);
 			deleteModelApi(model.id)
 				.then(refresh)

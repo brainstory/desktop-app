@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export const SUCCESS_COPY = {
 	DEFAULT: "Success!",
@@ -20,12 +20,18 @@ interface SnackbarProps {
 }
 
 export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
-	// Auto-dismiss in an effect (never during render), and a dismissal
-	// timer always belongs to exactly one mounted snackbar.
+	// Parents pass inline onClose arrows (new identity every render);
+	// read it through a ref so the auto-dismiss timer is keyed on the
+	// message only - a parent re-render must not restart the countdown.
+	const onCloseRef = useRef(onClose);
 	useEffect(() => {
-		const timer = setTimeout(onClose, AUTO_DISMISS_MS);
-		return () => clearTimeout(timer);
+		onCloseRef.current = onClose;
 	}, [onClose]);
+
+	useEffect(() => {
+		const timer = setTimeout(() => onCloseRef.current(), AUTO_DISMISS_MS);
+		return () => clearTimeout(timer);
+	}, [message]);
 
 	const style = isSuccess
 		? "bg-green-600 z-50 fixed top-4 left-1/2 -translate-x-1/2 mt-0 p-4 pr-12 rounded-md shadow-lg text-center max-w-[90vw]"

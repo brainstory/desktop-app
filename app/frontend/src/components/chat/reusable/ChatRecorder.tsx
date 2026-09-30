@@ -3,6 +3,7 @@ import { addConversationMessage } from "@helpers/chat";
 import AudioRecorder from "@components/recording-ui/AudioRecorder";
 import type { ChatMessage } from "@src/types";
 import type { Dispatch, SetStateAction } from "react";
+import { useCallback } from "react";
 
 /**
  * PLEASE: state var conversationState setting logic should only be in this component!
@@ -35,6 +36,46 @@ export default function ChatRecorder({
 	// is true it stays true.
 	const forceFinish = currConversation.length > 100;
 
+	// Stable identities: AudioRecorder/RecordButton keep these in effect
+	// dependencies, and inline arrows would re-run the effects on every
+	// render of this section.
+	const handleStartRecording = useCallback(() => {
+		setSaveState(CHAT_SAVE_STATE.WAITING);
+	}, [setSaveState]);
+
+	const handleIsTranscribing = useCallback(
+		(isTranscribing: boolean) => {
+			if (isTranscribing) {
+				setConversationState(CONVERSATION_STATE.TranscribingUser);
+			} else {
+				// transcription failed - release the UI back to idle
+				setConversationState(CONVERSATION_STATE.Idle);
+			}
+		},
+		[setConversationState]
+	);
+
+	const handleTranscript = useCallback(
+		async (userMessage: string) => {
+			const isUser = true;
+			// only after the user message is actually appended does
+			// sending become safe (the coach must see it); the SAVING
+			// save-state is owned by ChatSection's autosave effect
+			await addConversationMessage(
+				userMessage,
+				isUser,
+				currConversation,
+				setCurrConversation
+			);
+			setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
+		},
+		[currConversation, setCurrConversation, setConversationState]
+	);
+
+	const handleCoachResponse = useCallback(async () => {
+		await handleGetResponse();
+	}, [handleGetResponse]);
+
 	return (
 		<section
 			className={`w-full ${
@@ -46,29 +87,10 @@ export default function ChatRecorder({
 				isDisabled={forceFinish}
 				conversationState={conversationState}
 				currConversation={currConversation}
-				setIsTranscribing={(isTranscribing) => {
-					if (isTranscribing) {
-						setConversationState(CONVERSATION_STATE.TranscribingUser);
-					} else {
-						// transcription failed - release the UI back to idle
-						setConversationState(CONVERSATION_STATE.Idle);
-					}
-				}}
-			onTranscript={async (userMessage: string) => {
-				const isUser = true;
-				// only after the user message is actually appended does
-				// sending become safe (the coach must see it); the SAVING
-				// save-state is owned by ChatSection's autosave effect
-				await addConversationMessage(
-					userMessage,
-					isUser,
-					currConversation,
-					setCurrConversation
-				);
-				setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
-			}}
-				getCoachResponse={async () => await handleGetResponse()}
-				startRecordingCallback={() => setSaveState(CHAT_SAVE_STATE.WAITING)}
+				setIsTranscribing={handleIsTranscribing}
+				onTranscript={handleTranscript}
+				getCoachResponse={handleCoachResponse}
+				startRecordingCallback={handleStartRecording}
 			/>
 		</section>
 	);

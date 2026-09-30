@@ -1,6 +1,6 @@
-import { useState } from "react";
 import { formatISO8601ToHumanReadable } from "../../helpers/helpers";
 import { deleteIdeaApi } from "@helpers/api/idea";
+import { useConfirmClick } from "@src/hooks/useTimeout";
 
 interface DraftIdeaCardProps {
 	id: string;
@@ -10,14 +10,10 @@ interface DraftIdeaCardProps {
 
 export default function DraftIdeaCard({ id, createdAt, draftSummary }: DraftIdeaCardProps) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
-	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const { isConfirming: confirmingDelete, confirm } = useConfirmClick();
 
 	const handleDelete = (): void => {
-		if (!confirmingDelete) {
-			setConfirmingDelete(true);
-			setTimeout(() => setConfirmingDelete(false), 5000);
-			return;
-		}
+		if (!confirm()) return;
 		deleteIdeaApi(id)
 			.then(() => window.location.reload())
 			.catch((err) => console.log("delete failed", err));
