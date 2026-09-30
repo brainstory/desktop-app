@@ -27,8 +27,10 @@ export default function IdeaTitleBar({
 	const { isConfirming: confirmingDelete, confirm: confirmDelete } = useConfirmClick();
 	const [scheduleExportReset] = useTimeout();
 	const [isEditing, setIsEditing] = useState(false);
-	const [editedTitle, setEditedTitle] = useState(idea.title);
-	const textarea = useRef<HTMLHeadingElement | null>(null);
+	const [editedTitle, setEditedTitle] = useState(idea.title ?? "");
+	// the in-progress value while editing; discarded on Escape
+	const [draftTitle, setDraftTitle] = useState(idea.title ?? "");
+	const inputRef = useRef<HTMLInputElement | null>(null);
 
 	let createdByText = "You";
 	if (idea.creatorName) {
@@ -36,35 +38,53 @@ export default function IdeaTitleBar({
 	}
 
 	const startEditing = (): void => {
+		setDraftTitle(editedTitle);
 		setIsEditing(true);
-		textarea.current?.focus();
-	};
-
-	const finishEditing = (): void => {
-		const strippedTitle = (textarea.current?.innerText ?? "").replace(/\n/g, "").trim();
-		if (strippedTitle.length === 0) {
-			setSnackbarErrorOpen(true);
-		} else {
-			setEditedTitle(strippedTitle);
-			updateIdeaTitleApi(idea.id, strippedTitle).catch((err) => {
-				console.log("rename failed", err);
-				setSnackbarErrorMessage("Error: Could not save the new title");
-				setSnackbarErrorOpen(true);
-			});
-		}
-
-		setIsEditing(false);
 	};
 
 	useEffect(() => {
-		if (isEditing && textarea.current) {
-			textarea.current.focus();
+		if (isEditing) {
+			inputRef.current?.focus();
+			inputRef.current?.select();
 		}
 	}, [isEditing]);
 
-	const handleKeyDown = (e: React.KeyboardEvent): void => {
+	const finishEditing = (): void => {
+		const trimmed = draftTitle.trim();
+		if (trimmed.length === 0) {
+			setSnackbarErrorMessage("Error: Title field is empty");
+			setSnackbarErrorOpen(true);
+			setIsEditing(false);
+			return;
+		}
+		if (trimmed === editedTitle) {
+			setIsEditing(false);
+			return;
+		}
+		const previous = editedTitle;
+		// optimistic: reverted if the save fails
+		setEditedTitle(trimmed);
+		setIsEditing(false);
+		updateIdeaTitleApi(idea.id, trimmed).catch((err) => {
+			console.error("rename failed", err);
+			setEditedTitle(previous);
+			setSnackbarErrorMessage("Error: Could not save the new title");
+			setSnackbarErrorOpen(true);
+		});
+	};
+
+	const cancelEditing = (): void => {
+		// Escape: discard the draft, keep the saved title
+		setIsEditing(false);
+	};
+
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
 		if (e.key === "Enter") {
+			e.preventDefault();
 			finishEditing();
+		} else if (e.key === "Escape") {
+			e.preventDefault();
+			cancelEditing();
 		}
 	};
 
@@ -195,43 +215,31 @@ export default function IdeaTitleBar({
 									</button>
 								</div>
 							)}
-							{isEditing && (
-								<div className="flex flex-row">
-									<h1
-										tabIndex={0}
-										ref={textarea}
-										role="textbox"
-										contentEditable="true"
-										onKeyDown={handleKeyDown}
-										onFocus={() => {
-											// set cursor to end when focused
-											if (!textarea.current) return;
-											const range = document.createRange();
-											const sel = window.getSelection();
-											range.selectNodeContents(textarea.current);
-											range.collapse(false);
-											sel?.removeAllRanges();
-											sel?.addRange(range);
-										}}
-										autoFocus
-										className={`md:mr-4 resize-none border-none bg-transparent outline-none focus:ring-0`}
-									>
-										{editedTitle}
-									</h1>
+						{isEditing && (
+							<div className="flex flex-row">
+								<input
+									ref={inputRef}
+									aria-label="Idea title"
+									value={draftTitle}
+									onChange={(e) => setDraftTitle(e.target.value)}
+									onKeyDown={handleKeyDown}
+									onBlur={finishEditing}
+									className="md:mr-4 w-full max-w-xl text-inherit border-b border-stone-300 bg-transparent outline-none focus:border-pink-400"
+								/>
 
-									<button
-										onClick={finishEditing}
-										className="disabled:text-stone-400 hover:bg-stone-200 p-1 leading-none rounded-full"
-										aria-label="Finish editing"
-									>
-										<ion-icon
-											class="w-4 h-4 hydrated pointer-events-none"
-											name="checkmark-outline"
-											role="img"
-										></ion-icon>
-									</button>
-								</div>
-							)}
+								<button
+									onClick={finishEditing}
+									className="disabled:text-stone-400 hover:bg-stone-200 p-1 leading-none rounded-full"
+									aria-label="Finish editing"
+								>
+									<ion-icon
+										class="w-4 h-4 hydrated pointer-events-none"
+										name="checkmark-outline"
+										role="img"
+									></ion-icon>
+								</button>
+							</div>
+						)}
 						</div>
 						<h2 className="text-sm tracking-tight text-stone-500 mt-1">
 							Created by {createdByText}
