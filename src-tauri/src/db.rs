@@ -637,6 +637,18 @@ impl Db {
 		structured_result: Option<&serde_json::Value>,
 	) -> Result<(), String> {
 		self.with_tx(|conn| {
+			// Existence enforced inside the transaction: the check and the
+			// update can no longer be split by a concurrent delete.
+			let exists: i64 = conn
+				.query_row(
+					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+					params![id],
+					|row| row.get(0),
+				)
+				.map_err(|e| format!("failed to read idea {id}: {e}"))?;
+			if exists == 0 {
+				return Err(format!("idea {id} not found"));
+			}
 			if let Some(t) = title {
 				conn.execute("UPDATE ideas SET title = ?1 WHERE id = ?2", params![t, id])
 					.map_err(|e| format!("failed to save title: {e}"))?;
@@ -1087,6 +1099,17 @@ mod tests {
 		);
 		assert_eq!(status.survey_id.as_deref(), Some("s1"));
 		assert_eq!(status.streak, 1, "the survey still counts as activity");
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn update_idea_reports_missing_ideas() {
+		let path = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let err = db
+			.update_idea("ghost", Some("t"), None, None, None)
+			.expect_err("updating a missing idea must fail");
+		assert!(err.contains("not found"), "unexpected error: {err}");
 		std::fs::remove_file(path).ok();
 	}
 

@@ -114,12 +114,10 @@ pub async fn update_idea(
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	structured_result: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-	// One lightweight read for both the existence check and the derived
-	// title, instead of parsing the whole transcript twice.
+	// One lightweight read for the derived title, instead of parsing the
+	// whole transcript; not-found is enforced inside the update
+	// transaction (a concurrent delete can no longer slip past the check).
 	let existing_title = state.db.get_idea_title(&id)?;
-	if existing_title.is_none() {
-		return Err(format!("idea {id} not found"));
-	}
 	let mut derived_title = title;
 	if derived_title.is_none() {
 		if let Some(r) = &result {
