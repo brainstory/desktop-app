@@ -861,17 +861,40 @@ pub async fn download_model_file(
 	use sha2::{Digest, Sha256};
 
 	let tmp = part_path(dest);
-	if tmp.exists() {
-		tokio::fs::remove_file(&tmp)
-			.await
-			.map_err(|e| e.to_string())?;
-	}
 
 	let client = reqwest::Client::builder()
 		.connect_timeout(std::time::Duration::from_secs(15))
 		.build()
 		.map_err(|e| e.to_string())?;
+
+	// Resume support: a leftover .part from a quit mid-download can be
+	// continued with a Range request instead of restarting multi-GB from
+	// zero. The existing bytes are hashed while streaming them from disk,
+	// so the final sha256 check still covers the whole file.
+	let mut hasher = (!expected_sha256.is_empty()).then(Sha256::new);
+	let mut downloaded: u64 = 0;
+	let mut resume_from: u64 = 0;
+	if let Ok(meta) = std::fs::metadata(&tmp) {
+		resume_from = meta.len();
+		// Only resume when the prefix can still matter: a .part larger
+		// than the expected file is junk from a different state.
+		if expected_size > 0 && resume_from >= expected_size {
+			tokio::fs::remove_file(&tmp)
+				.await
+				.map_err(|e| e.to_string())?;
+			resume_from = 0;
+		}
+	} else if tmp.exists() {
+		// exists but unreadable metadata: start over
+		tokio::fs::remove_file(&tmp)
+			.await
+			.map_err(|e| e.to_string())?;
+	}
+
 	let mut request = client.get(url).header("User-Agent", USER_AGENT);
+	if resume_from > 0 {
+		request = request.header("Range", format!("bytes={resume_from}-"));
+	}
 	if !hf_token.is_empty() {
 		request = request.bearer_auth(hf_token);
 	}
@@ -891,7 +914,44 @@ pub async fn download_model_file(
 		return Err(format!("download failed with status {}", response.status()));
 	}
 
-	let total = response.content_length().unwrap_or(0);
+	// A server that ignores Range answers 200 with the full body; the
+	// stale .part cannot be stitched onto it, so restart from zero.
+	let resumed = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+	if resume_from > 0 && !resumed {
+		tokio::fs::remove_file(&tmp)
+			.await
+			.map_err(|e| e.to_string())?;
+		resume_from = 0;
+		hasher = (!expected_sha256.is_empty()).then(Sha256::new);
+	}
+
+	// Hash the resumed prefix from disk so the integrity check still
+	// covers the complete file, and pre-seed the byte counter.
+	if resumed {
+		if let Some(h) = hasher.as_mut() {
+			let mut file = tokio::fs::File::open(&tmp)
+				.await
+				.map_err(|e| e.to_string())?;
+			use tokio::io::AsyncReadExt;
+			let mut buf = vec![0u8; 1024 * 1024];
+			loop {
+				let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
+				if n == 0 {
+					break;
+				}
+				h.update(&buf[..n]);
+			}
+		}
+		downloaded = resume_from;
+		log::info!("resuming download at {resume_from} of {expected_size} bytes");
+	} else if resume_from == 0 && tmp.exists() {
+		// fresh download: the staging file must be empty/new
+		tokio::fs::remove_file(&tmp)
+			.await
+			.map_err(|e| e.to_string())?;
+	}
+
+	let total = response.content_length().unwrap_or(0) + resume_from;
 	// Fail fast when the advertised length already contradicts the spec:
 	// streaming multi-GB only to reject it at the end wastes the transfer.
 	if total > 0 && expected_size > 0 && total != expected_size {
@@ -901,19 +961,25 @@ pub async fn download_model_file(
 	}
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
-	let mut file = tokio::fs::File::create(&tmp)
-		.await
-		.map_err(|e| e.to_string())?;
+	let mut file = if resumed {
+		tokio::fs::OpenOptions::new()
+			.append(true)
+			.open(&tmp)
+			.await
+			.map_err(|e| e.to_string())?
+	} else {
+		tokio::fs::File::create(&tmp)
+			.await
+			.map_err(|e| e.to_string())?
+	};
 	use tokio::io::AsyncWriteExt;
-	// Hash chunks as they are written so verification costs no extra pass
-	// over a multi-gigabyte file.
-	let mut hasher = (!expected_sha256.is_empty()).then(Sha256::new);
 
 	// Every failure path below removes the partial file, so a retry starts
 	// clean instead of leaving gigabytes of junk behind.
 	let outcome = async {
-		let mut downloaded: u64 = 0;
-		let mut last_report: u64 = 0;
+		// `downloaded` comes from the outer scope: it is pre-seeded with
+		// the resumed prefix so totals and progress include it.
+		let mut last_report: u64 = downloaded;
 		const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 		loop {
 			if cancel.load(Ordering::Relaxed) {
@@ -1529,5 +1595,144 @@ mod settings_cache_tests {
 		updated.llm_model = "gemma-4-E4B".into();
 		state.save_ai_settings(&updated).expect("save");
 		assert_eq!(state.ai_settings().llm_model, "gemma-4-E4B");
+	}
+}
+
+#[cfg(test)]
+mod resume_tests {
+	use super::{download_model_file, part_path};
+	use sha2::{Digest, Sha256};
+	use std::io::{Read, Write};
+	use std::sync::atomic::AtomicBool;
+	use std::sync::Arc;
+
+	fn sha256_hex(bytes: &[u8]) -> String {
+		Sha256::digest(bytes)
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect()
+	}
+
+	/// Serve the body honoring a Range request (like HuggingFace does).
+	fn serve_ranged(
+		body: Vec<u8>,
+		saw_range: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+	) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let range = request
+					.lines()
+					.find(|l| l.to_lowercase().starts_with("range:"))
+					.map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string());
+				*saw_range.lock().unwrap() = range.clone();
+				let (status, slice): (&str, &[u8]) = match range
+					.as_deref()
+					.and_then(|r| r.strip_prefix("bytes=").and_then(|r| r.split('-').next()))
+					.and_then(|start| start.parse::<usize>().ok())
+				{
+					Some(start) if start < body.len() => ("206 Partial Content", &body[start..]),
+					Some(_) => ("416 Range Not Satisfiable", &[]),
+					None => ("200 OK", &body),
+				};
+				let head = format!(
+					"HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\r\n",
+					slice.len()
+				);
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(slice);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	#[tokio::test]
+	async fn resumes_a_partial_file_with_a_range_request() {
+		let body = vec![7u8; 3000];
+		let digest = sha256_hex(&body);
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let url = serve_ranged(body.clone(), saw_range.clone());
+		let dest = part_path(
+			&std::env::temp_dir().join(format!("brainstory-resume-{}.bin", uuid::Uuid::new_v4())),
+		)
+		.with_file_name(format!("brainstory-resume-{}.bin", uuid::Uuid::new_v4()));
+		let tmp = part_path(&dest);
+
+		// a stalled download left the first 1000 bytes staged
+		std::fs::write(&tmp, &body[..1000]).expect("stage prefix");
+
+		let cancel = Arc::new(AtomicBool::new(false));
+		download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&digest,
+			"",
+			&cancel,
+			&mut |p| {
+				assert!(p >= 0.0, "progress stays valid on resume");
+			},
+		)
+		.await
+		.expect("resumed download");
+
+		assert_eq!(
+			saw_range.lock().unwrap().as_deref(),
+			Some("bytes=1000-"),
+			"Range header sent for the staged prefix"
+		);
+		assert_eq!(
+			std::fs::read(&dest).unwrap(),
+			body,
+			"file assembled correctly"
+		);
+		let _ = std::fs::remove_file(&dest);
+	}
+
+	#[tokio::test]
+	async fn restarts_when_the_server_ignores_range() {
+		let body = vec![9u8; 1500];
+		let digest = sha256_hex(&body);
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let url = serve_ranged(body.clone(), saw_range.clone());
+		let dest = std::env::temp_dir().join(format!(
+			"brainstory-resume-ign-{}.bin",
+			uuid::Uuid::new_v4()
+		));
+
+		// stale prefix from a DIFFERENT transfer must not be stitched on
+		std::fs::write(part_path(&dest), b"garbage prefix").expect("stage junk");
+
+		let cancel = Arc::new(AtomicBool::new(false));
+		// The server here honors Range, so make the junk prefix longer
+		// than the body: the resume is refused and the download restarts.
+		std::fs::write(part_path(&dest), vec![0u8; 2000]).expect("stage oversized junk");
+		download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&digest,
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect("clean restart");
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+		let _ = std::fs::remove_file(&dest);
 	}
 }
