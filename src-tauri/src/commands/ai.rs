@@ -115,141 +115,126 @@ pub async fn transcribe(
 	Ok(serde_json::json!({ "transcript": transcript }))
 }
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn generate_response(
-	state: State<'_, AppState>,
-	messages: Vec<ChatMessage>,
-	summarize: Option<bool>,
-	chat_type: Option<String>,
-	react_to: Option<String>,
-	react_to_author: Option<String>,
-	react_to_is_current_user: Option<bool>,
-	structured_feedback: Option<bool>,
-) -> Result<serde_json::Value, String> {
-	let mut request = PromptRequest {
-		chat_type: ChatType::parse(chat_type.as_deref()),
-		messages,
-		summarize: summarize.unwrap_or(false),
-		react_to,
-		react_to_author,
-		react_to_is_current_user: react_to_is_current_user.unwrap_or(false),
-		structured_feedback: structured_feedback.unwrap_or(false),
-	};
-	// A react_to payload implies the feedback flow even if the frontend
-	// didn't label the chat type.
-	if request.react_to.is_some() && request.chat_type == ChatType::Original {
-		request.chat_type = ChatType::Feedback;
-	}
-	let system = request.system_prompt();
-	let user_messages = request.user_messages();
-	let word_count: usize = user_messages
-		.iter()
-		.map(|m| m.content.split_whitespace().count())
-		.sum();
-	let cancel = take_cancel_token(&state);
-	let settings = AiSettings::load(&state.db);
-
-	let (output, prompt_tokens) = run_generation(
-		&state,
-		&settings,
-		system,
-		&user_messages,
-		request.summarize,
-		cancel,
-		|_| {},
-	)
-	.await?;
-
-	// If a structured result was requested, try to extract the JSON document.
-	let mut structured = None;
-	if request.summarize && request.structured_feedback {
-		structured = extract_feedback_json(&output);
-	}
-
-	Ok(serde_json::json!({
-		"response": output,
-		"request_message_tokens": prompt_tokens,
-		"request_word_count": word_count,
-		"structured_result": structured,
-	}))
+/// The fields every generation command shares, resolved from the same
+/// positional Tauri args, plus the per-command streaming plumbing.
+/// Which stream event the sink is being asked to emit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitKind {
+	Status,
+	Chunk,
+	Cumulative,
 }
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn generate_streaming_response(
-	state: State<'_, AppState>,
+impl EmitKind {
+	fn as_str(self) -> &'static str {
+		match self {
+			EmitKind::Status => "status",
+			EmitKind::Chunk => "chunk",
+			EmitKind::Cumulative => "cumulative",
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+struct GenerateParams {
 	messages: Vec<ChatMessage>,
-	summarize: Option<bool>,
+	summarize: bool,
 	chat_type: Option<String>,
 	react_to: Option<String>,
 	react_to_author: Option<String>,
-	react_to_is_current_user: Option<bool>,
-	structured_feedback: Option<bool>,
-	on_event: tauri::ipc::Channel<StreamEvent>,
-) -> Result<serde_json::Value, String> {
-	let mut request = PromptRequest {
-		chat_type: ChatType::parse(chat_type.as_deref()),
-		messages,
-		summarize: summarize.unwrap_or(false),
-		react_to,
-		react_to_author,
-		react_to_is_current_user: react_to_is_current_user.unwrap_or(false),
-		structured_feedback: structured_feedback.unwrap_or(false),
-	};
-	// A react_to payload implies the feedback flow even if the frontend
-	// didn't label the chat type.
-	if request.react_to.is_some() && request.chat_type == ChatType::Original {
-		request.chat_type = ChatType::Feedback;
+	react_to_is_current_user: bool,
+	structured_feedback: bool,
+}
+
+impl GenerateParams {
+	/// Resolve the prompt request; a react_to payload implies the
+	/// feedback flow even if the frontend didn't label the chat type.
+	fn into_request(self) -> PromptRequest {
+		let mut request = PromptRequest {
+			chat_type: ChatType::parse(self.chat_type.as_deref()),
+			messages: self.messages,
+			summarize: self.summarize,
+			react_to: self.react_to,
+			react_to_author: self.react_to_author,
+			react_to_is_current_user: self.react_to_is_current_user,
+			structured_feedback: self.structured_feedback,
+		};
+		if request.react_to.is_some() && request.chat_type == ChatType::Original {
+			request.chat_type = ChatType::Feedback;
+		}
+		request
 	}
+}
+
+/// Everything after the prompt is built: run the (optionally streaming)
+/// generation and produce the shared response payload, including the
+/// second structured-JSON pass for the standard feedback flow.
+/// `on_event` is called with "status"/"chunk"/"cumulative" events; pass a
+/// no-op sink for the non-streaming command.
+async fn generate_and_respond<F>(
+	state: &State<'_, AppState>,
+	request: &PromptRequest,
+	user_messages: &[ChatMessage],
+	// second_pass: run the structured-JSON second pass (streaming only)
+	second_pass: bool,
+	// on_event returns false when the channel is dead: cancel generation
+	on_event: F,
+) -> Result<serde_json::Value, String>
+where
+	F: Fn(EmitKind, &str) -> bool + Send + Sync + Clone + 'static,
+{
 	let system = request.system_prompt();
-	let user_messages = request.user_messages();
 	let word_count: usize = user_messages
 		.iter()
 		.map(|m| m.content.split_whitespace().count())
 		.sum();
-	let cancel = take_cancel_token(&state);
+	let cancel = take_cancel_token(state);
 	let settings = AiSettings::load(&state.db);
 
-	let _ = on_event.send(StreamEvent::new("status", "thinking..."));
+	on_event(EmitKind::Status, "thinking...");
 
 	// If the webview went away (page reloaded mid-stream), stop generating
 	// instead of burning CPU on output nobody will see.
-	let channel_writer = {
-		let sender = on_event.clone();
-		let cancel_writer = cancel.clone();
-		move |piece: String| {
-			if sender.send(StreamEvent::new("chunk", piece)).is_err() {
-				cancel_writer.store(true, Ordering::Relaxed);
-			}
+	let cancel_for_writer = cancel.clone();
+	let emit = on_event.clone();
+	let mut channel_dead = false;
+	let channel_writer = move |piece: String| {
+		if channel_dead {
+			return;
+		}
+		if !emit(EmitKind::Chunk, &piece) {
+			channel_dead = true;
+			cancel_for_writer.store(true, Ordering::Relaxed);
 		}
 	};
 	let (output, prompt_tokens) = run_generation(
-		&state,
+		state,
 		&settings,
 		system,
-		&user_messages,
+		user_messages,
 		request.summarize,
 		cancel.clone(),
 		channel_writer,
 	)
 	.await?;
 
-	let _ = on_event.send(StreamEvent::new("cumulative", output.clone()));
+	on_event(EmitKind::Cumulative, &output);
 
-	// Structured feedback: either the request itself asked for JSON, or this
-	// is the standard feedback flow, in which case run a second pass to also
-	// produce the structured JSON feedback document.
+	// Structured feedback: either the request itself asked for JSON, or
+	// this is the standard feedback flow, in which case run a second pass
+	// to also produce the structured JSON feedback document. (The
+	// non-streaming command intentionally skips the second pass, matching
+	// its previous behaviour.)
 	let mut structured = None;
 	if request.summarize && request.structured_feedback {
 		structured = extract_feedback_json(&output);
-	} else if request.summarize && request.chat_type == ChatType::Feedback {
+	} else if second_pass && request.summarize && request.chat_type == ChatType::Feedback {
 		let json_system = crate::prompts::FEEDBACK_JSON_RESULT_SYSTEM.to_string();
 		let json_output = run_generation(
-			&state,
+			state,
 			&settings,
 			json_system,
-			&user_messages,
+			user_messages,
 			true,
 			cancel,
 			|_| {},
@@ -269,6 +254,73 @@ pub async fn generate_streaming_response(
 		"request_word_count": word_count,
 		"structured_result": structured,
 	}))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_response(
+	state: State<'_, AppState>,
+	messages: Vec<ChatMessage>,
+	summarize: Option<bool>,
+	chat_type: Option<String>,
+	react_to: Option<String>,
+	react_to_author: Option<String>,
+	react_to_is_current_user: Option<bool>,
+	structured_feedback: Option<bool>,
+) -> Result<serde_json::Value, String> {
+	let request = GenerateParams {
+		messages,
+		summarize: summarize.unwrap_or(false),
+		chat_type,
+		react_to,
+		react_to_author,
+		react_to_is_current_user: react_to_is_current_user.unwrap_or(false),
+		structured_feedback: structured_feedback.unwrap_or(false),
+	}
+	.into_request();
+	let user_messages = request.user_messages();
+	generate_and_respond(&state, &request, &user_messages, false, |_, _| true).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_streaming_response(
+	state: State<'_, AppState>,
+	messages: Vec<ChatMessage>,
+	summarize: Option<bool>,
+	chat_type: Option<String>,
+	react_to: Option<String>,
+	react_to_author: Option<String>,
+	react_to_is_current_user: Option<bool>,
+	structured_feedback: Option<bool>,
+	on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<serde_json::Value, String> {
+	let request = GenerateParams {
+		messages,
+		summarize: summarize.unwrap_or(false),
+		chat_type,
+		react_to,
+		react_to_author,
+		react_to_is_current_user: react_to_is_current_user.unwrap_or(false),
+		structured_feedback: structured_feedback.unwrap_or(false),
+	}
+	.into_request();
+	let user_messages = request.user_messages();
+	// channel events surface to the webview; a dead channel cancels
+	// generation instead of burning CPU on unseen output
+	let sender = on_event;
+	generate_and_respond(
+		&state,
+		&request,
+		&user_messages,
+		true,
+		move |kind, content| {
+			sender
+				.send(StreamEvent::new(kind.as_str(), content))
+				.is_ok()
+		},
+	)
+	.await
 }
 
 #[tauri::command]
