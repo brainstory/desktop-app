@@ -18,7 +18,6 @@ interface ChatRecorderProps {
 	setSaveState: (state: string) => void;
 	handleGetResponse: () => void | Promise<void>;
 	isCompressed?: boolean | string | null;
-	allowFinishMinConversationLength?: number;
 }
 
 export default function ChatRecorder({
@@ -28,8 +27,7 @@ export default function ChatRecorder({
 	setCurrConversation,
 	setSaveState,
 	handleGetResponse,
-	isCompressed,
-	allowFinishMinConversationLength
+	isCompressed
 }: ChatRecorderProps) {
 	/** if the max content is met, disable further addition to conversation */
 	// unbounded conversations degrade model quality; force the result.
@@ -58,17 +56,15 @@ export default function ChatRecorder({
 				}}
 			onTranscript={async (userMessage: string) => {
 				const isUser = true;
-				const next = await addConversationMessage(
+				// only after the user message is actually appended does
+				// sending become safe (the coach must see it); the SAVING
+				// save-state is owned by ChatSection's autosave effect
+				await addConversationMessage(
 					userMessage,
 					isUser,
 					currConversation,
 					setCurrConversation
 				);
-				// only after the user message is actually appended does
-				// sending become safe (the coach must see it)
-				if (next.length >= (allowFinishMinConversationLength ?? 0)) {
-					setSaveState(CHAT_SAVE_STATE.SAVING);
-				}
 				setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
 			}}
 				getCoachResponse={async () => await handleGetResponse()}

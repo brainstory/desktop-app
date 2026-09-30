@@ -104,6 +104,15 @@ export function ChatSection({
 	 *  is still in flight (StrictMode double-invoke, conversation updates);
 	 *  a second create would produce a duplicate idea row */
 	const creatingIdeaRef = useRef(false);
+	/** latest conversation length without re-running the mount fetch */
+	const conversationLengthRef = useRef(currConversation.length);
+	useEffect(() => {
+		conversationLengthRef.current = currConversation.length;
+	}, [currConversation.length]);
+	/** monotonic autosave sequence: only the newest save may settle state */
+	const autosaveSeqRef = useRef(0);
+	/** parent idea already fetched (id keyed) */
+	const fetchedParentRef = useRef<string | null>(null);
 
 	useIdeaIdFromUrl(hasMounted, setIdeaId);
 
@@ -135,25 +144,38 @@ export function ChatSection({
 		}
 	}, [readyToCreateIdea, currConversation, dailyLogId, result]);
 
+	// Autosave: debounced (rapid user/assistant turns must not fire one
+	// write each), sequenced (a stale completion can never overwrite the
+	// top-bar state of a newer save), and the SAVING state lives here so
+	// the append sites don't have to set it.
 	useEffect(() => {
-		if (currConversation.length >= minConversationLenForCreateAndEnd) {
-			if (ideaId) {
-				updateIdeaApi(ideaId, currConversation)
-					.then(() => {
-						// don't show SAVED visual for saving the user message so that
-						// the switch from SAVING to SAVED doesn't happen twice
-						if (currConversation[currConversation.length - 1].role === "assistant") {
-							setSaveState(CHAT_SAVE_STATE.SUCCESS);
-						}
-					})
-					.catch((e) => {
-						setSaveState(CHAT_SAVE_STATE.FAILED);
-						setAiError(`Autosave failed: ${normalizeApiError(e)}`);
-					});
-			}
+		if (!ideaId || currConversation.length < minConversationLenForCreateAndEnd) {
+			return;
 		}
+		const seq = ++autosaveSeqRef.current;
+		const timer = window.setTimeout(() => {
+			setSaveState(CHAT_SAVE_STATE.SAVING);
+			updateIdeaApi(ideaId, currConversation)
+				.then(() => {
+					if (seq !== autosaveSeqRef.current) return;
+					// don't show SAVED visual for saving the user message so that
+					// the switch from SAVING to SAVED doesn't happen twice
+					if (currConversation[currConversation.length - 1].role === "assistant") {
+						setSaveState(CHAT_SAVE_STATE.SUCCESS);
+					}
+				})
+				.catch((e) => {
+					if (seq !== autosaveSeqRef.current) return;
+					setSaveState(CHAT_SAVE_STATE.FAILED);
+					setAiError(`Autosave failed: ${normalizeApiError(e)}`);
+				});
+		}, 400);
+		return () => window.clearTimeout(timer);
 	}, [currConversation, ideaId, minConversationLenForCreateAndEnd]);
 
+	// Draft load: runs once per ideaId (NOT on every message - the old
+	// currConversation.length dependency re-fetched mid-session and made
+	// two in-flight reads able to resolve out of order).
 	useEffect(() => {
 		if (ideaId) {
 			getIdeaApi(ideaId)
@@ -166,10 +188,10 @@ export function ChatSection({
 					}
 					const savedConversation = [...(res.transcript ?? [])];
 					// Only adopt the saved transcript if it has more messages than
-					// what we hold locally: restores a resumed draft, but never
-					// clobbers newer messages with a stale fetch (which made
-					// messages visibly vanish mid-session).
-					if (savedConversation.length > currConversation.length) {
+					// what we hold locally (via the ref: this closure sees the
+					// mount-time conversation): restores a resumed draft, but
+					// never clobbers newer messages with a stale fetch.
+					if (savedConversation.length > conversationLengthRef.current) {
 						setCurrConversation(savedConversation);
 						const lastMessage = savedConversation.at(-1);
 						if (lastMessage?.role === "user") {
@@ -180,7 +202,8 @@ export function ChatSection({
 					}
 
 					const parentIdData = res.parentIdea?.id;
-					if (parentIdData) {
+					if (parentIdData && fetchedParentRef.current !== parentIdData) {
+						fetchedParentRef.current = parentIdData;
 						fetchParentIdea(parentIdData);
 					}
 				})
@@ -196,11 +219,12 @@ export function ChatSection({
 						/>
 					);
 				});
-		} else if (parentId) {
+		} else if (parentId && fetchedParentRef.current !== parentId) {
 			// when idea id isn't in the query parameter bc the idea hasn't been created yet
+			fetchedParentRef.current = parentId;
 			fetchParentIdea(parentId);
 		}
-	}, [ideaId, currConversation.length]);
+	}, [ideaId]);
 
 
 	/** Generate assistant response. NOT for the final outline result. */
@@ -218,17 +242,14 @@ export function ChatSection({
 			callApiWithRetry(apiCall)
 				.then((message) => {
 					const isUser = false;
-					const next = addConversationMessage(
-						message,
-						isUser,
-						currConversation,
-						setCurrConversation
-					);
-					if (next.length >= minConversationLenForCreateAndEnd) {
-						setSaveState(CHAT_SAVE_STATE.SAVING);
-					}
-					setIsUserResendRequired(false);
-					setInappropriateUserTranscript(null);
+				addConversationMessage(
+					message,
+					isUser,
+					currConversation,
+					setCurrConversation
+				);
+				setIsUserResendRequired(false);
+				setInappropriateUserTranscript(null);
 				})
 			.catch((err) => {
 				if (isModerationError(err)) {
@@ -297,15 +318,12 @@ export function ChatSection({
 
 	const askADifferentQuestion = async () => {
 		const isUser = true;
-		const next = addConversationMessage(
+		addConversationMessage(
 			ASK_A_DIFFERENT_QUESTION,
 			isUser,
 			currConversation,
 			setCurrConversation
 		);
-		if (next.length >= minConversationLenForCreateAndEnd) {
-			setSaveState(CHAT_SAVE_STATE.SAVING);
-		}
 		setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
 	};
 
@@ -337,7 +355,6 @@ export function ChatSection({
 			/>,
 			<ChatRecorder
 				key="chat-recorder"
-				allowFinishMinConversationLength={minConversationLenForCreateAndEnd}
 				isCompressed={Boolean(parentIdea)}
 				conversationState={conversationState}
 				setConversationState={setConversationState}
