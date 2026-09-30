@@ -66,17 +66,20 @@ const AudioRecorder = ({
 			</div>
 			<div
 				className={`${
-					(conversationState === CONVERSATION_STATE.WaitingForCoach ||
-						conversationState === CONVERSATION_STATE.TranscribingUser) &&
-					"hidden"
-				} ${
 					isCompressed ? "gap-3" : "gap-8"
 				} text-sm text-stone-600 flex justify-between flex-col items-center mb-2`}
 			>
 				<RecordButton
 					isCompressed={isCompressed}
 					isRecording={isRunning}
-					isDisabledOverride={isDisabled}
+					// while waiting on the coach or a transcription the mic
+					// stays rendered but disabled - display:none dropped
+					// focus to <body>
+					isDisabledOverride={
+						isDisabled ||
+						conversationState === CONVERSATION_STATE.WaitingForCoach ||
+						conversationState === CONVERSATION_STATE.TranscribingUser
+					}
 					conversationState={conversationState}
 					setIsRecording={setIsRunning}
 					setIsTranscribing={setIsTranscribing}

@@ -12,6 +12,7 @@ export default function LoadingAnimation({
 }: LoadingAnimationProps) {
 	return (
 		<div
+			role="status"
 			className={`flex justify-center items-center gap-4 p-2 ${
 				isVertical && "flex-col"
 			} ${classes}`}

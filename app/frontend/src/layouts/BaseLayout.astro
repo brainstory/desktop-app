@@ -21,10 +21,15 @@ const mainSectionStyle = `min-h-[calc(100vh-5rem)] sm:min-h-[calc(100vh-3rem)] b
 	<body
 		class="bg-stone-50 [&_:focus-visible]:ring-4 [&_:focus-visible]:outline-none [&_:focus-visible]:ring-pink-300"
 	>
+		<a
+			href="#main"
+			class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:bg-white focus:ring-4 focus:ring-pink-300 focus:rounded focus:px-3 focus:py-2"
+			>Skip to main content</a
+		>
 		<div class="sm:flex">
 			<Navigation client:idle />
 			<div class="flex flex-col flex-grow">
-				<main class="p-4 pt-0 sm:pt-4">
+				<main id="main" class="p-4 pt-0 sm:pt-4">
 					<div
 						class:list={mainSectionStyle}
 					>

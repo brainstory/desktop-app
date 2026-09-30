@@ -54,6 +54,14 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 
 	// Escape closes the modal; Tab is trapped inside it. Focus starts on
 	// the first control and returns to the opener on close.
+	// the close handler is read through a ref so the trap effect runs
+	// exactly once: re-running it on every parent render re-captured
+	// "previously focused" from inside the modal
+	const onCloseRef = useRef(onClose);
+	useEffect(() => {
+		onCloseRef.current = onClose;
+	}, [onClose]);
+
 	useEffect(() => {
 		const modal = modalRef.current;
 		const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -67,7 +75,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 
 		const onKeyDown = (event: globalThis.KeyboardEvent): void => {
 			if (event.key === "Escape") {
-				onClose();
+				onCloseRef.current();
 				return;
 			}
 			if (event.key === "Tab") {
@@ -89,7 +97,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 			window.removeEventListener("keydown", onKeyDown);
 			previouslyFocused?.focus();
 		};
-	}, [onClose]);
+	}, []);
 
 	return (
 		<div

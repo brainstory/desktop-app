@@ -213,7 +213,7 @@ function RecordButton({
 	}
 
 	const enterHint = (
-		<p className="w-full max-w-[500px] text-xs text-stone-400 text-left mt-1">
+		<p className="w-full max-w-[500px] text-xs text-stone-500 text-left mt-1">
 			Enter to send &middot; Shift+Enter for a new line
 		</p>
 	);
@@ -372,7 +372,7 @@ function RecordButton({
 		<>
 			{renderInputComponent()}
 			{warningType && (
-				<div className={warningBoxStyle}>
+				<div role="alert" className={warningBoxStyle}>
 					<p className="text-sm font-semibold flex-1">
 						{warningType === "error"
 							? (errorMessage ??

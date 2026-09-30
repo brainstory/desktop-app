@@ -379,7 +379,10 @@ export function ChatSection({
 		return (
 			<section className="wow">
 				{aiError && (
-					<div className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm">
+					<div
+						role="alert"
+						className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm"
+					>
 						<span>
 							<b>Hmm, the AI couldn&rsquo;t respond:</b> {aiError}
 						</span>

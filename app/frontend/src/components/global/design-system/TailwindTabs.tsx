@@ -1,4 +1,5 @@
 import {
+	useId,
 	useState,
 	createContext,
 	useContext,
@@ -30,6 +31,8 @@ interface TabsContextValue {
 	activeIndex: number;
 	setActiveIndex: (index: number) => void;
 	tabCount: number;
+	/** unique per tab set: two sets on one page must not share ids */
+	idPrefix: string;
 }
 
 const TabsContext = createContext<TabsContextValue | undefined>(undefined);
@@ -42,6 +45,7 @@ interface TailwindTabsProps {
 }
 
 function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps) {
+	const idPrefix = useId();
 	// Clamp to the real tab count: an activeTab from a ?tab= deep link
 	// that this tab set doesn't have (e.g. "feedback" on a feedback idea,
 	// which has no feedback tab) must land on a real panel, not render
@@ -63,7 +67,12 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 
 	return (
 		<TabsContext.Provider
-			value={{ activeIndex, setActiveIndex, tabCount: Children.count(children) }}
+			value={{
+			activeIndex,
+			setActiveIndex,
+			tabCount: Children.count(children),
+			idPrefix
+		}}
 		>
 			<div className="h-full">{children}</div>
 		</TabsContext.Provider>
@@ -98,11 +107,12 @@ function TailwindTab({
 	const activeIndex = ctx?.activeIndex ?? 0;
 	const setActiveIndex = ctx?.setActiveIndex ?? (() => {});
 	const tabCount = ctx?.tabCount ?? 1;
+	const idPrefix = ctx?.idPrefix ?? "tw";
 	const isActive = index === activeIndex;
 
 	const moveFocus = (nextIndex: number) => {
 		// roving tabindex: focus (and select) the sibling tab button by id
-		const sibling = document.getElementById(`tw-tab-${nextIndex}`);
+		const sibling = document.getElementById(`${idPrefix}-tab-${nextIndex}`);
 		sibling?.focus();
 		sibling?.click();
 	};
@@ -131,11 +141,11 @@ function TailwindTab({
 	return (
 		<div className="group inline-block relative">
 			<button
-				id={`tw-tab-${index}`}
+				id={`${idPrefix}-tab-${index}`}
 				type="button"
 				role="tab"
 				aria-selected={isActive}
-				aria-controls={`tw-tabpanel-${index}`}
+				aria-controls={`${idPrefix}-tabpanel-${index}`}
 				tabIndex={isActive ? 0 : -1}
 				disabled={isDisabled}
 				className={`cursor-pointer text-sm font-medium bg-white p-3 border-b-4 focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 ${
@@ -151,11 +161,18 @@ function TailwindTab({
 			>
 				{children}
 			</button>
-			{tooltipText !== "" && (
+			{tooltipText !== "" && !isDisabled && (
 				<div
 					role="tooltip"
 					className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-2 bg-stone-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-300"
 				>
+					{tooltipText}
+				</div>
+			)}
+			{/* a disabled tab's explanation must never hide behind a hover
+			    tooltip: keyboard users cannot hover */}
+			{tooltipText !== "" && isDisabled && (
+				<div className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-1 text-stone-500 text-xs whitespace-nowrap">
 					{tooltipText}
 				</div>
 			)}
@@ -170,6 +187,28 @@ function TailwindTabPanels({ children }: { children: ReactNode }) {
 
 function TailwindTabPanel({ children }: { children: ReactNode }) {
 	return children;
+}
+
+/** Panel wrapper that derives its id/aria wiring from the shared tab
+ * context, so a second tab set on the page can never collide. */
+function TailwindTabPanelShell({
+	index,
+	children
+}: {
+	index: number;
+	children: ReactNode;
+}) {
+	const idPrefix = useContext(TabsContext)?.idPrefix ?? "tw";
+	return (
+		<div
+			id={`${idPrefix}-tabpanel-${index}`}
+			role="tabpanel"
+			aria-labelledby={`${idPrefix}-tab-${index}`}
+			className="outline-none"
+		>
+			{children}
+		</div>
+	);
 }
 
 interface ComposedTab {
@@ -205,15 +244,9 @@ function TailwindComposedTabs({
 			<TailwindTabPanels>
 				{data.map((tab, i) => (
 					<TailwindTabPanel key={`tw-tabp-${i}`}>
-						{/* only the active panel is in the DOM, so ids stay unique */}
-						<div
-							id={`tw-tabpanel-${i}`}
-							role="tabpanel"
-							aria-labelledby={`tw-tab-${i}`}
-							className="outline-none"
-						>
-							{tab.content}
-						</div>
+						{/* only the active panel is in the DOM; ids come from
+						    the shared context so two tab sets cannot collide */}
+						<TailwindTabPanelShell index={i}>{tab.content}</TailwindTabPanelShell>
 					</TailwindTabPanel>
 				))}
 			</TailwindTabPanels>

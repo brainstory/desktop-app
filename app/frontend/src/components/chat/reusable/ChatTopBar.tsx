@@ -48,7 +48,7 @@ export default function ChatTopBar({
 					/>
 				)}
 				{saveIconName && (
-					<div className="flex items-center flex-nowrap gap-1 text-sm">
+					<div role="status" className="flex items-center flex-nowrap gap-1 text-sm">
 						<ion-icon
 							name={saveIconName}
 							class="hydrated w-5 h-5 text-stone-500"

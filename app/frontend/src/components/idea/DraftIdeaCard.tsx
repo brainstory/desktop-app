@@ -34,10 +34,10 @@ export default function DraftIdeaCard({ id, createdAt, draftSummary }: DraftIdea
 				</div>
 				<h3 className="mb-2 text-xl font-semibold tracking-tight text-stone-900">Draft</h3>
 
-				<p className="mb-3 text-xs text-stone-400">{humanReadableDate}</p>
+				<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
 				<div className="inline-flex items-center justify-center w-full">
 					<hr className="w-64 h-[2px] my-8 bg-stone-200 border-0 rounded" />
-					<div className="absolute px-4 -translate-x-1/2 bg-white left-1/2 uppercase font-bold text-stone-400 text-xs">
+					<div className="absolute px-4 -translate-x-1/2 bg-white left-1/2 uppercase font-bold text-stone-500 text-xs">
 						last message
 					</div>
 				</div>
@@ -51,7 +51,7 @@ export default function DraftIdeaCard({ id, createdAt, draftSummary }: DraftIdea
 				className={`absolute top-2 right-2 p-1.5 rounded-full text-xs font-semibold ${
 					confirmingDelete
 						? "text-red-600 bg-red-50"
-						: "text-stone-300 hover:text-red-500 hover:bg-stone-50"
+						: "text-stone-500 hover:text-red-500 hover:bg-stone-50"
 				}`}
 			>
 				{confirmingDelete ? (

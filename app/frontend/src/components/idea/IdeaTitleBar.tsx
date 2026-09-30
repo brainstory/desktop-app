@@ -138,21 +138,24 @@ export default function IdeaTitleBar({
 		}
 		if (isOwnIdea) {
 			buttons.push(
-				<PinkButton
-					key="export"
-					onClick={handleExport}
-					title="Exports the idea summary only — the conversation transcript stays on this device"
-				>
-					{exportState === "exporting"
-						? "Exporting..."
-						: exportState === "done"
-							? "Exported!"
-							: exportState === "error"
-								? "Export failed"
-								: parentId
-									? "Export Feedback"
-									: "Export"}
-				</PinkButton>
+				<span key="export-wrap" className="flex flex-col items-end">
+					<PinkButton onClick={handleExport}>
+						{exportState === "exporting"
+							? "Exporting..."
+							: exportState === "done"
+								? "Exported!"
+								: exportState === "error"
+									? "Export failed"
+									: parentId
+										? "Export Feedback"
+										: "Export"}
+					</PinkButton>
+					{/* privacy note: previously buried in a title attribute,
+					    invisible to keyboard and touch users */}
+					<p className="text-[10px] leading-tight text-stone-500 mt-1 max-w-[220px] text-right">
+						Exports the summary only — the transcript stays on this device.
+					</p>
+				</span>
 			);
 		}
 		buttons.push(

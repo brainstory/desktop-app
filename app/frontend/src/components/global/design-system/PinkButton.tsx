@@ -12,7 +12,7 @@ export default function PinkButton({
 }: ButtonProps) {
 	return (
 		<Button
-			classes={`bg-pink-500 hover:bg-pink-600 text-white ${classes}`}
+			classes={`bg-accent-600 hover:bg-accent-700 text-white ${classes}`}
 			icon={icon}
 			full={full}
 			left={left}

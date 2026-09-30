@@ -304,7 +304,18 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				</div>
 				{isDownloading && (
 					<div className="flex items-center gap-3">
-						<div className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden">
+						<div
+							role="progressbar"
+							aria-label={`${model.label} download progress`}
+							aria-valuemin={0}
+							aria-valuemax={100}
+							aria-valuenow={
+								downloadProgress[model.id] >= 0
+									? Math.floor(downloadProgress[model.id])
+									: undefined
+							}
+							className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden"
+						>
 							{downloadProgress[model.id] < 0 ? (
 								// backend couldn't determine the total size
 								<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
@@ -719,7 +730,7 @@ function FreeSpaceNote({ freeBytes, needBytes }: { freeBytes: number; needBytes?
 		);
 	}
 	return (
-		<span className="text-xs text-stone-400 whitespace-nowrap">
+		<span className="text-xs text-stone-500 whitespace-nowrap">
 			{formatSize(freeBytes)} free
 		</span>
 	);

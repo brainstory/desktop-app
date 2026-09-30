@@ -62,7 +62,7 @@ export default function IdeaCard({
 							{title}
 						</h3>
 
-						<p className="mb-3 text-xs text-stone-400">{humanReadableDate}</p>
+						<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
 
 						<div className="group mb-4 flex items-center">
 							<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">

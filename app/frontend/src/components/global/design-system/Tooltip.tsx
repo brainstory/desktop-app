@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 export default function Tooltip({
 	children,
@@ -18,11 +18,14 @@ export default function Tooltip({
 
 	const tooltipClass = `${positionClasses} pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity bg-stone-800 p-2 px-4 text-xs text-white rounded-md absolute translate-y-10 opacity-0 z-50 text-center`;
 	const containerClass = `group flex relative ${classes}`;
+	const tooltipId = useId();
 
 	return (
-		<div className={containerClass}>
+		<div className={containerClass} aria-describedby={text ? tooltipId : undefined}>
 			{children}
-			<span className={tooltipClass}>{text}</span>
+			<span id={tooltipId} role="tooltip" className={tooltipClass}>
+				{text}
+			</span>
 		</div>
 	);
 }
