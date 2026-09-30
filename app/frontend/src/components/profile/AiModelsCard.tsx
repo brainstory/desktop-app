@@ -273,7 +273,11 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 										: ""
 								}
 							>
-								{isConfirmingDelete ? "Really delete?" : "Delete"}
+								{isConfirmingDelete
+								? model.active
+									? "Really delete the ACTIVE model?"
+									: "Really delete?"
+								: "Delete"}
 							</BorderedButton>
 						)}
 						{!model.downloaded && !isDownloading && (
@@ -499,7 +503,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								{
 									id: "apple",
 									label: "Apple Speech",
-									hint: "Built into macOS 26+ - no model download"
+									hint: appleStt?.available
+										? "Built into macOS 26+ - no model download"
+										: "Built into macOS 26+ - not available on this system"
 								},
 								{
 									id: "whisper",

@@ -1,13 +1,19 @@
 import ReactMarkdown from "react-markdown";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 
-const defaultContent = "# Loading... \n\n This idea is loading. Please wait.";
-
 interface IdeaSummaryProps {
 	content?: string | null;
 }
 
-export default function IdeaSummary({ content = defaultContent }: IdeaSummaryProps) {
+export default function IdeaSummary({ content }: IdeaSummaryProps) {
+	// explicit loading state instead of a markdown string used as a flag
+	if (content == null) {
+		return (
+			<div className="p-5 pb-8 mx-auto">
+				<LoadingAnimation text="Loading idea..." />
+			</div>
+		);
+	}
 	return (
 		<div
 			className={
@@ -15,7 +21,6 @@ export default function IdeaSummary({ content = defaultContent }: IdeaSummaryPro
 				"prose-p:leading-normal lg:prose-p:leading-loose"
 			}
 		>
-			{content === defaultContent && <LoadingAnimation />}
 			<ReactMarkdown>{content}</ReactMarkdown>
 		</div>
 	);

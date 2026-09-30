@@ -10,6 +10,15 @@ export default function IdeaTranscript({
 }) {
 	const pairs = groupTranscript(transcript ?? []);
 
+	if (pairs.length === 0) {
+		return (
+			<p className="mx-10 my-8 text-sm text-stone-500">
+				This idea has no transcript - it may have been imported (exports share the summary
+				only).
+			</p>
+		);
+	}
+
 	return (
 		<div className="mx-10 divide-y-2 divide-stone-200">
 			{pairs.map((pair, index) => (

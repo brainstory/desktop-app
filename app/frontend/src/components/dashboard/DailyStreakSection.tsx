@@ -6,6 +6,7 @@ export default function DailyStreakSection() {
 	const [streakCount, setStreakCount] = useState(0);
 	const [intentIdeaId, setIntentIdeaId] = useState<string | undefined>(undefined); // if isTodayIntentCompleted is false, this is a draft
 	const [isTodayIntentCompleted, setIsTodayIntentCompleted] = useState(false);
+	const [isLoaded, setIsLoaded] = useState(false);
 
 	useEffect(() => {
 		// TODO pulsing skeleton loading for text
@@ -14,9 +15,11 @@ export default function DailyStreakSection() {
 				setStreakCount(resp.streak);
 				setIntentIdeaId(resp.intentIdeaId ?? undefined);
 				setIsTodayIntentCompleted(resp.isCompleted);
+				setIsLoaded(true);
 			})
 			.catch((err) => {
 				console.error("failed to load daily status", err);
+				setIsLoaded(true);
 			});
 	}, []);
 
@@ -72,6 +75,22 @@ export default function DailyStreakSection() {
 			</div>
 		);
 	};
+	if (!isLoaded) {
+		// pulsing skeleton: don't flash "0 days" before the data arrives
+		return (
+			<section
+				aria-busy="true"
+							className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg animate-pulse"
+			>
+				<div className="text-start">
+					<div className="h-6 w-16 bg-stone-200 rounded" />
+					<div className="h-3 w-10 bg-stone-100 rounded mt-1" />
+				</div>
+				<div className="h-4 w-48 bg-stone-200 rounded" />
+			</section>
+		);
+	}
+
 	return (
 		<section className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg">
 			<div className="text-start">

@@ -40,7 +40,7 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 							Show in Dock
 						</p>
 						<p className="text-xs text-stone-500">
-							The Brainstory icon in the macOS Dock.
+							The Brainstory icon in the Dock / taskbar.
 						</p>
 					</div>
 					<OnOffToggleButton
@@ -55,9 +55,9 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 							Show in menu bar
 						</p>
 						<p className="text-xs text-stone-500">
-							Keeps Brainstory running in the background when the window is closed, so
-							daily reminders still fire. If turned off, closing the window quits
-							Brainstory.
+							The Brainstory icon in the system tray / menu bar. Keeps the app running
+							in the background when the window is closed, so daily reminders still
+							fire. If turned off, closing the window quits Brainstory.
 						</p>
 					</div>
 					<OnOffToggleButton

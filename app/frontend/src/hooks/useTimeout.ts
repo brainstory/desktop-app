@@ -41,28 +41,46 @@ export function useTimeout(): readonly [
  */
 export function useConfirmClick(resetMs = 5000): {
 	isConfirming: boolean;
+	/** Seconds until the confirmation auto-resets (for a visible countdown). */
+	secondsLeft: number | null;
 	/** Returns true on the confirming (second) click. */
 	confirm: () => boolean;
 	reset: () => void;
 } {
 	const [isConfirming, setIsConfirming] = useState(false);
+	const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 	const [schedule, cancel] = useTimeout();
 
 	const confirm = useCallback((): boolean => {
 		if (!isConfirming) {
 			setIsConfirming(true);
-			schedule(() => setIsConfirming(false), resetMs);
+			setSecondsLeft(Math.round(resetMs / 1000));
+			schedule(() => {
+				setIsConfirming(false);
+				setSecondsLeft(null);
+			}, resetMs);
 			return false;
 		}
 		cancel();
 		setIsConfirming(false);
+		setSecondsLeft(null);
 		return true;
 	}, [isConfirming, schedule, cancel, resetMs]);
+
+	// tick the visible countdown once a second while armed
+	useEffect(() => {
+		if (!isConfirming) return;
+		const tick = window.setInterval(() => {
+			setSecondsLeft((s) => (s === null ? s : Math.max(0, s - 1)));
+		}, 1000);
+		return () => window.clearInterval(tick);
+	}, [isConfirming]);
 
 	const reset = useCallback(() => {
 		cancel();
 		setIsConfirming(false);
+		setSecondsLeft(null);
 	}, [cancel]);
 
-	return { isConfirming, confirm, reset };
+	return { isConfirming, secondsLeft, confirm, reset };
 }

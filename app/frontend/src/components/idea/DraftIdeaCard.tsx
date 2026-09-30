@@ -6,17 +6,25 @@ interface DraftIdeaCardProps {
 	id: string;
 	createdAt?: string | null;
 	draftSummary?: string | null;
+	/** Called after a successful delete so the parent updates its list
+	 * (no page reload). */
+	onDeleted?: (id: string) => void;
 }
 
-export default function DraftIdeaCard({ id, createdAt, draftSummary }: DraftIdeaCardProps) {
+export default function DraftIdeaCard({
+	id,
+	createdAt,
+	draftSummary,
+	onDeleted
+}: DraftIdeaCardProps) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
-	const { isConfirming: confirmingDelete, confirm } = useConfirmClick();
+	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();
 
 	const handleDelete = (): void => {
 		if (!confirm()) return;
 		deleteIdeaApi(id)
-			.then(() => window.location.reload())
-			.catch((err) => console.log("delete failed", err));
+			.then(() => onDeleted?.(id))
+			.catch((err) => console.error("delete failed", err));
 	};
 
 	return (
@@ -54,11 +62,11 @@ export default function DraftIdeaCard({ id, createdAt, draftSummary }: DraftIdea
 						: "text-stone-500 hover:text-red-500 hover:bg-stone-50"
 				}`}
 			>
-				{confirmingDelete ? (
-					"Really delete?"
-				) : (
-					<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
-				)}
+			{confirmingDelete ? (
+				<span aria-live="polite">Really delete? ({secondsLeft ?? 0}s)</span>
+			) : (
+				<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
+			)}
 			</button>
 		</div>
 	);

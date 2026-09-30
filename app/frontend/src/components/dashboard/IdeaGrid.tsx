@@ -2,6 +2,7 @@ import IdeaCard from "@components/idea/IdeaCard";
 import IdeaPlaceholder from "@components/idea/IdeaPlaceholder";
 import DraftIdeaCard from "@components/idea/DraftIdeaCard";
 
+import { useState } from "react";
 import type { IdeaListItem } from "@src/types";
 
 interface IdeaGridProps {
@@ -9,6 +10,11 @@ interface IdeaGridProps {
 }
 
 export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
+	// locally-removed draft ids: a delete updates the grid in place
+	// instead of reloading the whole page
+	const [removed, setRemoved] = useState<Set<string>>(new Set());
+	const visible = (userIdeas ?? []).filter((idea) => !removed.has(idea.id));
+
 	if (userIdeas === null) {
 		return (
 			<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -20,7 +26,7 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 	} else {
 		return (
 			<div className="flex flex-wrap items-stretch justify-center sm:justify-start gap-5 mx-auto">
-				{userIdeas.map((idea: IdeaListItem, index: number) => {
+				{visible.map((idea: IdeaListItem, index: number) => {
 					if (idea.isDraft) {
 						return (
 							<DraftIdeaCard
@@ -28,6 +34,9 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 								id={idea.id}
 								createdAt={idea.createdAt}
 								draftSummary={idea.draftSummary}
+								onDeleted={(deletedId) =>
+									setRemoved((prev) => new Set(prev).add(deletedId))
+								}
 							/>
 						);
 					} else {

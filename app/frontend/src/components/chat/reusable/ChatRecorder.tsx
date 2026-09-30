@@ -82,6 +82,12 @@ export default function ChatRecorder({
 				isCompressed ? "md:py-4 py-2" : "md:p-8 p-4"
 			} bg-white flex justify-center items-center flex-col rounded-lg`}
 		>
+			{forceFinish && (
+				<p role="status" className="text-sm text-stone-500 mb-2">
+					This conversation reached its length limit - wrap it up with the summary
+					button.
+				</p>
+			)}
 			<AudioRecorder
 				isCompressed={isCompressed}
 				isDisabled={forceFinish}
