@@ -462,11 +462,20 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 		// Apple Speech (macOS 26+, zero downloads) or local whisper.
 		if settings.ext_stt_base_url.is_empty() {
 			let load_whisper = |state: &AppState, app: &AppHandle| {
-				if let Some(spec) = models::find_model(&settings.stt_model, ModelKind::Stt) {
-					if state.is_model_downloaded(spec) {
+				match models::find_model(&settings.stt_model, ModelKind::Stt) {
+					Some(spec) if state.is_model_downloaded(spec) => {
 						if let Err(e) = state.load_stt(app, spec) {
 							log::error!("startup STT load failed: {e}");
 						}
+					}
+					_ => {
+						// Unknown or not-downloaded whisper model: unload
+						// whatever engine is still resident so the runtime
+						// matches the reported status, not a stale model.
+						state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
+						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+							models::EngineStatus::new("missing", None, None);
+						state.emit_stt_status(app);
 					}
 				}
 			};
@@ -474,12 +483,13 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				// Explicit Apple on an unsupported system: degrade to
 				// whisper but say why, instead of silently ignoring it.
 				load_whisper(&state, &app);
-				let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
-				*s = models::EngineStatus::new(
-					"error",
-					Some("apple-speech"),
-					Some("Apple Speech requires macOS 26+ - using whisper instead"),
-				);
+				*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+					models::EngineStatus::new(
+						"error",
+						Some("apple-speech"),
+						Some("Apple Speech requires macOS 26+ - using whisper instead"),
+					);
+				state.emit_stt_status(&app);
 			} else {
 				match settings.effective_stt_engine() {
 					"apple" => {
@@ -492,28 +502,44 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 							// free its memory.
 							state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 						}
-						let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
-						*s = models::EngineStatus::new("ready", Some("apple-speech"), None);
+						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+							models::EngineStatus::new("ready", Some("apple-speech"), None);
+						state.emit_stt_status(&app);
 					}
 					_ => load_whisper(&state, &app),
 				}
 			}
 		} else {
-			let mut s = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
-			*s = models::EngineStatus::new("external", None, None);
+			// The external endpoint handles transcription: free the local
+			// engine and say "external" where the UI can see it.
+			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
+			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+				models::EngineStatus::new("external", None, None);
+			state.emit_stt_status(&app);
 		}
 
 		// LLM: load local model unless external mode is active.
 		if settings.llm_mode != "local" {
-			let mut s = state.llm_status.lock().unwrap_or_else(|e| e.into_inner());
-			*s = models::EngineStatus::new("external", None, None);
+			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
+			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
+				models::EngineStatus::new("external", None, None);
+			state.emit_llm_status(&app);
 			return;
 		}
-		if let Some(spec) = models::find_model(&settings.llm_model, ModelKind::Llm) {
-			if state.is_model_downloaded(spec) {
+		match models::find_model(&settings.llm_model, ModelKind::Llm) {
+			Some(spec) if state.is_model_downloaded(spec) => {
 				if let Err(e) = state.load_llm(&app, spec) {
 					log::error!("startup LLM load failed: {e}");
 				}
+			}
+			_ => {
+				// Unknown or not-downloaded model: keep the runtime and
+				// the status it shows consistent ("missing"), not a stale
+				// engine that no longer matches the settings.
+				state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
+				*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
+					models::EngineStatus::new("missing", None, None);
+				state.emit_llm_status(&app);
 			}
 		}
 	});
