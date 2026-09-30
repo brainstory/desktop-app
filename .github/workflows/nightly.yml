@@ -92,6 +92,36 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
+      # The engine smoke test is the only guard that whisper.cpp and
+      # llama.cpp actually RUN together in one process (the duplicate
+      # ggml symbol tolerance). It needs real model files, so it runs
+      # here with tiny ones, cached across runs.
+      - name: Restore tiny test models
+        id: engine-models
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/engine-models
+          key: engine-models-tiny-v1
+
+      - name: Download tiny test models
+        if: steps.engine-models.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/engine-models"
+          curl -fL --retry 3 -o "${RUNNER_TEMP}/engine-models/whisper-tiny.en.bin" \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+          # stories260K: a ~1MB llama used by upstream llama.cpp tests
+          curl -fL --retry 3 -o "${RUNNER_TEMP}/engine-models/tiny.gguf" \
+            "https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf"
+
+      - name: Engine smoke test (whisper + llama coexist)
+        shell: bash
+        working-directory: src-tauri
+        env:
+          WHISPER_MODEL_PATH: ${{ runner.temp }}/engine-models/whisper-tiny.en.bin
+          LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
+        run: cargo test --test engine_smoke --locked
+
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
