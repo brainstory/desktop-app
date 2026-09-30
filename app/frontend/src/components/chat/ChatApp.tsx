@@ -2,15 +2,32 @@ import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
 import { getQueryParam } from "@helpers/helpers";
+import { CHAT_TYPE } from "@src/const";
 
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
 import DailyIntentModal from "@components/form/DailyIntentModal";
 import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 
-const isDailyIntent = getQueryParam("dailyIntent") === "true";
+/** Resolve the chat mode from the URL once, inside the component (module
+ * scope would read window.location at import time and make the module
+ * untestable). */
+function chatTypeFromParams(): string {
+	const parentId = getQueryParam("parentId");
+	if (getQueryParam("dailyIntent") === "true") {
+		return CHAT_TYPE.DAILY_INTENT;
+	}
+	if (parentId) {
+		return CHAT_TYPE.FEEDBACK;
+	}
+	return CHAT_TYPE.ORIGINAL;
+}
 
 export default function ChatApp() {
+	const isDailyIntent = getQueryParam("dailyIntent") === "true";
+	const chatType = chatTypeFromParams();
+	const parentId = getQueryParam("parentId");
+	const isFromGuide = getQueryParam("topic");
 	const [logId, setLogId] = useState<string | null | undefined>(null);
 	const [draftId, setDraftId] = useState(getQueryParam("id"));
 	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
@@ -34,7 +51,7 @@ export default function ChatApp() {
 				})
 				.catch((err) => console.log("error getting daily status", err));
 		}
-	}, []);
+	}, [isDailyIntent]);
 
 	return (
 		<AppWrapper>
@@ -46,14 +63,17 @@ export default function ChatApp() {
 				/>
 			)}
 			{/* key field so that rerender happens if daily intent draft idea found */}
-			<ChatSection
-				key={draftId}
-				dailyLogId={logId}
-				draftId={draftId ?? undefined}
-				conversationEndCallbacks={() => {
-					// end-of-session survey intentionally not part of the desktop app
-				}}
-			/>
+		<ChatSection
+			key={draftId}
+			dailyLogId={logId}
+			draftId={draftId ?? undefined}
+			chatType={chatType}
+			parentIdParam={parentId}
+			fromGuideParam={isFromGuide}
+			conversationEndCallbacks={() => {
+				// end-of-session survey intentionally not part of the desktop app
+			}}
+		/>
 		</AppWrapper>
 	);
 }

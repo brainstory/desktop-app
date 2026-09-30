@@ -28,24 +28,25 @@ import ErrorSection from "@components/error/ErrorSection";
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
 import ChatTopBar from "./reusable/ChatTopBar";
 
-const parentId = getQueryParam("parentId");
-const isFromGuide = getQueryParam("topic");
-let chatType = CHAT_TYPE.ORIGINAL;
-if (getQueryParam("dailyIntent") === "true") {
-	chatType = CHAT_TYPE.DAILY_INTENT;
-} else if (parentId) {
-	chatType = CHAT_TYPE.FEEDBACK;
-}
-
 interface ChatSectionProps {
 	draftId?: string;
 	dailyLogId?: string | null;
+	/** chat mode (computed by the parent from the URL, so this module has
+	 * no import-time window.location reads) */
+	chatType?: string;
+	/** ?parentId= query value, when giving feedback on an idea */
+	parentIdParam?: string | null;
+	/** ?topic= query value (guide entry) */
+	fromGuideParam?: string | null;
 	conversationEndCallbacks: () => void;
 }
 
 export function ChatSection({
 	draftId,
 	dailyLogId,
+	chatType = CHAT_TYPE.ORIGINAL,
+	parentIdParam = null,
+	fromGuideParam = null,
 	conversationEndCallbacks
 }: ChatSectionProps) {
 	const [result, setResult] = useState("");
@@ -126,7 +127,7 @@ export function ChatSection({
 		// perhaps to the same value but the useEffect is triggered since array variables are pointers to memory
 		if (readyToCreateIdea && !creatingIdeaRef.current) {
 			creatingIdeaRef.current = true;
-			createIdeaApi(result, currConversation, chatType, parentId, dailyLogId)
+			createIdeaApi(result, currConversation, chatType, parentIdParam, dailyLogId)
 				.then((createdIdeaId) => {
 					creatingIdeaRef.current = false;
 					setIdeaId(createdIdeaId);
@@ -142,7 +143,7 @@ export function ChatSection({
 					// update re-runs this effect and retries creation
 				});
 		}
-	}, [readyToCreateIdea, currConversation, dailyLogId, result]);
+	}, [readyToCreateIdea, currConversation, dailyLogId, result, chatType, parentIdParam]);
 
 	// Autosave: debounced (rapid user/assistant turns must not fire one
 	// write each), sequenced (a stale completion can never overwrite the
@@ -219,12 +220,12 @@ export function ChatSection({
 						/>
 					);
 				});
-		} else if (parentId && fetchedParentRef.current !== parentId) {
+		} else if (parentIdParam && fetchedParentRef.current !== parentIdParam) {
 			// when idea id isn't in the query parameter bc the idea hasn't been created yet
-			fetchedParentRef.current = parentId;
-			fetchParentIdea(parentId);
+			fetchedParentRef.current = parentIdParam;
+			fetchParentIdea(parentIdParam);
 		}
-	}, [ideaId]);
+	}, [ideaId, parentIdParam]);
 
 
 	/** Generate assistant response. NOT for the final outline result. */
@@ -292,7 +293,7 @@ export function ChatSection({
 				setConversationState(CONVERSATION_STATE.Idle);
 				return;
 			}
-			if (isFromGuide) {
+			if (fromGuideParam) {
 				markGettingStartedDone();
 			}
 		};
@@ -394,7 +395,7 @@ export function ChatSection({
 					showTranscript={showTranscript}
 					setShowTranscript={setShowTranscript}
 					leftButtonIcon={
-						isFromGuide && !getQueryParam("id") ? "arrow-back-outline" : null
+						fromGuideParam && !getQueryParam("id") ? "arrow-back-outline" : null
 					}
 					leftButtonHref="/get-started"
 					saveState={saveState}
