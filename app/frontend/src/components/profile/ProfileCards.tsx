@@ -1,5 +1,4 @@
 import { useState, type ChangeEvent } from "react";
-import TimezoneSelect from "react-timezone-select";
 
 import PinkButton from "@ds/PinkButton";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
@@ -87,8 +86,8 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 		setHasChanged(updateHasChanged);
 	};
 
-	const handleTimezoneSelect = (e: { value: string }): void => {
-		const input = e.value;
+	const handleTimezoneSelect = (e: ChangeEvent<HTMLSelectElement>): void => {
+		const input = e.target.value;
 		setSelectedTimezone(input);
 		// compare against the *timezone*, not the user name
 		const updateHasChanged = editedName !== userName || input !== timezone;
@@ -129,52 +128,20 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 				>
 					Your timezone
 				</label>
-				<TimezoneSelect
-					inputId="timezone-select"
+				<select
+					id="timezone-select"
 					aria-label="Your timezone"
 					value={selectedTimezone}
 					onChange={handleTimezoneSelect}
-					classNames={{
-						control: () => "timezone-select-control",
-						menu: () => "timezone-select-menu",
-						option: (state) =>
-							`timezone-select-option${state.isFocused ? " timezone-select-option--focused" : ""}${state.isSelected ? " timezone-select-option--selected" : ""}`
-					}}
-					styles={{
-						control: (baseStyles, _) => ({
-							...baseStyles,
-							backgroundColor: "#ffffff",
-							border: "1px solid #d6d3d1",
-							boxShadow: "none",
-							fontSize: "0.875rem",
-							lineHeight: "1.5rem",
-							borderRadius: "0.5rem",
-							fontFamily: `"Inter", sans-serif`,
-							padding: "0",
-							"&:hover": {
-								borderColor: "#a8a29e"
-							}
-						}),
-						input: (baseStyles, _) => ({
-							...baseStyles,
-							margin: "0"
-						}),
-						valueContainer: (baseStyles, _) => ({
-							...baseStyles,
-							padding: "0.375rem",
-							margin: "0"
-						}),
-						menu: (baseStyles, _) => ({
-							...baseStyles,
-							fontSize: "0.875rem",
-							lineHeight: "1.5rem",
-							backgroundColor: "#ffffff",
-							border: "1px solid #d6d3d1",
-							borderRadius: "0.5rem",
-							zIndex: 20
-						})
-					}}
-				/>
+					className="w-full border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 bg-white"
+				>
+					<option value="">Detect automatically</option>
+					{(Intl.supportedValuesOf("timeZone") as string[]).map((tz) => (
+						<option key={tz} value={tz}>
+							{tz.replaceAll("_", " ")}
+						</option>
+					))}
+				</select>
 			</div>
 			<PinkButton disabled={!hasChanged} onClick={handleSaveClick} classes="mt-6 mx-auto">
 				Save

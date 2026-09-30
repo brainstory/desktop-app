@@ -56,8 +56,6 @@
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0",
 		"react-markdown": "^10.1.0",
-		"react-select": "^5.10.2",
-		"react-timezone-select": "^3.3.3",
 		"tailwindcss": "^4.3.3"
 	}
 }
