@@ -239,7 +239,7 @@ pub fn save_ai_settings(
 	if let Some(v) = get_str("extSttApiKey") {
 		settings.ext_stt_api_key = v;
 	}
-	settings.save(&state.db);
+	settings.save(&state.db)?;
 
 	// Activate models that are ready to go with the new settings.
 	crate::spawn_model_loader(app.clone(), settings);

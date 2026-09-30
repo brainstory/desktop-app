@@ -361,7 +361,9 @@ pub async fn activate_model(
 						settings.stt_model = spec.id.to_string();
 					}
 				}
-				settings.save(&state.db);
+				if let Err(e) = settings.save(&state.db) {
+					log::error!("failed to persist activation of {}: {e}", spec.id);
+				}
 			}
 			Err(e) => {
 				// The status event already carries the error to the UI;

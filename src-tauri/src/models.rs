@@ -217,19 +217,10 @@ impl AiSettings {
 		}
 	}
 
-	pub fn save(&self, db: &Db) {
-		let set_secret = |secret: crate::secrets::Secret, value: &str| {
-			let result = if value.is_empty() {
-				crate::secrets::clear(secret, db);
-				Ok(())
-			} else {
-				crate::secrets::store(secret, value, db)
-			};
-			if let Err(e) = result {
-				log::error!("failed to store {}: {e}", secret.db_key());
-			}
-		};
-		if let Err(e) = db.set_settings(&[
+	/// Persist these settings. Err means the settings row or one of the
+	/// secrets could not be written - callers must not report success.
+	pub fn save(&self, db: &Db) -> Result<(), String> {
+		db.set_settings(&[
 			("ai_llm_mode", self.llm_mode.clone()),
 			("ai_llm_model", self.llm_model.clone()),
 			("ai_stt_model", self.stt_model.clone()),
@@ -239,12 +230,28 @@ impl AiSettings {
 			("ext_llm_model", self.ext_llm_model.clone()),
 			("ext_stt_base_url", self.ext_stt_base_url.clone()),
 			("ext_stt_model", self.ext_stt_model.clone()),
-		]) {
-			log::error!("failed to save AI settings: {e}");
-		}
-		set_secret(crate::secrets::Secret::HfToken, &self.hf_token);
-		set_secret(crate::secrets::Secret::ExtLlmApiKey, &self.ext_llm_api_key);
-		set_secret(crate::secrets::Secret::ExtSttApiKey, &self.ext_stt_api_key);
+		])?;
+		let save_secret = |secret: crate::secrets::Secret, value: &str| -> Result<(), String> {
+			let stored = crate::secrets::load(secret, db);
+			// Each keychain operation is a separate syscall round-trip
+			// (and on macOS can trigger a permission prompt), so only
+			// touch secrets whose value actually changed.
+			if stored.as_deref() == Some(value) {
+				return Ok(());
+			}
+			if value.is_empty() {
+				if stored.is_some() {
+					crate::secrets::clear(secret, db);
+				}
+				Ok(())
+			} else {
+				crate::secrets::store(secret, value, db)
+			}
+		};
+		save_secret(crate::secrets::Secret::HfToken, &self.hf_token)?;
+		save_secret(crate::secrets::Secret::ExtLlmApiKey, &self.ext_llm_api_key)?;
+		save_secret(crate::secrets::Secret::ExtSttApiKey, &self.ext_stt_api_key)?;
+		Ok(())
 	}
 }
 
@@ -778,8 +785,29 @@ mod tests {
 		let mut s = AiSettings::load(&db);
 		assert_eq!(s.stt_language, "en-US");
 		s.stt_language = "de-DE".into();
-		s.save(&db);
+		s.save(&db).expect("save");
 		assert_eq!(AiSettings::load(&db).stt_language, "de-DE");
+	}
+
+	#[test]
+	fn save_reports_database_failures() {
+		let path =
+			std::env::temp_dir().join(format!("brainstory-save-fail-{}.db", uuid::Uuid::new_v4()));
+		let db = Db::open(&path).expect("open");
+		{
+			// break the settings table behind Db's back so the write
+			// fails (simulates a full/locked database)
+			let conn = rusqlite::Connection::open(&path).unwrap();
+			conn.execute_batch("DROP TABLE settings").unwrap();
+		}
+		let err = AiSettings::load(&db)
+			.save(&db)
+			.expect_err("save must surface the failure instead of logging it");
+		assert!(
+			err.contains("failed to save setting"),
+			"unexpected error: {err}"
+		);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
