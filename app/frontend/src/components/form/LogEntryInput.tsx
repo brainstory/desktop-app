@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 import OnOffToggleButton from "@components/global/design-system/OnOffToggleButton";
 
 interface LogEntryInputProps {
@@ -19,11 +21,15 @@ export default function LogEntryInput({
 	uncheckedState = "No",
 	...props
 }: LogEntryInputProps) {
+	const labelId = useId();
 	return (
 		<div className="flex justify-between items-center text-sm md:text-md leading-snug">
-			<p className="pr-2">{text}</p>
+			<p className="pr-2" id={labelId}>
+				{text}
+			</p>
 			<OnOffToggleButton
 				id={id}
+				aria-labelledby={labelId}
 				checkedState={checkedState}
 				uncheckedState={uncheckedState}
 				checked={value ?? false}

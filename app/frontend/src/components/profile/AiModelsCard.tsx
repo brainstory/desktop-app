@@ -4,7 +4,7 @@ import BorderedButton from "@ds/BorderedButton";
 import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useTimeout } from "@src/hooks/useTimeout";
-import { useState } from "react";
+import { useState, useId } from "react";
 import { normalizeApiError } from "@helpers/helpers";
 import { useEffect } from "react";
 
@@ -76,6 +76,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	/** model id awaiting a second "really delete?" click */
 	const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 	const [scheduleDeleteReset] = useTimeout();
+	const externalLlmLabelId = useId();
 
 	const refresh = () => {
 		listModelsApi()
@@ -408,8 +409,11 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				</div>
 				{llmStatus.error && <p className="text-sm text-red-600">{llmStatus.error}</p>}
 				<div className="flex gap-2 items-center">
-					<span className="text-sm text-stone-600">Use external LLM endpoint</span>
+					<span className="text-sm text-stone-600" id={externalLlmLabelId}>
+						Use external LLM endpoint
+					</span>
 					<OnOffToggleButton
+						aria-labelledby={externalLlmLabelId}
 						checked={settings.llmMode === "external"}
 						onToggle={() => {
 							const nextMode = settings.llmMode === "external" ? "local" : "external";
