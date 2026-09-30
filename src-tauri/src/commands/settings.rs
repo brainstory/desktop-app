@@ -67,15 +67,23 @@ pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSetting
 	})
 }
 
-fn valid_reminder_time(value: &str) -> bool {
+/// Strictly parse a "HH:MM" reminder time. Single source of truth for
+/// the format: the settings form validates with it and the reminder
+/// loop parses with it, so the two can never disagree on what counts as
+/// a valid time.
+pub(crate) fn parse_hhmm(value: &str) -> Option<(u32, u32)> {
 	let mut parts = value.split(':');
 	let (Some(hours), Some(minutes), None) = (parts.next(), parts.next(), parts.next()) else {
-		return false;
+		return None;
 	};
 	match (hours.parse::<u32>(), minutes.parse::<u32>()) {
-		(Ok(h), Ok(m)) => h <= 23 && m <= 59 && minutes.len() == 2,
-		_ => false,
+		(Ok(h), Ok(m)) if h <= 23 && m <= 59 && minutes.len() == 2 => Some((h, m)),
+		_ => None,
 	}
+}
+
+fn valid_reminder_time(value: &str) -> bool {
+	parse_hhmm(value).is_some()
 }
 
 #[tauri::command]

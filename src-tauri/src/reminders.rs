@@ -69,16 +69,29 @@ pub fn spawn(app: AppHandle) {
 }
 
 fn parse_time(time: &str) -> (u32, u32) {
-	let parts: Vec<&str> = time.split(':').collect();
-	let hour = parts
-		.first()
-		.and_then(|h| h.parse::<u32>().ok())
-		.unwrap_or(9)
-		.min(23);
-	let minute = parts
-		.get(1)
-		.and_then(|m| m.parse::<u32>().ok())
-		.unwrap_or(0)
-		.min(59);
-	(hour, minute)
+	// Anything invalid falls back to the same default a fresh install
+	// uses; the settings form only persists strict HH:MM values.
+	crate::commands::settings::parse_hhmm(time).unwrap_or((9, 0))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::parse_time;
+	use crate::commands::settings::parse_hhmm;
+
+	/// The reminder loop and the settings form must agree on what a valid
+	/// time looks like: parse_time accepts exactly what parse_hhmm (the
+	/// form's validator) accepts, and falls back otherwise.
+	#[test]
+	fn parse_time_matches_valid_reminder_time() {
+		let corpus = [
+			"09:00", "9:00", "00:00", "23:59", "24:00", "12:5", "12:60", "", "noon", "12:00:00",
+		];
+		for raw in corpus {
+			match parse_hhmm(raw) {
+				Some(parsed) => assert_eq!(parse_time(raw), parsed, "divergence on {raw:?}"),
+				None => assert_eq!(parse_time(raw), (9, 0), "divergence on {raw:?}"),
+			}
+		}
+	}
 }
