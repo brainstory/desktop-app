@@ -48,10 +48,6 @@ Unstructured (prose) feedback idea result.
 Structured JSON feedback result. Stored as the idea's `structured_result` and rendered as
 comment cards in the UI.
 
-`feedback_result_reflection_system_message`
-
-Reflection evaluation from a transcript and feedback. Unused by the app - moved to
-[unused/](unused/) to keep this directory equal to the embedded prompt set.
 
 ## License
 

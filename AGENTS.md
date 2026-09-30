@@ -1,7 +1,6 @@
 # Agent notes
 
-Ground rules for AI-assisted work in this repository. Humans: see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full picture.
+Ground rules for AI-assisted work in this repository.
 
 ## Commands that must stay green
 
