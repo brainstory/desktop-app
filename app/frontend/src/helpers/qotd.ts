@@ -29,8 +29,12 @@ const questionPrompts: string[] = [
 
 /** Returns a question prompt for /chat depending on the current day */
 export function getQuestionOfTheDay(): string {
-	const todayDate = new Date();
-	const todayInDays = Math.floor(todayDate.valueOf() / (1000 * 60 * 60 * 24));
+	const now = new Date();
+	// Day number of the user's LOCAL calendar (Date.UTC over the local
+	// y/m/d fields), so the question flips at the user's midnight - not
+	// at 00:00 UTC.
+	const localDayUtcMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+	const todayInDays = Math.floor(localDayUtcMs / (1000 * 60 * 60 * 24));
 	const quoteIndex = todayInDays % questionPrompts.length;
 	return questionPrompts[quoteIndex];
 }

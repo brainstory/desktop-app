@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatISO8601ToHumanReadable, parseBackendUtc } from "./helpers";
 import { isModerationError, normalizeApiError } from "./helpers";
 
 describe("normalizeApiError", () => {
@@ -37,5 +38,49 @@ describe("isModerationError", () => {
 
 	it("does not match unrelated errors", () => {
 		expect(isModerationError("model not downloaded")).toBe(false);
+	});
+});
+
+describe("parseBackendUtc", () => {
+	it("treats naive timestamps as UTC", () => {
+		const parsed = parseBackendUtc("2026-09-15T10:30:00");
+		expect(parsed?.toISOString()).toBe("2026-09-15T10:30:00.000Z");
+	});
+
+	it("keeps strings that already carry a zone", () => {
+		expect(parseBackendUtc("2026-09-15T10:30:00+02:00")?.toISOString()).toBe(
+			"2026-09-15T08:30:00.000Z"
+		);
+		expect(parseBackendUtc("2026-09-15T10:30:00Z")?.toISOString()).toBe(
+			"2026-09-15T10:30:00.000Z"
+		);
+	});
+
+	it("returns null for empty or unparseable input", () => {
+		expect(parseBackendUtc("")).toBeNull();
+		expect(parseBackendUtc(null)).toBeNull();
+		expect(parseBackendUtc(undefined)).toBeNull();
+		expect(parseBackendUtc("   ")).toBeNull();
+		expect(parseBackendUtc("yesterday")).toBeNull();
+	});
+});
+
+describe("formatISO8601ToHumanReadable", () => {
+	it("renders a placeholder instead of Invalid Date for null-ish input", () => {
+		expect(formatISO8601ToHumanReadable("")).toBe("—");
+		expect(formatISO8601ToHumanReadable("garbage")).toBe("—");
+	});
+
+	it("formats naive UTC timestamps in the local zone", () => {
+		// compare against the same conversion done by the platform, so the
+		// assertion holds in any runner timezone
+		const expected = new Date("2026-09-15T10:30:00Z").toLocaleDateString("en-US", {
+			year: "numeric",
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit"
+		});
+		expect(formatISO8601ToHumanReadable("2026-09-15T10:30:00")).toBe(expected);
 	});
 });

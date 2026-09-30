@@ -5,6 +5,21 @@ export function getQueryParam(name: string): string | null {
 	return urlParams.get(name);
 }
 
+/**
+ * Parse the backend's naive-UTC timestamps ("2026-09-15T10:30:00") as
+ * UTC (a "Z" is appended unless the string already carries a zone).
+ * Null for anything empty or unparseable - callers render a placeholder
+ * instead of "Invalid Date".
+ */
+export function parseBackendUtc(iso8601Date?: string | null): Date | null {
+	if (!iso8601Date) return null;
+	const trimmed = iso8601Date.trim();
+	if (!trimmed) return null;
+	const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+	const date = new Date(hasZone ? trimmed : `${trimmed}Z`);
+	return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function formatISO8601ToHumanReadable(
 	iso8601Date: string,
 	options: Intl.DateTimeFormatOptions = {
@@ -15,8 +30,12 @@ export function formatISO8601ToHumanReadable(
 		minute: "2-digit"
 	}
 ): string {
-	// Add "Z" so it converts to users local time zone
-	const date = new Date(iso8601Date + "Z");
+	const date = parseBackendUtc(iso8601Date);
+	if (!date) {
+		// empty/garbage input (e.g. a null createdAt fallback) must render
+		// a placeholder, not "Invalid Date"
+		return "—";
+	}
 	return date.toLocaleDateString("en-US", options);
 }
 

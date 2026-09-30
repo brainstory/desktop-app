@@ -2,6 +2,7 @@ import type { FeedbackComment } from "@src/types";
 import { useState, useEffect, useRef } from "react";
 
 import EmojiItem from "@components/idea/feedback-aggregation/EmojiItem";
+import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 interface IdeaFeedbackCardProps {
 	feedback: FeedbackComment & {
@@ -62,7 +63,9 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 					labelsHasBorder={true}
 					style="mr-1"
 				/>
-				<p className="ml-1 text-xs text-stone-500">{formatDateTime(createdAt ?? undefined)}</p>
+				<p className="ml-1 text-xs text-stone-500">
+				{formatISO8601ToHumanReadable(createdAt ?? "")}
+			</p>
 			</div>
 			<p ref={ref} className={`text-sm leading-snug ${!isShowingMore && "line-clamp-5"}`}>
 				{feedbackText}
@@ -80,20 +83,4 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 			)}
 		</div>
 	);
-}
-
-function formatDateTime(iso8601Date?: string | null): string {
-	const date = new Date((iso8601Date ?? "") + "Z");
-
-	const timeString = date.toLocaleTimeString("en-US", {
-		hour: "numeric",
-		minute: "2-digit"
-	});
-
-	const dateString = date.toLocaleDateString("en-US", {
-		month: "short",
-		day: "numeric"
-	});
-
-	return `${timeString} ${dateString}`;
 }
