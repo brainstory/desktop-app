@@ -67,6 +67,10 @@ export default function DashboardSection() {
 						setUserIdeas(ideas);
 						setErrorFound(false);
 					})
+					.catch((err) => {
+						console.error("refresh after import failed", err);
+						setErrorFound(true);
+					})
 					.finally(() => setIsLoading(false));
 			})
 			.catch((err) => {

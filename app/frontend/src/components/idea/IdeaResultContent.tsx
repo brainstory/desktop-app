@@ -54,12 +54,20 @@ export default function IdeaResultContent() {
 		getIdeaApi(id)
 			.then((res) => {
 				if (isCurrent) {
-					fetchIdeaChildrenData(id).then(
-						([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
+					fetchIdeaChildrenData(id)
+						.then(([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
+							if (!isCurrent) return;
 							setIdeaChildren(updateIdeaChildren as IdeaFeedbackItem[]);
-							setHeadingIdxToComments(updateOidHeadingToFeedbackComments as Record<number, FeedbackComment[]>);
-						}
-					);
+							setHeadingIdxToComments(
+								updateOidHeadingToFeedbackComments as Record<number, FeedbackComment[]>
+							);
+						})
+						.catch((err) => {
+							// feedback children are auxiliary: the page still
+							// renders without them
+							console.error("failed to load feedback for idea", id, err);
+							if (isCurrent) setIdeaChildren([]);
+						});
 
 					setIsUnread(res.isUnread ?? false);
 					const ideaContent = {
@@ -83,10 +91,13 @@ export default function IdeaResultContent() {
 				}
 			})
 			.catch((err) => {
-				console.error("PROBABLY IDEA NOT FOUND WITH ID", ideaId);
-				setErrorFound(true);
-				setIsLoading(false);
-				throw err;
+				// no rethrow: this catch is the end of the chain, and a
+				// floating rejection would fire on every failed load
+				console.error("PROBABLY IDEA NOT FOUND WITH ID", ideaId, err);
+				if (isCurrent) {
+					setErrorFound(true);
+					setIsLoading(false);
+				}
 			});
 		return () => {
 			isCurrent = false;
@@ -178,32 +189,27 @@ export default function IdeaResultContent() {
 }
 
 async function fetchIdeaChildrenData(ideaId: string): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
-	const result = await getIdeaChildrenApi(ideaId)
-		.then((res) => {
-			const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
-			const ideaChildren = res.map((idea) => {
-				(idea.feedbackComments ?? []).map((comment: FeedbackComment) => {
-					const headingIdx = Number((comment.oidHeadingText ?? "").split("#")[0]);
-					const currMap: FeedbackComment[] = oidHeadingToFeedbackComments[headingIdx] || [];
-					currMap.push({
-						ideaId: idea.id,
-						creatorEmail: idea.creatorEmail,
-						creatorName: idea.creatorName,
-						createdAt: idea.createdAt,
-						matchedSpans: comment.matchedSpans,
-						feedbackText: comment.feedbackText,
-						labels: comment.labels
-					});
-					oidHeadingToFeedbackComments[headingIdx] = currMap;
+	const result = await getIdeaChildrenApi(ideaId).then((res) => {
+		const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
+		const ideaChildren = res.map((idea) => {
+			(idea.feedbackComments ?? []).map((comment: FeedbackComment) => {
+				const headingIdx = Number((comment.oidHeadingText ?? "").split("#")[0]);
+				const currMap: FeedbackComment[] = oidHeadingToFeedbackComments[headingIdx] || [];
+				currMap.push({
+					ideaId: idea.id,
+					creatorEmail: idea.creatorEmail,
+					creatorName: idea.creatorName,
+					createdAt: idea.createdAt,
+					matchedSpans: comment.matchedSpans,
+					feedbackText: comment.feedbackText,
+					labels: comment.labels
 				});
-				return { ...idea, isFeedback: true };
+				oidHeadingToFeedbackComments[headingIdx] = currMap;
 			});
-			return [ideaChildren as IdeaFeedbackItem[], oidHeadingToFeedbackComments];
-		})
-		.catch((err) => {
-			console.error("PROBABLY IDEA NOT FOUND WITH ID", ideaId, err);
-			throw err;
+			return { ...idea, isFeedback: true };
 		});
+		return [ideaChildren as IdeaFeedbackItem[], oidHeadingToFeedbackComments] as const;
+	});
 
 	return result as [IdeaFeedbackItem[], Record<number, FeedbackComment[]>];
 }
@@ -224,8 +230,9 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 				}
 			})
 			.catch((err) => {
-				console.error("PROBABLY IDEA NOT FOUND WITH ID", id);
-				throw err;
+				// best-effort flag: failing to mark read must not surface
+				// as an unhandled rejection
+				console.error("failed to mark idea as read", id, err);
 			});
 		return () => {
 			isCurrent = false;

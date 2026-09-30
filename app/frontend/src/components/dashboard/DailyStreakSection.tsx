@@ -9,11 +9,15 @@ export default function DailyStreakSection() {
 
 	useEffect(() => {
 		// TODO pulsing skeleton loading for text
-		getUserDailyStatusApi().then((resp) => {
-			setStreakCount(resp.streak);
-			setIntentIdeaId(resp.intentIdeaId ?? undefined);
-			setIsTodayIntentCompleted(resp.isCompleted);
-		});
+		getUserDailyStatusApi()
+			.then((resp) => {
+				setStreakCount(resp.streak);
+				setIntentIdeaId(resp.intentIdeaId ?? undefined);
+				setIsTodayIntentCompleted(resp.isCompleted);
+			})
+			.catch((err) => {
+				console.error("failed to load daily status", err);
+			});
 	}, []);
 
 	const renderTodayStatus = () => {
