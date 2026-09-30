@@ -27,5 +27,3 @@ export const setGettingStartedDone = (done: boolean): void => {
 		setFlag("has_done_getting_started");
 	}
 };
-export const hasSeenIndex = (): boolean => getFlag("has_seen_index") !== null;
-export const markIndexSeen = (): void => setFlag("has_seen_index");

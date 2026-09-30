@@ -12,9 +12,6 @@ export interface ResultSection {
 }
 
 /** A structured feedback document attached to imported feedback ideas. */
-export interface StructuredFeedback {
-	[key: string]: unknown;
-}
 
 /** A feedback comment grouped under a result-document heading. */
 export interface FeedbackComment {
@@ -63,7 +60,6 @@ export interface IdeaDetail extends CreatorInfo {
 	isUnread?: boolean | null;
 	transcript?: ChatMessage[] | null;
 	summary?: string | null;
-	sharedWithUsers?: unknown[] | null;
 	parentIdea?: (CreatorInfo & { id: string; title?: string | null }) | null;
 	resultJson?: ResultSection[] | null;
 }

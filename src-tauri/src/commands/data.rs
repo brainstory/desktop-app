@@ -194,6 +194,8 @@ pub async fn submit_log(
 	Ok(serde_json::json!({ "id": id }))
 }
 
+/// Not called by the desktop UI (kept from the web-app API surface for
+/// future parity; the reflection survey flow has no UI here yet).
 #[tauri::command]
 pub fn get_survey_fields() -> serde_json::Value {
 	serde_json::json!({ "ids": SURVEY_QUESTIONS, "range": 5 })

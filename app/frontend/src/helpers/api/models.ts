@@ -125,7 +125,3 @@ export function testLlmEndpointApi(): Promise<string> {
 export function testSttEndpointApi(): Promise<string> {
 	return invoke("test_stt_endpoint");
 }
-
-export function sendTestNotificationApi(): Promise<void> {
-	return invoke("send_test_notification");
-}

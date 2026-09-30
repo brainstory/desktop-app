@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-#[allow(dead_code)]
 pub struct SttEngine {
 	ctx: Arc<whisper_rs::WhisperContext>,
 	pub model_id: String,

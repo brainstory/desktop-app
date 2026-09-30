@@ -26,7 +26,6 @@ fn take_cancel_token(state: &AppState) -> Arc<AtomicBool> {
 
 #[tauri::command]
 pub async fn transcribe(
-	app: AppHandle,
 	state: State<'_, AppState>,
 	request: tauri::ipc::Request<'_>,
 ) -> Result<serde_json::Value, String> {
@@ -111,7 +110,6 @@ pub async fn transcribe(
 	.await
 	.map_err(|e| e.to_string())??;
 
-	let _ = app; // reserved for status events
 	Ok(serde_json::json!({ "transcript": transcript }))
 }
 

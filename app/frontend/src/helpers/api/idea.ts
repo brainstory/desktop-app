@@ -13,7 +13,6 @@ interface RawIdea {
 	is_unread?: boolean;
 	transcript?: ChatMessage[];
 	result?: string;
-	shared_with_users?: unknown[];
 	parent_idea?: RawIdea | null;
 	result_json?: unknown;
 }
@@ -45,7 +44,6 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 		isUnread: response?.is_unread,
 		transcript: response?.transcript,
 		summary: response?.result,
-		sharedWithUsers: response?.shared_with_users,
 		parentIdea: parentIdea,
 		resultJson: (response?.result_json ?? null) as IdeaDetail["resultJson"]
 	};

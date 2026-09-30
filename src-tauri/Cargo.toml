@@ -49,7 +49,6 @@ tokio = { version = "1", features = ["rt", "fs", "io-util", "sync", "time", "mac
 llama-cpp-2 = "=0.1.156"
 hound = "3"
 
-thiserror = "2"
 encoding_rs = "0.8"
 libc = "0.2"
 cpal = "0.18"

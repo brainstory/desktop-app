@@ -31,7 +31,6 @@ const MAX_THINK_TOKENS: u32 = 4096;
 /// checks stay responsive during long prompts.
 const PROMPT_DECODE_CHUNK: usize = 512;
 
-#[allow(dead_code)]
 /// Break control-token-shaped sequences ("<start_of_turn>",
 /// "<end_of_turn>", and every "<|...|>" ChatML/Llama-style marker) so
 /// tokenizing the text with parse_special=true can never turn

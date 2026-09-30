@@ -87,7 +87,6 @@ export default function IdeaResultContent() {
 						summary: res.summary,
 						transcript: res.transcript,
 						isUnread: res.isUnread,
-						numOfShares: res.sharedWithUsers?.length ?? 0,
 						creatorEmail: res.creatorEmail,
 						creatorName: res.creatorName,
 						resultJson: res.resultJson

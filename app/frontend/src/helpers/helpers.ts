@@ -91,13 +91,3 @@ export async function callApiWithRetry<T>(
 			});
 	});
 }
-
-/**
- * Local avatar placeholder (no external requests in the desktop app).
- * Renders the first letter of the name/email on a pink disc.
- */
-export function getGravatarUrl(emailOrName?: string | null): string {
-	const letter = (emailOrName || "?").trim().charAt(0).toUpperCase() || "?";
-	const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='64' height='64' rx='32' fill='#fce7f3'/><text x='32' y='42' font-family='sans-serif' font-size='28' font-weight='600' fill='#db2777' text-anchor='middle'>${letter}</text></svg>`;
-	return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}

@@ -160,13 +160,3 @@ pub struct ModelStatus {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub filename: Option<String>,
 }
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[allow(dead_code)]
-pub struct RuntimeStatus {
-	pub state: String,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub model_id: Option<String>,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub error: Option<String>,
-}
