@@ -35,8 +35,6 @@ jobs:
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       REQUIRE_MACOS26_SDK: "1"
     steps:
       - uses: actions/checkout@v7
@@ -76,9 +74,11 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
           "
 
+      # Nightly artifacts are never published to the update feed, so they
+      # are not signed at all (no updater artifacts are produced).
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --bundles app
+        run: pnpm tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Package DMG (macOS)
         if: runner.os == 'macOS'
@@ -86,11 +86,11 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build --bundles nsis
+        run: pnpm tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'

@@ -27,8 +27,6 @@ jobs:
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       REQUIRE_MACOS26_SDK: "1"
     steps:
       - uses: actions/checkout@v7
@@ -67,8 +65,14 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
           "
 
+      # The updater signing key is scoped to the build steps ONLY: a
+      # job-level env would expose the production key to every step
+      # (checkout, pnpm postinstall scripts, crate build.rs, apt-get).
       - name: Build (macOS)
         if: runner.os == 'macOS'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles app
 
       # tauri's own dmg bundler needs Finder/AppleScript; use the repo's
@@ -79,10 +83,16 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles nsis
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles deb rpm appimage
 
       - name: Upload updater artifacts (macOS)
