@@ -1,8 +1,8 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
-// Mirrors the path aliases in tsconfig.json so helper tests can import
-// through the same "@..." specifiers the app code uses.
+// Mirrors the path aliases in tsconfig.json so tests can import through
+// the same "@..." specifiers the app code uses.
 const resolveFromRoot = (p) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
@@ -16,7 +16,15 @@ export default defineConfig({
 		}
 	},
 	test: {
-		environment: "node",
-		include: ["src/**/*.test.ts"]
+		environment: "jsdom",
+		include: ["src/**/*.test.{ts,tsx}"],
+		setupFiles: ["src/test/setup.ts"],
+		coverage: {
+			provider: "v8",
+			thresholds: {
+				// starting floor; raise as component coverage grows
+				lines: 50
+			}
+		}
 	}
 });

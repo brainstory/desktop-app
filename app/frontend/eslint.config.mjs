@@ -6,13 +6,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
 	{
-		ignores: [
-			"dist/**",
-			"node_modules/**",
-			".astro/**",
-			"public/vendor/**",
-			"src/**/*.test.ts"
-		]
+		ignores: ["dist/**", "node_modules/**", ".astro/**", "public/vendor/**"]
 	},
 	js.configs.recommended,
 	...tseslint.configs.recommended,

@@ -43,7 +43,8 @@ describe("cn", () => {
 	});
 
 	it("skips falsy values", () => {
-		expect(cn("a", undefined, false && "b", null, "c")).toBe("a c");
+		const empty: string | false = false;
+		expect(cn("a", undefined, empty && "b", null, "c")).toBe("a c");
 	});
 
 	it("returns an empty string for no input", () => {
