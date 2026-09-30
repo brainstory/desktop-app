@@ -21,14 +21,10 @@ const setFlag = (name: string, value = "true"): void => {
 export const hasDoneGettingStarted = (): boolean => getFlag("has_done_getting_started") !== null;
 export const markGettingStartedDone = (): void => setFlag("has_done_getting_started");
 export const setGettingStartedDone = (done: boolean): void => {
+	// Monotonic: once the flag is set it is never cleared - deleting
+	// your ideas must not resurrect onboarding.
 	if (done) {
 		setFlag("has_done_getting_started");
-	} else {
-		try {
-			localStorage.removeItem("has_done_getting_started");
-		} catch {
-			// ignore
-		}
 	}
 };
 export const hasSeenIndex = (): boolean => getFlag("has_seen_index") !== null;

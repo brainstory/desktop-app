@@ -39,17 +39,23 @@ export default function DashboardSection() {
 	}, []);
 
 	// derived during render
-	const hasCreatedIdea =
-		userIdeas?.reduce((acc: boolean, idea: IdeaListItem) => acc || !idea.creatorEmail, false) ?? false;
-	const showGetStarted = !hasCreatedIdea;
+	// An "own" idea is one without creator attribution (imports carry
+	// creatorName) - the same definition the idea page uses. The library
+	// grid shows whenever ANY idea exists: an imported-only library is a
+	// library too.
+	const userIdeasList = userIdeas ?? [];
+	const hasOwnIdea = userIdeasList.some((idea) => !idea.creatorName);
+	const showGetStarted = userIdeasList.length === 0;
 
 	useEffect(() => {
-		if (userIdeas) {
+		if (userIdeas && hasOwnIdea) {
 			// keep the onboarding flag in sync with reality (e.g. for past
-			// users who already created ideas before /get-started existed)
-			setGettingStartedDone(hasCreatedIdea);
+			// users who already created ideas before /get-started existed).
+			// Monotonic: deleting every own idea must not resurrect
+			// onboarding.
+			setGettingStartedDone(true);
 		}
-	}, [userIdeas, hasCreatedIdea]);
+	}, [userIdeas, hasOwnIdea]);
 
 	const handleImport = () => {
 		importShareApi()
