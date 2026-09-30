@@ -293,9 +293,14 @@ fn open_database(data_dir: &std::path::Path) -> Result<db::Db, String> {
 			if let Err(rename_err) = std::fs::rename(&db_path, &corrupt) {
 				log::error!("failed to quarantine the corrupt database: {rename_err}");
 			}
-			// move WAL sidecars along with it so the fresh DB starts clean
-			for ext in ["wal", "shm"] {
-				let _ = std::fs::rename(db_path.with_extension(ext), corrupt.with_extension(ext));
+			// move WAL sidecars along with it so the fresh DB starts clean.
+			// SQLite names them <db>-wal / <db>-shm (not <stem>.wal), and
+			// with_extension would also mangle the quarantine stamp.
+			for suffix in ["-wal", "-shm"] {
+				let _ = std::fs::rename(
+					append_file_suffix(&db_path, suffix),
+					append_file_suffix(&corrupt, suffix),
+				);
 			}
 			db::Db::open(&db_path).map_err(|e| {
 				format!(
@@ -305,6 +310,17 @@ fn open_database(data_dir: &std::path::Path) -> Result<db::Db, String> {
 		}
 		Err(e) => Err(format!("could not open the database: {e}")),
 	}
+}
+
+/// `path` with `suffix` appended to its file name
+/// (`dir/brainstory.db` + `-wal` -> `dir/brainstory.db-wal`).
+fn append_file_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+	let mut name = path
+		.file_name()
+		.map(|n| n.to_os_string())
+		.unwrap_or_default();
+	name.push(suffix);
+	path.with_file_name(name)
 }
 
 /// True only for errors that actually indicate a corrupt/unreadable file -
@@ -501,4 +517,88 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 			}
 		}
 	});
+}
+
+#[cfg(test)]
+mod tests {
+	use super::open_database;
+
+	#[test]
+	fn open_database_quarantines_corrupt_file_and_sidecars() {
+		let dir =
+			std::env::temp_dir().join(format!("brainstory-quarantine-{}", uuid::Uuid::new_v4()));
+		std::fs::create_dir_all(&dir).expect("make temp dir");
+		let db_path = dir.join("brainstory.db");
+		// a real WAL-mode database truncated mid-page opens with
+		// SQLITE_CORRUPT (not NOTADB), so the quarantine path runs
+		{
+			let conn = rusqlite::Connection::open(&db_path).unwrap();
+			conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(a);")
+				.unwrap();
+		}
+		let data = std::fs::read(&db_path).unwrap();
+		assert!(data.len() > 512, "expected a multi-page database");
+		std::fs::write(&db_path, &data[..512]).unwrap();
+		let marker = b"STALE SIDECAR MARKER";
+		std::fs::write(dir.join("brainstory.db-wal"), marker).unwrap();
+		std::fs::write(dir.join("brainstory.db-shm"), marker).unwrap();
+
+		let db = open_database(&dir).expect("quarantine the corrupt file and start fresh");
+		drop(db);
+
+		// a fresh database exists at the canonical path
+		assert!(db_path.is_file(), "a fresh brainstory.db must exist");
+
+		// the corrupt main file moved to a stamped quarantine name
+		let names: Vec<String> = std::fs::read_dir(&dir)
+			.unwrap()
+			.filter_map(|e| e.ok())
+			.map(|e| e.file_name().to_string_lossy().into_owned())
+			.collect();
+		assert!(
+			names
+				.iter()
+				.any(|n| n.starts_with("brainstory.db.corrupt-")),
+			"quarantined main file present: {names:?}"
+		);
+
+		// Stale sidecar content must never survive next to the fresh
+		// database, whichever mechanism removed it (SQLite's own
+		// close-time cleanup during the failed open, or the quarantine
+		// renames that run when that best-effort cleanup fails - locked
+		// files, Windows, ...). A fresh brainstory.db-wal may exist, but
+		// it must not contain the old bytes.
+		for entry in std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()) {
+			let bytes = std::fs::read(entry.path()).unwrap();
+			assert!(
+				!bytes.windows(marker.len()).any(|w| w == marker),
+				"stale sidecar content survived in {}",
+				entry.path().display()
+			);
+		}
+		std::fs::remove_dir_all(&dir).ok();
+	}
+
+	#[test]
+	fn append_file_suffix_builds_sqlite_sidecar_names() {
+		let dir = std::path::Path::new("/tmp");
+		let db = dir.join("brainstory.db");
+		// SQLite sidecars append to the full file name; with_extension
+		// would produce brainstory.wal instead of brainstory.db-wal
+		assert_eq!(
+			super::append_file_suffix(&db, "-wal"),
+			dir.join("brainstory.db-wal")
+		);
+		assert_eq!(
+			super::append_file_suffix(&db, "-shm"),
+			dir.join("brainstory.db-shm")
+		);
+		// the quarantine stamp must survive too (with_extension would
+		// collapse brainstory.db.corrupt-STAMP-wal to brainstory.db.wal)
+		let stamped = dir.join("brainstory.db.corrupt-20260101-000000");
+		assert_eq!(
+			super::append_file_suffix(&stamped, "-wal"),
+			dir.join("brainstory.db.corrupt-20260101-000000-wal")
+		);
+	}
 }
