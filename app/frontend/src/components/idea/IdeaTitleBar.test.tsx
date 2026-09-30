@@ -20,7 +20,7 @@ function renderBar(overrides: Partial<IdeaDetail> = {}) {
 }
 
 async function startEditing(user: ReturnType<typeof userEvent.setup>) {
-	await user.click(screen.getByRole("button", { name: "Start editing" }));
+	await user.click(screen.getByRole("button", { name: "Rename idea" }));
 	return screen.getByLabelText("Idea title");
 }
 

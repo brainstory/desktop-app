@@ -47,7 +47,7 @@ export default function IdeaCard({
 					New
 				</span>
 			)}
-			<FeedbackStack ideaId={id} feedback={feedback} />
+			<FeedbackStack feedback={feedback} />
 			<div className="relative bg-white border border-stone-200 rounded-lg">
 				<div className={`${cardHeight} p-6 rounded-lg`}>
 					<div>
@@ -97,11 +97,10 @@ export default function IdeaCard({
 }
 
 interface FeedbackStackProps {
-	ideaId: string;
 	feedback?: IdeaListItem[] | null | undefined;
 }
 
-function FeedbackStack({ ideaId, feedback = [] }: FeedbackStackProps) {
+function FeedbackStack({ feedback = [] }: FeedbackStackProps) {
 	return (
 		<>
 			{feedback &&
@@ -124,18 +123,17 @@ function FeedbackStack({ ideaId, feedback = [] }: FeedbackStackProps) {
 						2: `rotate-2 group-hover:top-1 group-hover:bg-stone-50 ${sharedCardPart} group-hover:shadow`
 					};
 
-					return (
-						<div
-							key={`${index}-feedback-card`}
-							className={classNameBasedOnIndex[index]}
-							onClick={(e) => {
-								e.stopPropagation();
-								window.location.href = `/idea?id=${ideaId}&tab=feedback`;
-							}}
-						>
-							<div className="rounded-lg"></div>
-						</div>
-					);
+				return (
+					// decorative layer (the explicit feedback link is the
+					// action); never focusable or clickable on its own
+					<div
+						key={`${index}-feedback-card`}
+						aria-hidden="true"
+						className={`pointer-events-none ${classNameBasedOnIndex[index]}`}
+					>
+						<div className="rounded-lg"></div>
+					</div>
+				);
 				})}
 		</>
 	);

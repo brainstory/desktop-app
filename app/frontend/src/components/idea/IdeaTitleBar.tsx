@@ -192,21 +192,14 @@ export default function IdeaTitleBar({
 					)}
 					<div className="flex flex-col">
 						<div className="flex flex-row text-left text-base text-stone-900">
-							{!isEditing && (
-								<div className="flex flex-row items-center relative group">
-									<button onClick={startEditing}>
-										<h1
-											className="group-hover:underline underline-offset-2 decoration-dotted rounded cursor-text md:mr-2 relative"
-											title="Rename"
-										>
-											{editedTitle}
-										</h1>
-									</button>
-									<button
-										onClick={startEditing}
-										aria-label="Start editing"
-										className="disabled:text-stone-400 hover:bg-stone-200 self-center p-1 leading-none rounded-full"
-									>
+						{!isEditing && (
+							<div className="flex flex-row items-center relative group">
+								<h1 className="md:mr-2 relative">{editedTitle}</h1>
+								<button
+									onClick={startEditing}
+									aria-label="Rename idea"
+									className="disabled:text-stone-400 hover:bg-stone-200 self-center p-1 leading-none rounded-full"
+								>
 										<ion-icon
 											class="w-4 h-4 hydrated pointer-events-none"
 											name="create-outline"

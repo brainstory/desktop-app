@@ -53,32 +53,41 @@ export default function IdeaFeedbackCard({
 		focusSection?.(feedback);
 	}
 
+	// A real button (keyboard focus + activation for free) with the
+	// show-more toggle OUTSIDE it - a button inside a button is invalid.
 	return (
-		<div id={ideaId} className={containerClasses} role="button" onClick={feedbackClicked}>
-			<div className="flex mb-2 items-end">
-				<EmojiItem
-					ideaId={ideaId}
-					labels={labels}
-					creatorEmail={creatorEmail}
-					creatorName={creatorName}
-					isBlue={false}
-					labelsHasBorder={true}
-					style="mr-1"
-				/>
-				<p className="ml-1 text-xs text-stone-500">
-					{formatISO8601ToHumanReadable(createdAt ?? "")}
+		<div id={ideaId} className={containerClasses}>
+			<button
+				type="button"
+				className="w-full text-left cursor-pointer"
+				onClick={feedbackClicked}
+			>
+				<div className="flex mb-2 items-end">
+					<EmojiItem
+						ideaId={ideaId}
+						labels={labels}
+						creatorEmail={creatorEmail}
+						creatorName={creatorName}
+						isBlue={false}
+						labelsHasBorder={true}
+						style="mr-1"
+					/>
+					<p className="ml-1 text-xs text-stone-500">
+						{formatISO8601ToHumanReadable(createdAt ?? "")}
+					</p>
+				</div>
+				<p
+					ref={ref}
+					className={`text-sm leading-snug ${!isShowingMore && "line-clamp-5"}`}
+				>
+					{feedbackText}
 				</p>
-			</div>
-			<p ref={ref} className={`text-sm leading-snug ${!isShowingMore && "line-clamp-5"}`}>
-				{feedbackText}
-			</p>
+			</button>
 			{isTruncated && (
 				<button
+					type="button"
 					className="mt-2 text-xs text-stone-500"
-					onClick={(event) => {
-						event.stopPropagation();
-						setIsShowingMore((prev) => !prev);
-					}}
+					onClick={() => setIsShowingMore((prev) => !prev)}
 				>
 					{isShowingMore ? "show less" : "show more"}
 				</button>
