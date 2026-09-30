@@ -10,70 +10,92 @@ use crate::types::ModelStatus;
 use crate::AppState;
 
 #[tauri::command]
-pub fn list_models(state: State<'_, AppState>) -> serde_json::Value {
-	let settings = AiSettings::load(&state.db);
-	let build = |kind: ModelKind| -> Vec<ModelStatus> {
-		let list: &[crate::models::ModelSpec] = match kind {
-			ModelKind::Llm => &crate::models::LLM_MODELS,
-			ModelKind::Stt => &crate::models::STT_MODELS,
-		};
-		let progress = state
-			.download_progress
-			.lock()
-			.unwrap_or_else(|e| e.into_inner());
-		list.iter()
-			.map(|spec| ModelStatus {
-				id: spec.id.to_string(),
-				label: spec.label.to_string(),
-				description: spec.description.to_string(),
-				kind: match kind {
-					ModelKind::Llm => "llm",
-					ModelKind::Stt => "stt",
-				}
-				.to_string(),
-				size_bytes: spec.size_bytes,
-				downloaded: state.is_model_downloaded(spec),
-				active: match kind {
-					ModelKind::Llm => settings.llm_mode == "local" && settings.llm_model == spec.id,
-					// A whisper model is only "active" when whisper actually
-					// handles local transcription (Apple Speech mode demotes it
-					// to fallback).
-					ModelKind::Stt => {
-						settings.stt_model == spec.id && settings.effective_stt_engine() != "apple"
+pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+	// async command body runs on the runtime, and the blocking work
+	// (DB reads, progress-lock scans, file-existence checks for every
+	// catalog entry) stays off it - and off the main thread, where a
+	// sync command would run it.
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app.state::<AppState>();
+		let settings = AiSettings::load(&state.db);
+		let build = |kind: ModelKind| -> Vec<ModelStatus> {
+			let list: &[crate::models::ModelSpec] = match kind {
+				ModelKind::Llm => &crate::models::LLM_MODELS,
+				ModelKind::Stt => &crate::models::STT_MODELS,
+			};
+			let progress = state
+				.download_progress
+				.lock()
+				.unwrap_or_else(|e| e.into_inner());
+			list.iter()
+				.map(|spec| ModelStatus {
+					id: spec.id.to_string(),
+					label: spec.label.to_string(),
+					description: spec.description.to_string(),
+					kind: match kind {
+						ModelKind::Llm => "llm",
+						ModelKind::Stt => "stt",
 					}
-				},
-				downloading: progress.contains_key(spec.id),
-				progress: progress.get(spec.id).copied(),
-				filename: Some(spec.filename.to_string()),
-			})
-			.collect()
-	};
+					.to_string(),
+					size_bytes: spec.size_bytes,
+					downloaded: state.is_model_downloaded(spec),
+					active: match kind {
+						ModelKind::Llm => {
+							settings.llm_mode == "local" && settings.llm_model == spec.id
+						}
+						// A whisper model is only "active" when whisper actually
+						// handles local transcription (Apple Speech mode demotes it
+						// to fallback).
+						ModelKind::Stt => {
+							settings.stt_model == spec.id
+								&& settings.effective_stt_engine() != "apple"
+						}
+					},
+					downloading: progress.contains_key(spec.id),
+					progress: progress.get(spec.id).copied(),
+					filename: Some(spec.filename.to_string()),
+				})
+				.collect()
+		};
 
-	json!({
-		"llm": build(ModelKind::Llm),
-		"stt": build(ModelKind::Stt),
+		Ok(json!({
+			"llm": build(ModelKind::Llm),
+			"stt": build(ModelKind::Stt),
+		}))
 	})
+	.await
+	.map_err(|e| format!("list models task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn get_runtime_status(state: State<'_, AppState>) -> serde_json::Value {
-	json!({
-		"llm": state.llm_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-		"stt": state.stt_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+pub async fn get_runtime_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app.state::<AppState>();
+		Ok(json!({
+			"llm": state.llm_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+			"stt": state.stt_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+		}))
 	})
+	.await
+	.map_err(|e| format!("runtime status task failed: {e}"))?
 }
 
 /// Availability and locale support of the built-in Apple Speech engine
 /// (macOS 26+). Powers the engine selector and language picker in settings.
 #[tauri::command]
-pub fn get_apple_stt_status() -> serde_json::Value {
-	let status = crate::stt_apple::status();
-	json!({
-		"available": status.available,
-		"authorized": status.authorized,
-		"supportedLocales": status.supported_locales,
-		"installedLocales": status.installed_locales,
+pub async fn get_apple_stt_status() -> Result<serde_json::Value, String> {
+	// the Swift bridge blocks (locale enumeration, permission state)
+	tauri::async_runtime::spawn_blocking(|| {
+		let status = crate::stt_apple::status();
+		Ok(json!({
+			"available": status.available,
+			"authorized": status.authorized,
+			"supportedLocales": status.supported_locales,
+			"installedLocales": status.installed_locales,
+		}))
 	})
+	.await
+	.map_err(|e| format!("apple stt status task failed: {e}"))?
 }
 
 /// Free space (bytes) on the volume holding the models directory, so the
@@ -81,8 +103,13 @@ pub fn get_apple_stt_status() -> serde_json::Value {
 /// that runs out of space still fails cleanly through the normal error
 /// path (hash/size verification catches the truncated file).
 #[tauri::command]
-pub fn get_free_disk_space(state: State<'_, AppState>) -> Result<u64, String> {
-	fs4::available_space(state.models_dir()).map_err(|e| e.to_string())
+pub async fn get_free_disk_space(state: State<'_, AppState>) -> Result<u64, String> {
+	let models_dir = state.models_dir();
+	tauri::async_runtime::spawn_blocking(move || {
+		fs4::available_space(&models_dir).map_err(|e| e.to_string())
+	})
+	.await
+	.map_err(|e| format!("disk space task failed: {e}"))?
 }
 
 /// Removes the download's bookkeeping entries when dropped, so even a
@@ -262,68 +289,71 @@ pub async fn download_model(
 }
 
 #[tauri::command]
-pub fn delete_model(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-	model_id: String,
-) -> Result<(), String> {
-	let spec = find_model(&model_id, ModelKind::Llm)
-		.or_else(|| find_model(&model_id, ModelKind::Stt))
-		.ok_or_else(|| format!("unknown model {model_id}"))?;
-	{
-		let progress = state
-			.download_progress
-			.lock()
-			.unwrap_or_else(|e| e.into_inner());
-		if progress.contains_key(&model_id) {
-			return Err("model is currently downloading".into());
-		}
-	}
-	// A load of this model running in the background would re-install the
-	// engine right after deletion; refuse until it finishes.
-	match spec.kind {
-		ModelKind::Llm => {
-			if state.llm_loading.load(Ordering::SeqCst) {
-				return Err("model is currently loading - try again in a moment".into());
+pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+	// Dropping the mmapped engine and removing a multi-GB file can stall
+	// for seconds; never do that on the main thread (a sync command).
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app.state::<AppState>();
+		let spec = find_model(&model_id, ModelKind::Llm)
+			.or_else(|| find_model(&model_id, ModelKind::Stt))
+			.ok_or_else(|| format!("unknown model {model_id}"))?;
+		{
+			let progress = state
+				.download_progress
+				.lock()
+				.unwrap_or_else(|e| e.into_inner());
+			if progress.contains_key(&model_id) {
+				return Err("model is currently downloading".into());
 			}
 		}
-		ModelKind::Stt => {
-			if state.stt_loading.load(Ordering::SeqCst) {
-				return Err("model is currently loading - try again in a moment".into());
+		// A load of this model running in the background would re-install the
+		// engine right after deletion; refuse until it finishes.
+		match spec.kind {
+			ModelKind::Llm => {
+				if state.llm_loading.load(Ordering::SeqCst) {
+					return Err("model is currently loading - try again in a moment".into());
+				}
+			}
+			ModelKind::Stt => {
+				if state.stt_loading.load(Ordering::SeqCst) {
+					return Err("model is currently loading - try again in a moment".into());
+				}
 			}
 		}
-	}
-	let path = state.model_path(spec);
-	// Unload the engine BEFORE deleting the file: the loaded engine mmaps
-	// the model, and on Windows an open mmap makes remove_file fail.
-	let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
-	let llm_gone =
-		runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
-	let stt_gone =
-		runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
-	if llm_gone {
-		runtime.llm = None;
-	}
-	if stt_gone {
-		runtime.stt = None;
-	}
-	drop(runtime);
+		let path = state.model_path(spec);
+		// Unload the engine BEFORE deleting the file: the loaded engine mmaps
+		// the model, and on Windows an open mmap makes remove_file fail.
+		let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
+		let llm_gone =
+			runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+		let stt_gone =
+			runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
+		if llm_gone {
+			runtime.llm = None;
+		}
+		if stt_gone {
+			runtime.stt = None;
+		}
+		drop(runtime);
 
-	if path.exists() {
-		std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-	}
+		if path.exists() {
+			std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+		}
 
-	if llm_gone {
-		*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-			crate::models::EngineStatus::new("missing", None, None);
-		state.emit_llm_status(&app);
-	}
-	if stt_gone {
-		*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-			crate::models::EngineStatus::new("missing", None, None);
-		state.emit_stt_status(&app);
-	}
-	Ok(())
+		if llm_gone {
+			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
+				crate::models::EngineStatus::new("missing", None, None);
+			state.emit_llm_status(&app);
+		}
+		if stt_gone {
+			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+				crate::models::EngineStatus::new("missing", None, None);
+			state.emit_stt_status(&app);
+		}
+		Ok(())
+	})
+	.await
+	.map_err(|e| format!("delete task failed: {e}"))?
 }
 
 /// Cancel an in-flight download. The token is checked between chunks, so

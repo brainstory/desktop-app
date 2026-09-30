@@ -136,114 +136,122 @@ pub async fn save_user_settings(
 }
 
 #[tauri::command]
-pub fn get_ai_settings(state: State<'_, AppState>) -> serde_json::Value {
-	let s = AiSettings::load(&state.db);
-	// Secrets are never echoed to the webview: the form gets a "is one
-	// stored" flag plus a masked hint; saving absent/null keeps the stored
-	// value and an empty string clears it.
-	let masked = |value: &str| -> (bool, Option<String>) {
-		if value.is_empty() {
-			return (false, None);
-		}
-		let tail: String = value
-			.chars()
-			.skip(value.chars().count().saturating_sub(4))
-			.collect();
-		(true, Some(format!("••••{tail}")))
-	};
-	let (hf_set, hf_hint) = masked(&s.hf_token);
-	let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
-	let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
-	// camelCase to match the frontend's field access
-	serde_json::json!({
-		"llmMode": s.llm_mode,
-		"llmModel": s.llm_model,
-		"sttModel": s.stt_model,
-		"sttEngine": s.stt_engine,
-		"sttLanguage": s.stt_language,
-		"hfTokenSet": hf_set,
-		"hfTokenHint": hf_hint,
-		"extLlmBaseUrl": s.ext_llm_base_url,
-		"extLlmApiKeySet": llm_key_set,
-		"extLlmApiKeyHint": llm_key_hint,
-		"extLlmModel": s.ext_llm_model,
-		"extSttBaseUrl": s.ext_stt_base_url,
-		"extSttApiKeySet": stt_key_set,
-		"extSttApiKeyHint": stt_key_hint,
-		"extSttModel": s.ext_stt_model,
+pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+	// AiSettings::load does keychain reads; keep them off the main thread
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app.state::<AppState>();
+		let s = AiSettings::load(&state.db);
+		// Secrets are never echoed to the webview: the form gets a "is one
+		// stored" flag plus a masked hint; saving absent/null keeps the stored
+		// value and an empty string clears it.
+		let masked = |value: &str| -> (bool, Option<String>) {
+			if value.is_empty() {
+				return (false, None);
+			}
+			let tail: String = value
+				.chars()
+				.skip(value.chars().count().saturating_sub(4))
+				.collect();
+			(true, Some(format!("••••{tail}")))
+		};
+		let (hf_set, hf_hint) = masked(&s.hf_token);
+		let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
+		let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
+		// camelCase to match the frontend's field access
+		Ok(serde_json::json!({
+			"llmMode": s.llm_mode,
+			"llmModel": s.llm_model,
+			"sttModel": s.stt_model,
+			"sttEngine": s.stt_engine,
+			"sttLanguage": s.stt_language,
+			"hfTokenSet": hf_set,
+			"hfTokenHint": hf_hint,
+			"extLlmBaseUrl": s.ext_llm_base_url,
+			"extLlmApiKeySet": llm_key_set,
+			"extLlmApiKeyHint": llm_key_hint,
+			"extLlmModel": s.ext_llm_model,
+			"extSttBaseUrl": s.ext_stt_base_url,
+			"extSttApiKeySet": stt_key_set,
+			"extSttApiKeyHint": stt_key_hint,
+			"extSttModel": s.ext_stt_model,
+		}))
 	})
+	.await
+	.map_err(|e| format!("ai settings task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn save_ai_settings(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-	ai: serde_json::Value,
-) -> Result<(), String> {
-	let mut settings = AiSettings::load(&state.db);
-	let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
+pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> Result<(), String> {
+	// keychain reads/writes plus the settings-row write are blocking work
+	tauri::async_runtime::spawn_blocking(move || {
+		let state = app.state::<AppState>();
+		let mut settings = AiSettings::load(&state.db);
+		let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
 
-	if let Some(v) = get_str("llmMode") {
-		settings.llm_mode = v;
-	}
-	if let Some(v) = get_str("llmModel") {
-		settings.llm_model = v;
-	}
-	if let Some(v) = get_str("sttModel") {
-		settings.stt_model = v;
-	}
-	if let Some(v) = get_str("sttEngine") {
-		if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
-			return Err(format!(
-				"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
-			));
+		if let Some(v) = get_str("llmMode") {
+			settings.llm_mode = v;
 		}
-		settings.stt_engine = v;
-	}
-	if let Some(v) = get_str("sttLanguage") {
-		// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
-		let cleaned = v.trim();
-		if !cleaned.is_empty() {
-			let valid = cleaned.len() <= 16
-				&& cleaned
-					.chars()
-					.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-			if !valid {
+		if let Some(v) = get_str("llmModel") {
+			settings.llm_model = v;
+		}
+		if let Some(v) = get_str("sttModel") {
+			settings.stt_model = v;
+		}
+		if let Some(v) = get_str("sttEngine") {
+			if !matches!(v.as_str(), "auto" | "apple" | "whisper") {
 				return Err(format!(
-					"invalid sttLanguage '{cleaned}' (expected a locale like en-US)"
+					"invalid sttEngine '{v}' (expected auto, apple, or whisper)"
 				));
 			}
-			settings.stt_language = cleaned.to_string();
+			settings.stt_engine = v;
 		}
-	}
-	if let Some(v) = get_str("extLlmBaseUrl") {
-		settings.ext_llm_base_url = v;
-	}
-	if let Some(v) = get_str("extLlmModel") {
-		settings.ext_llm_model = v;
-	}
-	if let Some(v) = get_str("extSttBaseUrl") {
-		settings.ext_stt_base_url = v;
-	}
-	if let Some(v) = get_str("extSttModel") {
-		settings.ext_stt_model = v;
-	}
-	// Secrets: the real value never comes back to the webview, so an
-	// absent/null field keeps the stored value and an explicit "" clears it.
-	if let Some(v) = get_str("hfToken") {
-		settings.hf_token = v;
-	}
-	if let Some(v) = get_str("extLlmApiKey") {
-		settings.ext_llm_api_key = v;
-	}
-	if let Some(v) = get_str("extSttApiKey") {
-		settings.ext_stt_api_key = v;
-	}
-	settings.save(&state.db)?;
+		if let Some(v) = get_str("sttLanguage") {
+			// BCP-47-ish locale id ("en-US"); short, letters/digits/hyphen only.
+			let cleaned = v.trim();
+			if !cleaned.is_empty() {
+				let valid = cleaned.len() <= 16
+					&& cleaned
+						.chars()
+						.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+				if !valid {
+					return Err(format!(
+						"invalid sttLanguage '{cleaned}' (expected a locale like en-US)"
+					));
+				}
+				settings.stt_language = cleaned.to_string();
+			}
+		}
+		if let Some(v) = get_str("extLlmBaseUrl") {
+			settings.ext_llm_base_url = v;
+		}
+		if let Some(v) = get_str("extLlmModel") {
+			settings.ext_llm_model = v;
+		}
+		if let Some(v) = get_str("extSttBaseUrl") {
+			settings.ext_stt_base_url = v;
+		}
+		if let Some(v) = get_str("extSttModel") {
+			settings.ext_stt_model = v;
+		}
+		// Secrets: the real value never comes back to the webview, so an
+		// absent/null field keeps the stored value and an explicit "" clears it.
+		if let Some(v) = get_str("hfToken") {
+			settings.hf_token = v;
+		}
+		if let Some(v) = get_str("extLlmApiKey") {
+			settings.ext_llm_api_key = v;
+		}
+		if let Some(v) = get_str("extSttApiKey") {
+			settings.ext_stt_api_key = v;
+		}
+		settings.save(&state.db)?;
 
-	// Activate models that are ready to go with the new settings.
-	crate::spawn_model_loader(app.clone(), settings);
-	Ok(())
+		// Activate models that are ready to go with the new settings.
+		crate::spawn_model_loader(app.clone(), settings);
+		Ok(())
+	})
+	.await
+	.map_err(|e| format!("save ai settings task failed: {e}"))?
 }
 
 #[tauri::command]
