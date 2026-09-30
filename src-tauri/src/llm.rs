@@ -568,7 +568,7 @@ impl ExternalLlm {
 		.map_err(|e| format!("request failed: {e}"))?;
 		if !response.status().is_success() {
 			let status = response.status();
-			let body = response.text().await.unwrap_or_default();
+			let body = read_body_capped(response, 64 * 1024, Self::CHUNK_IDLE_TIMEOUT_SECS).await;
 			return Err(map_provider_error(status.as_u16(), &body));
 		}
 		let content_type = response
@@ -578,7 +578,7 @@ impl ExternalLlm {
 			.unwrap_or("")
 			.to_ascii_lowercase();
 		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
-			let body = response.text().await.unwrap_or_default();
+			let body = read_body_capped(response, 64 * 1024, Self::CHUNK_IDLE_TIMEOUT_SECS).await;
 			return Err(format!(
 				"endpoint did not return an SSE stream (content-type {content_type}): {}",
 				truncate_body(&body)
@@ -634,6 +634,33 @@ impl ExternalLlm {
 		}
 		Ok((output, None))
 	}
+}
+
+/// Read a response body with both a per-chunk idle deadline and a size
+/// cap, so a broken or hostile endpoint can neither hang the caller nor
+/// exhaust memory. Returns whatever arrived (lossy-decoded) until the
+/// cap, the stream end, or the stall; display-only bodies should use a
+/// small cap.
+pub(crate) async fn read_body_capped(
+	response: reqwest::Response,
+	cap: usize,
+	idle_timeout_secs: u64,
+) -> String {
+	use futures_util::StreamExt;
+	let mut stream = response.bytes_stream();
+	let mut body: Vec<u8> = Vec::new();
+	let idle = std::time::Duration::from_secs(idle_timeout_secs);
+	while body.len() < cap {
+		let chunk = match tokio::time::timeout(idle, stream.next()).await {
+			Err(_) => break, // stalled: keep what arrived so far
+			Ok(Some(Ok(c))) => c,
+			Ok(Some(Err(_))) => break, // transport error: same
+			Ok(None) => break,         // stream end
+		};
+		let room = cap - body.len();
+		body.extend_from_slice(&chunk[..room.min(chunk.len())]);
+	}
+	String::from_utf8_lossy(&body).into_owned()
 }
 
 /// Parse one SSE event's `data:` lines, appending content deltas. Returns
@@ -730,7 +757,57 @@ fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
-	use super::ThinkFilter;
+	use super::{read_body_capped, ThinkFilter};
+
+	/// Serve raw bytes as an HTTP response on a loopback listener; the
+	/// socket stays open until dropped so slow/never-ending bodies can
+	/// be simulated.
+	fn serve_raw(response: Vec<u8>) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let _ = sock.write_all(&response);
+				let _ = sock.flush();
+				// hold the connection open so the body has no stream end
+				std::thread::sleep(std::time::Duration::from_millis(1_500));
+			}
+		});
+		format!("http://{addr}/")
+	}
+
+	#[tokio::test]
+	async fn read_body_capped_stops_at_the_cap() {
+		// ~300 KB via chunked encoding, never completed by the server
+		let mut raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+		for _ in 0..300 {
+			raw.extend_from_slice(b"1000\r\n");
+			raw.extend_from_slice(&vec![b'a'; 4096]);
+			raw.extend_from_slice(b"\r\n");
+		}
+		let url = serve_raw(raw);
+		let response = reqwest::Client::new().get(&url).send().await.expect("send");
+		let body = read_body_capped(response, 64 * 1024, 10).await;
+		assert_eq!(body.len(), 64 * 1024, "reading stops exactly at the cap");
+	}
+
+	#[tokio::test]
+	async fn read_body_capped_returns_what_arrived_before_the_deadline() {
+		// one complete chunk, then the stream never continues
+		let url =
+			serve_raw(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n".to_vec());
+		let response = reqwest::Client::new().get(&url).send().await.expect("send");
+		let started = std::time::Instant::now();
+		let body = read_body_capped(response, 64 * 1024, 1).await;
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(5),
+			"the deadline must end the read"
+		);
+		assert_eq!(body, "x", "bytes that arrived before the deadline are kept");
+	}
 
 	fn run(pieces: &[&str]) -> String {
 		let mut filter = ThinkFilter::new();

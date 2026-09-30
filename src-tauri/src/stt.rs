@@ -222,7 +222,11 @@ pub async fn transcribe_external(
 	if !response.status().is_success() {
 		return Err(format!("external STT error ({})", response.status()));
 	}
-	let value: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+	// Transcripts are at most a few MB; a cap keeps a broken endpoint from
+	// streaming an unbounded "JSON" body into memory.
+	let body = crate::llm::read_body_capped(response, 4 * 1024 * 1024, 60).await;
+	let value: serde_json::Value =
+		serde_json::from_str(&body).map_err(|e| format!("invalid STT response: {e}"))?;
 	value["text"]
 		.as_str()
 		.map(|s| s.to_string())
