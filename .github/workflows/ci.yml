@@ -18,6 +18,7 @@ jobs:
   frontend:
     name: Frontend (typecheck, lint, test, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -46,17 +47,36 @@ jobs:
         run: pnpm -C app/frontend build
 
   rust:
-    name: Rust (fmt, clippy, tests)
-    # macos-26: Xcode 26 SDK keeps the Apple Speech engine real instead of
-    # stubbed; REQUIRE_MACOS26_SDK (below) makes a wrong image fail loudly
-    runs-on: macos-26
+    name: Rust ${{ matrix.name }} (fmt, clippy, tests)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-26: Xcode 26 SDK keeps the Apple Speech engine real
+          # instead of stubbed; REQUIRE_MACOS26_SDK makes a wrong image
+          # fail loudly
+          - name: macOS
+            os: macos-26
+            require_macos26_sdk: "1"
+          - name: Linux
+            os: ubuntu-latest
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
     env:
-      REQUIRE_MACOS26_SDK: "1"
+      REQUIRE_MACOS26_SDK: ${{ matrix.require_macos26_sdk }}
     defaults:
       run:
         working-directory: src-tauri
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake
 
       - uses: dtolnay/rust-toolchain@stable
         with:
