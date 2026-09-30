@@ -115,13 +115,16 @@ pub fn run() {
 					log::info!("page load finished: {}", payload.url());
 				}
 			}
-			// Surface webview JS errors in the window title so a crashed
-			// page is diagnosable from the log instead of being just a
-			// white rectangle.
-			let _ = webview.eval(
-				"window.addEventListener('error', function(e){ document.title = 'JSERR: ' + e.message; });\n\
-				 window.addEventListener('unhandledrejection', function(e){ document.title = 'PROMISE-REJ: ' + e.reason; });",
-			);
+			// Dev-only diagnostic: surface webview JS errors in the window
+			// title so a crashed page is diagnosable from the log instead
+			// of being just a white rectangle. Debug hooks do not ship in
+			// release builds.
+			if cfg!(debug_assertions) {
+				let _ = webview.eval(
+					"window.addEventListener('error', function(e){ document.title = 'JSERR: ' + e.message; });\n\
+					 window.addEventListener('unhandledrejection', function(e){ document.title = 'PROMISE-REJ: ' + e.reason; });",
+				);
+			}
 		})
 		.setup(|app| {
 			let data_dir = match app.path().app_data_dir() {
@@ -203,19 +206,21 @@ pub fn run() {
 
 			reminders::spawn(app.handle().clone());
 
-			// Temporary startup diagnostic: after the onboarding redirect
-			// settles, a JS error would have renamed the window title
-			// (see the on_page_load error hook).
-			if let Some(window) = app.get_webview_window("main") {
-				std::thread::spawn(move || {
-					std::thread::sleep(std::time::Duration::from_secs(6));
-					let url = window
-						.url()
-						.map(|u| u.to_string())
-						.unwrap_or_else(|e| format!("<url err: {e}>"));
-					let title = window.title().unwrap_or_else(|e| format!("<title err: {e}>"));
-					log::info!("[startup check] url={url} title={title}");
-				});
+			// Dev-only startup diagnostic: after the onboarding redirect
+			// settles, a JS error would have renamed the window title (see
+			// the on_page_load error hook). Never ships in release builds.
+			if cfg!(debug_assertions) {
+				if let Some(window) = app.get_webview_window("main") {
+					std::thread::spawn(move || {
+						std::thread::sleep(std::time::Duration::from_secs(6));
+						let url = window
+							.url()
+							.map(|u| u.to_string())
+							.unwrap_or_else(|e| format!("<url err: {e}>"));
+						let title = window.title().unwrap_or_else(|e| format!("<title err: {e}>"));
+						log::info!("[startup check] url={url} title={title}");
+					});
+				}
 			}
 			spawn_model_loader(
 				app.handle().clone(),
