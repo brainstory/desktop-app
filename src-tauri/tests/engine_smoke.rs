@@ -20,7 +20,7 @@ fn whisper_and_llama_coexist() {
 		.expect("failed to load whisper model");
 	let samples = vec![0.0f32; 16000];
 	let transcript = engine
-		.transcribe(&samples)
+		.transcribe(&samples, "en-US")
 		.expect("whisper transcription failed");
 	println!("whisper transcript of silence: {transcript:?}");
 

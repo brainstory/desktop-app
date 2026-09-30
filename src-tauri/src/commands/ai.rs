@@ -101,10 +101,12 @@ pub async fn transcribe(
 	})?;
 
 	// WAV decoding of a multi-minute recording is CPU work too; keep it off
-	// the async runtime alongside the whisper inference.
+	// the async runtime alongside the whisper inference. The configured
+	// language rides along so multilingual models honor it.
+	let language = settings.stt_language.clone();
 	let transcript = tauri::async_runtime::spawn_blocking(move || {
 		let samples = stt::wav_to_samples(&bytes)?;
-		engine.transcribe(&samples)
+		engine.transcribe(&samples, &language)
 	})
 	.await
 	.map_err(|e| e.to_string())??;

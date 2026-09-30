@@ -18,12 +18,28 @@ impl SttEngine {
 		})
 	}
 
-	/// Transcribe 16 kHz mono PCM samples. Blocking; run off the main thread.
-	pub fn transcribe(&self, samples: &[f32]) -> Result<String, String> {
+	/// Transcribe 16 kHz mono PCM samples. Blocking; run off the main
+	/// thread. `language` is a BCP-47 locale ("de-DE"); its primary
+	/// subtag selects the whisper language. English-only models (the
+	/// `*.en` builds) always transcribe as English.
+	pub fn transcribe(&self, samples: &[f32], language: &str) -> Result<String, String> {
 		let mut state = self.ctx.create_state().map_err(|e| e.to_string())?;
 		let mut params =
 			whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
-		params.set_language(Some("en"));
+		let language = if self.model_id.ends_with("-en") {
+			// English-only models reject any other language
+			"en".to_string()
+		} else {
+			primary_subtag(language)
+		};
+		params.set_language(Some(&language));
+		// Roughly physical cores: available_parallelism counts
+		// hyperthreads, and whisper's compute is memory-bound enough that
+		// oversubscribing them hurts more than it helps.
+		let logical = std::thread::available_parallelism()
+			.map(|n| n.get())
+			.unwrap_or(4);
+		params.set_n_threads((logical / 2).max(1) as i32);
 		params.set_translate(false);
 		params.set_print_progress(false);
 		params.set_print_special(false);
@@ -45,6 +61,17 @@ impl SttEngine {
 		}
 		Ok(transcript.trim().to_string())
 	}
+}
+
+/// The whisper language id for a BCP-47 tag: the primary subtag
+/// ("de-DE" -> "de", "zh_Hans" -> "zh"), lowercased; "en" for anything
+/// without one.
+fn primary_subtag(language: &str) -> String {
+	language
+		.split(['-', '_'])
+		.find(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphabetic()))
+		.unwrap_or("en")
+		.to_ascii_lowercase()
 }
 
 /// Decode a WAV file into 16 kHz mono f32 samples suitable for whisper.
@@ -204,7 +231,19 @@ pub async fn transcribe_external(
 
 #[cfg(test)]
 mod tests {
-	use super::{resample_to_16k, wav_to_samples};
+	use super::{primary_subtag, resample_to_16k, wav_to_samples};
+
+	#[test]
+	fn primary_subtag_extracts_the_whisper_language() {
+		assert_eq!(primary_subtag("de-DE"), "de");
+		assert_eq!(primary_subtag("en-US"), "en");
+		assert_eq!(primary_subtag("zh_Hans"), "zh");
+		assert_eq!(primary_subtag("fr"), "fr");
+		// garbage/empty falls back to English instead of rejecting at
+		// whisper's language table
+		assert_eq!(primary_subtag(""), "en");
+		assert_eq!(primary_subtag("-FR"), "fr");
+	}
 
 	fn wav_bytes(spec: hound::WavSpec, samples: &[i16]) -> Vec<u8> {
 		let mut cursor = std::io::Cursor::new(Vec::new());
