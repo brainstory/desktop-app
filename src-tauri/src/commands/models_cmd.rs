@@ -5,7 +5,7 @@ use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
-use crate::models::{download_model_file, find_model, model_url, AiSettings, ModelKind};
+use crate::models::{download_model_file, find_model, model_url, ModelKind};
 use crate::types::ModelStatus;
 use crate::AppState;
 
@@ -17,7 +17,7 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 	// sync command would run it.
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
-		let settings = AiSettings::load(&state.db);
+		let settings = state.ai_settings();
 		let build = |kind: ModelKind| -> Vec<ModelStatus> {
 			let list: &[crate::models::ModelSpec] = match kind {
 				ModelKind::Llm => &crate::models::LLM_MODELS,
@@ -195,7 +195,7 @@ pub async fn download_model(
 	let app_handle = app.clone();
 	let dest = state.model_path(&spec);
 	let url = model_url(&spec);
-	let hf_token = AiSettings::load(&state.db).hf_token;
+	let hf_token = state.ai_settings().hf_token;
 
 	tauri::async_runtime::spawn(async move {
 		let _guard = guard;
@@ -239,7 +239,7 @@ pub async fn download_model(
 					drop(_guard);
 					// If this model is the active one, load it right away.
 					let state = app_handle.state::<AppState>();
-					let settings = AiSettings::load(&state.db);
+					let settings = state.ai_settings();
 					let is_active_llm = spec.kind == ModelKind::Llm
 						&& !settings.uses_external_llm()
 						&& settings.llm_model == spec.id;
@@ -406,7 +406,7 @@ pub async fn activate_model(
 			ModelKind::Stt => state.load_stt(&app_handle, &spec),
 		} {
 			Ok(()) => {
-				let mut settings = AiSettings::load(&state.db);
+				let mut settings = state.ai_settings();
 				match spec.kind {
 					ModelKind::Llm => {
 						settings.llm_mode = crate::models::LlmMode::Local;
@@ -419,7 +419,7 @@ pub async fn activate_model(
 				// the settings row is only updated once the engine
 				// actually loaded, so the recorded active model can never
 				// disagree with the runtime
-				settings.save(&state.db)
+				state.save_ai_settings(&settings)
 			}
 			Err(e) => Err(e),
 		}

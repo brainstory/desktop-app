@@ -48,7 +48,7 @@ pub async fn transcribe(
 		));
 	}
 
-	let settings = AiSettings::load(&state.db);
+	let settings = state.ai_settings();
 	// STT offload rule: if an external STT endpoint is configured, use it;
 	// otherwise the engine setting picks Apple Speech or local whisper.
 	if !settings.ext_stt_base_url.is_empty() {
@@ -189,7 +189,7 @@ where
 		.map(|m| m.content.split_whitespace().count())
 		.sum();
 	let cancel = take_cancel_token(state);
-	let settings = AiSettings::load(&state.db);
+	let settings = state.ai_settings();
 
 	on_event(EmitKind::Status, "thinking...");
 

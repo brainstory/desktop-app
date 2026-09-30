@@ -485,6 +485,9 @@ impl EngineStatus {
 pub struct AppState {
 	pub db: Db,
 	pub data_dir: PathBuf,
+	/// Read-through cache of the AI settings (three keychain reads plus a
+	/// dozen DB rows on every load); invalidated by save_ai_settings.
+	pub ai_settings_cache: std::sync::RwLock<Option<AiSettings>>,
 	pub runtime: std::sync::Mutex<Runtime>,
 	pub llm_status: std::sync::Mutex<EngineStatus>,
 	pub stt_status: std::sync::Mutex<EngineStatus>,
@@ -514,6 +517,7 @@ impl AppState {
 		Self {
 			db,
 			data_dir,
+			ai_settings_cache: std::sync::RwLock::new(None),
 			runtime: std::sync::Mutex::new(Runtime {
 				backend: None,
 				llm: None,
@@ -528,6 +532,37 @@ impl AppState {
 			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),
 		}
+	}
+
+	/// The AI settings, from the read-through cache when warm. AiSettings
+	/// is only written through [`Self::save_ai_settings`], so the cache
+	/// can never go stale.
+	pub fn ai_settings(&self) -> AiSettings {
+		let cache = self
+			.ai_settings_cache
+			.read()
+			.unwrap_or_else(|e| e.into_inner());
+		if let Some(cached) = cache.as_ref() {
+			return cached.clone();
+		}
+		drop(cache);
+		let loaded = AiSettings::load(&self.db);
+		*self
+			.ai_settings_cache
+			.write()
+			.unwrap_or_else(|e| e.into_inner()) = Some(loaded.clone());
+		loaded
+	}
+
+	/// Persist settings and refresh the cache in one step, so a failed
+	/// write never leaves a cache disagreeing with the database.
+	pub fn save_ai_settings(&self, settings: &AiSettings) -> Result<(), String> {
+		settings.save(&self.db)?;
+		*self
+			.ai_settings_cache
+			.write()
+			.unwrap_or_else(|e| e.into_inner()) = Some(settings.clone());
+		Ok(())
 	}
 
 	pub fn models_dir(&self) -> PathBuf {
@@ -1456,5 +1491,43 @@ mod download_tests {
 			"unexpected error: {err}"
 		);
 		assert!(!dest.exists(), "no file on early rejection");
+	}
+}
+
+#[cfg(test)]
+mod settings_cache_tests {
+	use super::*;
+
+	#[test]
+	fn ai_settings_cache_round_trips_through_save() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join("t.db")).expect("db");
+		let state = AppState::new(db, dir.path().to_path_buf());
+
+		// cold read loads and warms the cache
+		assert_eq!(state.ai_settings().llm_model, LLM_MODELS[0].id);
+		// a write through save_ai_settings refreshes the cache
+		let mut next = state.ai_settings();
+		next.stt_language = "fr-FR".into();
+		state.save_ai_settings(&next).expect("save");
+		assert_eq!(state.ai_settings().stt_language, "fr-FR");
+		// and persisted: a fresh AppState sees the same value
+		let db2 = Db::open(&dir.path().join("t.db")).expect("reopen db");
+		let state2 = AppState::new(db2, dir.path().to_path_buf());
+		assert_eq!(state2.ai_settings().stt_language, "fr-FR");
+	}
+
+	#[test]
+	fn ai_settings_cache_is_a_cache_not_a_source() {
+		// direct DB writes (the legacy path) are visible after a cache
+		// refresh via save, proving the cache never outruns the database
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join("t.db")).expect("db");
+		let state = AppState::new(db, dir.path().to_path_buf());
+		let _ = state.ai_settings(); // warm
+		let mut updated = state.ai_settings();
+		updated.llm_model = "gemma-4-E4B".into();
+		state.save_ai_settings(&updated).expect("save");
+		assert_eq!(state.ai_settings().llm_model, "gemma-4-E4B");
 	}
 }

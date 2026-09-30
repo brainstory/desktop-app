@@ -2,7 +2,6 @@ use tauri::{Manager, State};
 
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::keys;
-use crate::models::AiSettings;
 use crate::types::{
 	AppPresence, LogSettingsItem, NotificationSettingsItem, UserSettings, UserSettingsUser,
 };
@@ -169,7 +168,7 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 	// AiSettings::load does keychain reads; keep them off the main thread
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
-		let s = AiSettings::load(&state.db);
+		let s = state.ai_settings();
 		// Secrets are never echoed to the webview: the form gets a "is one
 		// stored" flag plus a masked hint; saving absent/null keeps the stored
 		// value and an empty string clears it.
@@ -214,9 +213,9 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 	// keychain reads/writes plus the settings-row write are blocking work
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
-		let mut settings = AiSettings::load(&state.db);
+		let mut settings = state.ai_settings();
 		settings.apply_updates(&ai)?;
-		settings.save(&state.db)?;
+		state.save_ai_settings(&settings)?;
 
 		// Activate models that are ready to go with the new settings.
 		crate::spawn_model_loader(app.clone(), settings);
@@ -228,7 +227,7 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 
 #[tauri::command]
 pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, String> {
-	let settings = AiSettings::load(&state.db);
+	let settings = state.ai_settings();
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("no external LLM endpoint configured".into());
 	}
@@ -277,7 +276,7 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 
 #[tauri::command]
 pub async fn test_stt_endpoint(state: State<'_, AppState>) -> Result<String, String> {
-	let settings = AiSettings::load(&state.db);
+	let settings = state.ai_settings();
 	if settings.ext_stt_base_url.is_empty() {
 		return Err("no external STT endpoint configured".into());
 	}
