@@ -585,49 +585,61 @@ impl AppState {
 		result
 	}
 
-	fn load_llm_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+	/// Generic load/swap flow shared by both engine kinds: mark loading,
+	/// run `prepare` (backend init for llama), drop the previous engine,
+	/// load the new file, and either install it or roll back to the
+	/// previous model. Blocking; call from a background thread.
+	///
+	/// `rollback_on_same`: whisper retries loading the same model after a
+	/// transient failure; an identical llama reload fails deterministically
+	/// on the same mmap, so it does not.
+	/// `missing_when_vanished`: the llm path distinguishes "file deleted
+	/// mid-load" (Missing) from a genuine load failure (Error).
+	#[allow(clippy::too_many_arguments)]
+	fn swap_engine<E>(
+		&self,
+		app: &AppHandle,
+		spec: &ModelSpec,
+		status: &std::sync::Mutex<EngineStatus>,
+		emit: fn(&Self, &AppHandle),
+		slot: fn(&mut Runtime) -> &mut Option<Arc<E>>,
+		model_id_of: fn(&E) -> &str,
+		prepare: impl FnOnce(&mut Runtime) -> Result<(), String>,
+		load: impl Fn(&Path) -> Result<E, String>,
+		rollback: impl Fn(&ModelSpec) -> Result<(), String>,
+		rollback_on_same: bool,
+		missing_when_vanished: bool,
+	) -> Result<(), String> {
 		{
-			let mut s = lock(&self.llm_status);
-			*s = EngineStatus::new(EngineState::Loading, Some(spec.id), None);
+			let mut s = lock(status);
+			*s = EngineStatus::loading(spec.id);
 		}
-		self.emit_llm_status(app);
+		emit(self, app);
 
 		let path = self.model_path(spec);
 		let prev_spec: Option<ModelSpec> = {
-			let runtime = lock(&self.runtime);
-			runtime
-				.llm
+			let mut runtime = lock(&self.runtime);
+			slot(&mut runtime)
 				.as_ref()
-				.map(|engine| engine.model_id.clone())
-				.and_then(|id| find_model(&id, ModelKind::Llm))
+				.map(|engine| model_id_of(engine).to_string())
+				.and_then(|id| find_model(&id, spec.kind))
 				.cloned()
 		};
 
-		let result = (|| -> Result<LocalLlm, String> {
-			let backend = {
+		// Engine-specific setup (llama backend init), then drop the
+		// previous engine so peak memory stays at one model.
+		let result = (|| -> Result<E, String> {
+			{
 				let mut runtime = lock(&self.runtime);
-				let backend = match runtime.backend.as_ref() {
-					Some(existing) => existing.clone(),
-					None => {
-						let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
-							.map_err(|e| format!("failed to init llama backend: {e}"))?;
-						let backend = Arc::new(backend);
-						runtime.backend = Some(Arc::clone(&backend));
-						backend
-					}
-				};
-				// Drop the previous engine before loading the new file so
-				// peak memory stays at one model instead of two.
-				runtime.llm = None;
-				backend
-			};
-			LocalLlm::load(backend, &path, spec.id)
+				prepare(&mut runtime)?;
+				*slot(&mut runtime) = None;
+			}
+			load(&path)
 		})();
-
 		let loaded = match result {
 			Ok(engine) => Some(engine),
 			Err(e) => {
-				log::error!("llm load failed: {e}");
+				log::error!("{} load failed: {e}", spec.id);
 				None
 			}
 		};
@@ -638,10 +650,10 @@ impl AppState {
 		match install {
 			Some(engine) => {
 				let mut runtime = lock(&self.runtime);
-				runtime.llm = Some(Arc::new(engine));
+				*slot(&mut runtime) = Some(Arc::new(engine));
 				drop(runtime);
-				let mut s = lock(&self.llm_status);
-				*s = EngineStatus::new(EngineState::Ready, Some(spec.id), None);
+				let mut s = lock(status);
+				*s = EngineStatus::ready(Some(spec.id));
 				Ok(())
 			}
 			None => {
@@ -651,15 +663,16 @@ impl AppState {
 					// while loading; don't resurrect a deleted model.
 					log::warn!("{} was deleted while loading; not activating it", spec.id);
 				}
-				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
-					match self.reload_llm(&prev) {
+				if let Some(prev) = prev_spec.filter(|prev| rollback_on_same || prev.id != spec.id)
+				{
+					match rollback(&prev) {
 						Ok(()) => {
 							log::warn!(
 								"switch to {} failed; previous model {} is active again",
 								spec.id,
 								prev.id
 							);
-							let mut s = lock(&self.llm_status);
+							let mut s = lock(status);
 							*s = EngineStatus::new(
 								EngineState::Ready,
 								Some(prev.id),
@@ -678,19 +691,48 @@ impl AppState {
 						}
 					}
 				}
-				let mut s = lock(&self.llm_status);
-				if vanished {
-					*s = EngineStatus::new(EngineState::Missing, None, None);
+				let mut s = lock(status);
+				if vanished && missing_when_vanished {
+					*s = EngineStatus::missing();
 					return Err(format!("{} was deleted while loading", spec.id));
 				}
-				*s = EngineStatus::new(
-					EngineState::Error,
-					Some(spec.id),
-					Some("model failed to load"),
-				);
+				*s = EngineStatus::error(Some(spec.id), "model failed to load");
 				Err("model failed to load".into())
 			}
 		}
+	}
+
+	fn load_llm_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+		self.swap_engine(
+			app,
+			spec,
+			&self.llm_status,
+			Self::emit_llm_status,
+			|runtime| &mut runtime.llm,
+			|engine| &engine.model_id,
+			|runtime| {
+				// The llama backend is initialized once and kept for the
+				// process lifetime; engines come and go on top of it.
+				if runtime.backend.is_none() {
+					let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+						.map_err(|e| format!("failed to init llama backend: {e}"))?;
+					runtime.backend = Some(Arc::new(backend));
+				}
+				Ok(())
+			},
+			|path| {
+				let backend = lock(&self.runtime)
+					.backend
+					.clone()
+					.ok_or_else(|| "llama backend missing".to_string())?;
+				LocalLlm::load(backend, path, spec.id)
+			},
+			|prev| self.reload_llm(prev),
+			// an identical llama reload fails deterministically on the
+			// same mmap; not worth retrying
+			false,
+			true,
+		)
 	}
 
 	/// Best-effort reload of a previously working model (rollback path).
@@ -726,86 +768,29 @@ impl AppState {
 	}
 
 	fn load_stt_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
-		{
-			let mut s = lock(&self.stt_status);
-			*s = EngineStatus::new(EngineState::Loading, Some(spec.id), None);
-		}
-		self.emit_stt_status(app);
-
-		let path = self.model_path(spec);
-		let prev_spec: Option<ModelSpec> = {
-			let runtime = lock(&self.runtime);
-			runtime
-				.stt
-				.as_ref()
-				.map(|engine| engine.model_id.clone())
-				.and_then(|id| find_model(&id, ModelKind::Stt))
-				.cloned()
-		};
-
-		// Free the previous engine before loading the new file.
-		lock(&self.runtime).stt = None;
-		let loaded = SttEngine::load(&path, spec.id).ok();
-
-		let had_loaded = loaded.is_some();
-		let install = loaded.filter(|_| path.is_file());
-		match install {
-			Some(engine) => {
-				let mut runtime = lock(&self.runtime);
-				runtime.stt = Some(Arc::new(engine));
-				drop(runtime);
-				let mut s = lock(&self.stt_status);
-				*s = EngineStatus::new(EngineState::Ready, Some(spec.id), None);
+		self.swap_engine(
+			app,
+			spec,
+			&self.stt_status,
+			Self::emit_stt_status,
+			|runtime| &mut runtime.stt,
+			|engine| &engine.model_id,
+			|_runtime| Ok(()),
+			|path| SttEngine::load(path, spec.id),
+			|prev| {
+				let prev_path = self.model_path(prev);
+				if !prev_path.is_file() {
+					return Err(format!("model file {} is gone", prev_path.display()));
+				}
+				let engine = SttEngine::load(&prev_path, prev.id)?;
+				lock(&self.runtime).stt = Some(Arc::new(engine));
 				Ok(())
-			}
-			None => {
-				if had_loaded {
-					log::warn!("{} was deleted while loading; not activating it", spec.id);
-				}
-				// Attempt the rollback even when the failed model is the
-				// previously loaded one: the engine was already dropped
-				// above, and a transient read failure deserves a second
-				// chance rather than leaving nothing loaded.
-				if let Some(prev) = prev_spec {
-					let prev_path = self.model_path(&prev);
-					if prev_path.is_file() {
-						match SttEngine::load(&prev_path, prev.id) {
-							Ok(engine) => {
-								lock(&self.runtime).stt = Some(Arc::new(engine));
-								log::warn!(
-									"switch to {} failed; previous model {} is active again",
-									spec.id,
-									prev.id
-								);
-								let mut s = lock(&self.stt_status);
-								*s = EngineStatus::new(
-									EngineState::Ready,
-									Some(prev.id),
-									Some(&format!(
-										"could not load {0} - {1} is still active",
-										spec.id, prev.id
-									)),
-								);
-								return Err(format!(
-									"could not load {} - {} is still active",
-									spec.id, prev.id
-								));
-							}
-							Err(rollback_err) => {
-								log::error!("rollback to {} failed: {rollback_err}", prev.id);
-							}
-						}
-					}
-				}
-				let mut s = lock(&self.stt_status);
-				*s = EngineStatus::new(
-					EngineState::Error,
-					Some(spec.id),
-					Some("model failed to load"),
-				);
-				Err("model failed to load".into())
-			}
-		}
+			},
+			// whisper reads the file fresh each time: retry the same model
+			// after a transient failure (the engine was already dropped)
+			true,
+			false,
+		)
 	}
 }
 
