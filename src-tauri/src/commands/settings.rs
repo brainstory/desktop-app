@@ -127,6 +127,7 @@ pub async fn save_user_settings(
 	}
 
 	let mut reminder_enabled_after: Option<bool> = None;
+	let mut time_changed = false;
 	if let Some(notifications) = &notifications {
 		for notification in notifications {
 			let title = notification["title"].as_str().unwrap_or("");
@@ -136,6 +137,7 @@ pub async fn save_user_settings(
 						return Err(format!("invalid reminder time '{value}' (expected HH:MM)"));
 					}
 					kv.push((keys::setting::REMINDER_TIME, value.to_string()));
+					time_changed = true;
 				}
 				if let Some(enabled) = notification["enabled"].as_bool() {
 					kv.push((
@@ -158,6 +160,10 @@ pub async fn save_user_settings(
 	if let Some(enabled) = reminder_enabled_after {
 		// keep the tray menu checkmark in sync with the persisted setting
 		crate::sync_tray_reminder_check(enabled);
+	}
+	if reminder_enabled_after.is_some() || time_changed {
+		// wake the scheduler so a new time/state applies immediately
+		crate::reminders::REMINDER_SETTINGS_CHANGED.notify_waiters();
 	}
 
 	Ok(serde_json::json!({ "id": "settings" }))
