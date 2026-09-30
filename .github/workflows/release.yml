@@ -41,20 +41,20 @@ jobs:
     env:
       REQUIRE_MACOS26_SDK: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -114,7 +114,7 @@ jobs:
 
       - name: Upload updater artifacts (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: updater-macos
           path: |
@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload installer (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-macos
           path: src-tauri/target/release/bundle/dmg/*.dmg
@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload updater artifacts (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: updater-windows
           path: |
@@ -142,7 +142,7 @@ jobs:
 
       - name: Upload updater artifacts (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: updater-linux
           path: |
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload packages (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-linux
           path: |
@@ -169,7 +169,7 @@ jobs:
       contents: write
     steps:
       - name: Download built packages
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true
@@ -213,7 +213,7 @@ jobs:
       # feed (releases/latest/download/latest.json) still serves the
       # previous version - one bad tag can no longer auto-ship.
       - name: Attach packages + updater feed to release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           generate_release_notes: true
           draft: true
