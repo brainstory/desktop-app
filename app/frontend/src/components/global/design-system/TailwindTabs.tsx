@@ -35,11 +35,18 @@ interface TailwindTabsProps {
 }
 
 function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps) {
-	const [activeIndex, setActiveIndexRaw] = useState(activeTab);
+	// Clamp to the real tab count: an activeTab from a ?tab= deep link
+	// that this tab set doesn't have (e.g. "feedback" on a feedback idea,
+	// which has no feedback tab) must land on a real panel, not render
+	// nothing.
+	const tabCount = Children.count(children);
+	const clamp = (index: number) => Math.max(0, Math.min(index, tabCount - 1));
+	const [activeIndex, setActiveIndexRaw] = useState(() => clamp(activeTab));
 
 	const setActiveIndex = (index: number) => {
-		setActiveIndexRaw(index);
-		const param = tabParams?.[index];
+		const next = clamp(index);
+		setActiveIndexRaw(next);
+		const param = tabParams?.[next];
 		if (param) {
 			const url = new URL(window.location.href);
 			url.searchParams.set("tab", param);

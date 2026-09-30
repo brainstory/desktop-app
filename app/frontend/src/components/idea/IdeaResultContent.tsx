@@ -105,8 +105,12 @@ export default function IdeaResultContent() {
 		};
 	}, [ideaId]);
 
+	// each entry carries its own ?tab= param so the URL values always
+	// match the tabs that actually exist (a feedback idea has no feedback
+	// tab, and the reverse)
 	const tabData: {
 		label: string;
+		param: string;
 		content: ReactNode;
 		tooltipText?: string;
 		disabled?: boolean;
@@ -115,16 +119,19 @@ export default function IdeaResultContent() {
 			? [
 					{
 						label: "Summary",
+						param: "summary",
 						content: <IdeaSummary content={idea.summary} />
 					},
 					{
 						label: "Transcript",
+						param: "transcript",
 						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
 					}
 			  ]
 			: [
 					{
 						label: "Summary",
+						param: "summary",
 						content: (
 							<IdeaSection
 								resultSections={idea.resultJson ?? []}
@@ -136,6 +143,7 @@ export default function IdeaResultContent() {
 					},
 					{
 						label: "Transcript",
+						param: "transcript",
 						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
 					}
 			  ];
@@ -145,6 +153,7 @@ export default function IdeaResultContent() {
 			const feedbackCount = ideaChildren.length;
 			tabData.push({
 				label: feedbackCount > 0 ? `Feedback (${feedbackCount})` : "Feedback",
+				param: "feedback",
 				content: <IdeaBranches kids={ideaChildren} />
 			});
 		} else {
@@ -153,6 +162,7 @@ export default function IdeaResultContent() {
 				: "No feedback on this idea yet";
 			tabData.push({
 				label: "Feedback",
+				param: "feedback",
 				tooltipText: tooltipText,
 				disabled: true,
 				content: <IdeaBranches kids={[]} />
@@ -181,7 +191,7 @@ export default function IdeaResultContent() {
 					data={tabData}
 					activeTab={activeTab}
 					accentColor="pink"
-					tabParams={["summary", "transcript", "feedback"]}
+					tabParams={tabData.map((tab) => tab.param)}
 				/>
 			</div>
 		);
