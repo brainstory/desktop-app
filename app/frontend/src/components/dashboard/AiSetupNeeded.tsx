@@ -32,9 +32,9 @@ export default function AiSetupNeeded() {
 				Welcome! One quick step before your first Brainstory
 			</p>
 			<p className="text-sm text-stone-600 mb-4 max-w-xl mx-auto">
-				Everything runs on your machine, so Brainstory needs an AI brain to
-				brainstorm with: download a local model (~3.3 GB, once), or point it at
-				an external AI server if you have one. You can change this any time.
+				Everything runs on your machine, so Brainstory needs an AI brain to brainstorm with:
+				download a local model (~3.3 GB, once), or point it at an external AI server if you
+				have one. You can change this any time.
 			</p>
 			<PinkButton href="/profile?tab=aiModels">Set up AI Models</PinkButton>
 		</div>

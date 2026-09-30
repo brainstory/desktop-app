@@ -7,7 +7,11 @@ interface EndChatButtonProps {
 	classes?: string;
 }
 
-export default function EndChatButton({ conversationState, handleGetResult, classes = "" }: EndChatButtonProps) {
+export default function EndChatButton({
+	conversationState,
+	handleGetResult,
+	classes = ""
+}: EndChatButtonProps) {
 	const isFinishing = conversationState === CONVERSATION_STATE.FinishWithResult;
 	return (
 		<div className={`inline-block ${classes}`}>

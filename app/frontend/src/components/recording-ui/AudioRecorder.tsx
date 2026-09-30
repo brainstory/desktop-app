@@ -47,7 +47,6 @@ const AudioRecorder = ({
 	const [time, setTime] = useState(0);
 	const [isRunning, setIsRunning] = useState(false);
 
-
 	// Timer
 	useTimer(isRunning, setTime);
 

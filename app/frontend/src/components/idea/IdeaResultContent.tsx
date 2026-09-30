@@ -29,7 +29,9 @@ export default function IdeaResultContent() {
 	const [parentIdea, setParentIdea] = useState<IdeaDetail["parentIdea"]>(null);
 	const [errorFound, setErrorFound] = useState(false);
 	const [ideaChildren, setIdeaChildren] = useState<IdeaFeedbackItem[] | null>(null);
-	const [headingIdxToComments, setHeadingIdxToComments] = useState<Record<number, FeedbackComment[]>>({});
+	const [headingIdxToComments, setHeadingIdxToComments] = useState<
+		Record<number, FeedbackComment[]>
+	>({});
 	const [isMdSizeOrLess, setIsMdSizeOrLess] = useState(window.innerWidth <= 768);
 	const [isUnread, setIsUnread] = useState(false);
 
@@ -65,7 +67,10 @@ export default function IdeaResultContent() {
 							if (!isCurrent) return;
 							setIdeaChildren(updateIdeaChildren as IdeaFeedbackItem[]);
 							setHeadingIdxToComments(
-								updateOidHeadingToFeedbackComments as Record<number, FeedbackComment[]>
+								updateOidHeadingToFeedbackComments as Record<
+									number,
+									FeedbackComment[]
+								>
 							);
 						})
 						.catch((err) => {
@@ -133,7 +138,7 @@ export default function IdeaResultContent() {
 						param: "transcript",
 						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
 					}
-			  ]
+				]
 			: [
 					{
 						label: "Summary",
@@ -152,7 +157,7 @@ export default function IdeaResultContent() {
 						param: "transcript",
 						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
 					}
-			  ];
+				];
 
 	if (!parentIdea) {
 		if (ideaChildren && ideaChildren.length > 0) {
@@ -177,7 +182,12 @@ export default function IdeaResultContent() {
 	}
 
 	if (!ideaId) {
-		return <ErrorSection title="No idea selected" paragraphs={["Open an idea from your library."]} />;
+		return (
+			<ErrorSection
+				title="No idea selected"
+				paragraphs={["Open an idea from your library."]}
+			/>
+		);
 	}
 	if (errorFound) {
 		return <ErrorSection title="Idea not found" />;
@@ -207,7 +217,9 @@ export default function IdeaResultContent() {
 	}
 }
 
-async function fetchIdeaChildrenData(ideaId: string): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
+async function fetchIdeaChildrenData(
+	ideaId: string
+): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
 	const result = await getIdeaChildrenApi(ideaId).then((res) => {
 		const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
 		const ideaChildren = res.map((idea) => {

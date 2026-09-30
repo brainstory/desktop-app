@@ -5,7 +5,11 @@ interface LoadingAnimationProps {
 	classes?: string;
 }
 
-export default function LoadingAnimation({ text, isVertical = false, classes }: LoadingAnimationProps) {
+export default function LoadingAnimation({
+	text,
+	isVertical = false,
+	classes
+}: LoadingAnimationProps) {
 	return (
 		<div
 			className={`flex justify-center items-center gap-4 p-2 ${

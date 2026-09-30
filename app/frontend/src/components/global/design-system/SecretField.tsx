@@ -49,19 +49,12 @@ export default function SecretField({
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
 					className={`border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 min-w-0 p-2 ${inputClasses}`}
-					placeholder={
-						stored ? "Leave empty to keep the saved value" : placeholder
-					}
+					placeholder={stored ? "Leave empty to keep the saved value" : placeholder}
 				/>
-				<PinkButton
-					disabled={value === ""}
-					onClick={() => saveAndReset(value)}
-				>
+				<PinkButton disabled={value === ""} onClick={() => saveAndReset(value)}>
 					{saveLabel}
 				</PinkButton>
-				{stored && (
-					<BorderedButton onClick={() => saveAndReset("")}>Remove</BorderedButton>
-				)}
+				{stored && <BorderedButton onClick={() => saveAndReset("")}>Remove</BorderedButton>}
 			</div>
 		</div>
 	);

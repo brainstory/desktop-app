@@ -4,7 +4,15 @@
 // Vite bundles directly.
 //
 // Run automatically by `pnpm dev` / `pnpm build`.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync
+} from "node:fs";
 import { createRequire } from "node:module";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,8 +34,7 @@ mkdirSync(outDir, { recursive: true });
 let loaders = 0;
 for (const file of readdirSync(ioniconsDir)) {
 	const isLoader =
-		file === "ionicons.esm.js" ||
-		(/^p-.*\.js$/.test(file) && !file.includes("system"));
+		file === "ionicons.esm.js" || (/^p-.*\.js$/.test(file) && !file.includes("system"));
 	if (isLoader && statSync(join(ioniconsDir, file)).isFile()) {
 		cpSync(join(ioniconsDir, file), join(outDir, file));
 		loaders++;
@@ -48,32 +55,34 @@ const walk = (dir) => {
 		if (entry.isDirectory()) walk(path);
 		else if (/\.(jsx|js|astro)$/.test(entry.name)) {
 			const text = readFileSync(path, "utf8");
-			for (const match of text.matchAll(/(?:name|icon|iconName)\s*[:=]\s*"?([a-z0-9]+(?:-[a-z0-9]+)+)"?/g)) {
+			for (const match of text.matchAll(
+				/(?:name|icon|iconName)\s*[:=]\s*"?([a-z0-9]+(?:-[a-z0-9]+)+)"?/g
+			)) {
 				names.add(match[1]);
 			}
-			for (const match of text.matchAll(/\?\s*"(?:[a-z0-9-]+)"\s*:\s*"([a-z0-9-]+(?:-[a-z0-9]+)+)"/g)) {
+			for (const match of text.matchAll(
+				/\?\s*"(?:[a-z0-9-]+)"\s*:\s*"([a-z0-9-]+(?:-[a-z0-9]+)+)"/g
+			)) {
 				names.add(match[1]);
 			}
 		}
 	}
 };
 walk(srcDir);
-const missing = [...names].filter(
-	(name) => !existsSync(join(outDir, "svg", `${name}.svg`))
-);
+const missing = [...names].filter((name) => !existsSync(join(outDir, "svg", `${name}.svg`)));
 // Filter out values that are clearly not icon names (matched props of other
 // components); only flag candidates that look like ionicon names.
 const suspicious = missing.filter((name) =>
-	/(outline|sharp|filled|-off|-circle|-up|-down|-back|-forward|chevron|star|mic|flash)$/.test(name)
+	/(outline|sharp|filled|-off|-circle|-up|-down|-back|-forward|chevron|star|mic|flash)$/.test(
+		name
+	)
 );
 
 console.log(
 	`vendored ionicons: ${loaders} loader files, ${iconCount} svg icons -> public/vendor/ionicons`
 );
 if (suspicious.length) {
-	console.warn(
-		`warning: possible icon names without a matching svg: ${suspicious.join(", ")}`
-	);
+	console.warn(`warning: possible icon names without a matching svg: ${suspicious.join(", ")}`);
 }
 
 // ---- Rive WASM engine ----

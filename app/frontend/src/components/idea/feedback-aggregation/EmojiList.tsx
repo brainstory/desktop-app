@@ -26,8 +26,7 @@ interface EmojiListProps {
 }
 
 export default function EmojiList({ reactions = [], onReactionClick, isFocused }: EmojiListProps) {
-
-	const outlineClass = isFocused && 'outline outline-blue-500 outline-2 ease-in-out duration-300';
+	const outlineClass = isFocused && "outline outline-blue-500 outline-2 ease-in-out duration-300";
 
 	return (
 		<div className={`flex flex-wrap p-1 rounded-lg w-fit ${outlineClass}`}>
@@ -44,10 +43,7 @@ export default function EmojiList({ reactions = [], onReactionClick, isFocused }
 						/>
 					))}
 			{reactions && reactions.length > 6 && (
-				<button
-					className="flex items-center"
-					onClick={() => onReactionClick(reactions[6])}
-				>
+				<button className="flex items-center" onClick={() => onReactionClick(reactions[6])}>
 					<span className="text-gray-600 w-max">+{reactions.length - 6} more</span>
 				</button>
 			)}

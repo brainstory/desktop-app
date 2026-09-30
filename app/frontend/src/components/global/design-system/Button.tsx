@@ -1,6 +1,5 @@
 import React from "react";
-export interface ButtonProps
-	extends Omit<React.ComponentProps<"button">, "children" | "disabled"> {
+export interface ButtonProps extends Omit<React.ComponentProps<"button">, "children" | "disabled"> {
 	children?: React.ReactNode;
 	icon?: string | null;
 	full?: boolean;
@@ -66,12 +65,7 @@ export default function Button({
 	}
 
 	return (
-		<button
-			type="button"
-			className={className}
-			disabled={disabled}
-			{...props}
-		>
+		<button type="button" className={className} disabled={disabled} {...props}>
 			{content}
 		</button>
 	);

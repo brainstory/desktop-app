@@ -43,8 +43,7 @@ function RecordButton({
 
 	const [warningType, setWarningType] = useState<string | null>(null);
 	// derived: the parent drives when the coach should respond
-	const readyToSend =
-		conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript;
+	const readyToSend = conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript;
 	const [status, setStatus] = useState("idle");
 	const [isTextInput, setIsTextInput] = useState(false);
 	const [userTextInput, setUserTextInput] = useState("");
@@ -241,7 +240,11 @@ function RecordButton({
 						disabled={!userTextInput.trim()}
 						onClick={handleTextSend}
 					>
-						<ion-icon class="w-8 h-8 hydrated" name="send" aria-hidden="true"></ion-icon>
+						<ion-icon
+							class="w-8 h-8 hydrated"
+							name="send"
+							aria-hidden="true"
+						></ion-icon>
 					</button>
 				</div>
 			);
@@ -264,18 +267,18 @@ function RecordButton({
 							{ICON.MicOff}
 						</button>
 					</div>
-				<div className="text-black text-base">
-					<p>Couldn&rsquo;t start the microphone.</p>
-					<p>
-						{errorMessage ? (
-						errorMessage
-					) : (
-						<>
-							<b>Allow microphone</b> in your system settings and try again
-						</>
-					)}
-					</p>
-				</div>
+					<div className="text-black text-base">
+						<p>Couldn&rsquo;t start the microphone.</p>
+						<p>
+							{errorMessage ? (
+								errorMessage
+							) : (
+								<>
+									<b>Allow microphone</b> in your system settings and try again
+								</>
+							)}
+						</p>
+					</div>
 				</div>
 			);
 		} else {
@@ -370,12 +373,12 @@ function RecordButton({
 			{renderInputComponent()}
 			{warningType && (
 				<div className={warningBoxStyle}>
-				<p className="text-sm font-semibold flex-1">
-					{warningType === "error"
-						? (errorMessage ??
-							"An error occurred while transcribing. Please try again.")
-						: "You hit the 4-minute limit for one recording. It's being transcribed now — keep going in your next message."}
-				</p>
+					<p className="text-sm font-semibold flex-1">
+						{warningType === "error"
+							? (errorMessage ??
+								"An error occurred while transcribing. Please try again.")
+							: "You hit the 4-minute limit for one recording. It's being transcribed now — keep going in your next message."}
+					</p>
 					<button
 						className="text-white/80 hover:text-white text-lg font-bold px-2 shrink-0"
 						aria-label="dismiss message"

@@ -28,7 +28,10 @@ export function currentQueryParams(): FirstPromptParams {
 	return { qotd: getQueryParam("qotd"), topic: getQueryParam("topic") };
 }
 
-export function getFirstPrompt(chatType: string, params: FirstPromptParams = currentQueryParams()): string {
+export function getFirstPrompt(
+	chatType: string,
+	params: FirstPromptParams = currentQueryParams()
+): string {
 	const isQotd = params.qotd != null;
 	// Only a bare non-negative integer selects a topic: Number(null) is 0
 	// and Number("") is 0, so a missing or empty param used to pin the
@@ -92,10 +95,7 @@ export interface GenerationResult {
 }
 
 type UpdateMessage = (message: string) => void;
-type SuccessCallbacks = (
-	message: string,
-	structuredResult: unknown
-) => void | Promise<void>;
+type SuccessCallbacks = (message: string, structuredResult: unknown) => void | Promise<void>;
 
 interface StreamHandle {
 	channel: { onmessage: (event: StreamChunk) => void };
@@ -135,9 +135,7 @@ export const handleStreamResult = async (
 	}
 };
 
-export function findMostRecentAssistantContent(
-	currConversation: ChatMessage[]
-): string | null {
+export function findMostRecentAssistantContent(currConversation: ChatMessage[]): string | null {
 	for (let i = currConversation.length - 1; i >= 0; i--) {
 		const message = currConversation[i];
 		if (message.role === "assistant") {
@@ -147,9 +145,7 @@ export function findMostRecentAssistantContent(
 	return null;
 }
 
-export function findMostRecentUserContent(
-	currConversation: ChatMessage[]
-): string | null {
+export function findMostRecentUserContent(currConversation: ChatMessage[]): string | null {
 	for (let i = currConversation.length - 1; i >= 0; i--) {
 		const message = currConversation[i];
 		if (message.role === "user") {

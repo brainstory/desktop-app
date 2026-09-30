@@ -22,7 +22,9 @@ export default function IdeaDocument({
 	useEffect(() => {
 		// Scroll into view when focusedSection matches outerIndex
 		if (containerRef.current && focusedSection !== null) {
-			const headingRef = containerRef.current.querySelector(`#emojiList-${focusedSection ?? ""}`);
+			const headingRef = containerRef.current.querySelector(
+				`#emojiList-${focusedSection ?? ""}`
+			);
 			if (headingRef) {
 				headingRef.scrollIntoView({ behavior: "smooth", block: "end" });
 			}
@@ -46,7 +48,9 @@ export default function IdeaDocument({
 							<EmojiList
 								reactions={headingIdxToComments[outerIndex]}
 								onReactionClick={onReactionClick}
-								isFocused={focusedSection != null && Number(focusedSection) === outerIndex}
+								isFocused={
+									focusedSection != null && Number(focusedSection) === outerIndex
+								}
 							/>
 						</div>
 					)}

@@ -43,5 +43,10 @@ getUserApi()
 	})
 	.catch((err) => {
 		console.log("error getting user data", err);
-		$userState.set({ loaded: true, userName: undefined, createdAt: undefined, timezone: undefined });
+		$userState.set({
+			loaded: true,
+			userName: undefined,
+			createdAt: undefined,
+			timezone: undefined
+		});
 	});

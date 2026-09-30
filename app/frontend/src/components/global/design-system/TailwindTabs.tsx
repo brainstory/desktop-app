@@ -1,4 +1,11 @@
-import { useState, createContext, useContext, Children, type ReactNode, type ComponentProps } from "react";
+import {
+	useState,
+	createContext,
+	useContext,
+	Children,
+	type ReactNode,
+	type ComponentProps
+} from "react";
 
 /*
 
@@ -135,8 +142,8 @@ function TailwindTab({
 					isDisabled
 						? "border-stone-200 opacity-50 cursor-not-allowed"
 						: isActive
-						? `active border-pink-300`
-						: "border-stone-200 hover:text-pink-600 hover:border-accent-600"
+							? `active border-pink-300`
+							: "border-stone-200 hover:text-pink-600 hover:border-accent-600"
 				}`}
 				onClick={isDisabled ? undefined : () => setActiveIndex(index)}
 				onKeyDown={handleKeyDown}

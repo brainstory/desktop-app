@@ -23,9 +23,7 @@ export default function IdeaTranscript({
 						</span>
 					</div>
 					<div className="lg:col-span-2">
-						<p className="text-stone-500 text-sm">
-							{pair.answer ?? ""}
-						</p>
+						<p className="text-stone-500 text-sm">{pair.answer ?? ""}</p>
 					</div>
 				</div>
 			))}

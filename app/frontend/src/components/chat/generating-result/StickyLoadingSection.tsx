@@ -8,7 +8,10 @@ interface StickyLoadingSectionProps {
 	ideaId: string | undefined;
 }
 
-export default function StickyLoadingSection({ isFinishedGenerating, ideaId }: StickyLoadingSectionProps) {
+export default function StickyLoadingSection({
+	isFinishedGenerating,
+	ideaId
+}: StickyLoadingSectionProps) {
 	return (
 		<div className="sticky bottom-0 bg-white border-t px-7 py-9">
 			{isFinishedGenerating ? (
@@ -27,8 +30,8 @@ export default function StickyLoadingSection({ isFinishedGenerating, ideaId }: S
 							onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
 							classes="ml-auto"
 						>
-						Open your idea &rarr;
-					</BorderedButton>
+							Open your idea &rarr;
+						</BorderedButton>
 					</div>
 				</>
 			) : (

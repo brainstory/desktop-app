@@ -12,8 +12,12 @@ interface NotificationsCardProps {
 	saveSettings: (fields: NotificationSetting[]) => void;
 }
 
-export function NotificationsCard({ notificationsData = [], saveSettings }: NotificationsCardProps) {
-	const [notificationFields, setNotificationFields] = useState<NotificationSetting[]>(notificationsData);
+export function NotificationsCard({
+	notificationsData = [],
+	saveSettings
+}: NotificationsCardProps) {
+	const [notificationFields, setNotificationFields] =
+		useState<NotificationSetting[]>(notificationsData);
 	const [hasChanged, setHasChanged] = useState(false);
 	// reset local edits whenever the parent passes fresh data (the
 	// documented "adjust state when props change" render-time pattern)

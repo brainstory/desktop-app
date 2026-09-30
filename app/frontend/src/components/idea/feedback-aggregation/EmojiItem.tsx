@@ -21,9 +21,7 @@ export default function EmojiItem({
 	creatorName = null,
 	style = ""
 }: EmojiItemProps) {
-	const avatarLetter = creatorName
-		? creatorName.charAt(0)
-		: (creatorEmail || "?").charAt(0);
+	const avatarLetter = creatorName ? creatorName.charAt(0) : (creatorEmail || "?").charAt(0);
 
 	return (
 		<button
@@ -36,7 +34,12 @@ export default function EmojiItem({
 				}`}
 			>
 				<Tooltip text={creatorName ?? creatorEmail ?? undefined} position="left">
-					<Avatar style="mr-1" id={creatorEmail ?? undefined} charToShow={avatarLetter} size={"6"} />
+					<Avatar
+						style="mr-1"
+						id={creatorEmail ?? undefined}
+						charToShow={avatarLetter}
+						size={"6"}
+					/>
 				</Tooltip>
 				<div
 					className={`flex w-max capitalize ${

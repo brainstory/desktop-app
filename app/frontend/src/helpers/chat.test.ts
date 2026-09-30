@@ -173,18 +173,18 @@ describe("groupTranscript", () => {
 			{ role: "assistant", content: "q1" },
 			{ role: "user", content: "a1" }
 		];
-		expect(
-			groupTranscript(answered, { hideTrailingUnansweredQuestion: true })
-		).toEqual([{ question: "q1", answer: "a1" }]);
+		expect(groupTranscript(answered, { hideTrailingUnansweredQuestion: true })).toEqual([
+			{ question: "q1", answer: "a1" }
+		]);
 
 		const unanswered: ChatMessage[] = [
 			{ role: "assistant", content: "q1" },
 			{ role: "user", content: "a1" },
 			{ role: "assistant", content: "q2" }
 		];
-		expect(
-			groupTranscript(unanswered, { hideTrailingUnansweredQuestion: true })
-		).toEqual([{ question: "q1", answer: "a1" }]);
+		expect(groupTranscript(unanswered, { hideTrailingUnansweredQuestion: true })).toEqual([
+			{ question: "q1", answer: "a1" }
+		]);
 	});
 
 	it("shows a transcribing placeholder for the pending answer", () => {

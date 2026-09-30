@@ -32,10 +32,13 @@ export default function IdeaSidebar({
 		const allComments = [];
 		for (let i = 0; i < sortedHeadingIndices.length; i++) {
 			const hid = sortedHeadingIndices[i];
-			const sectionComments = (headingIdxToComments[Number(hid)] ?? []).reduce((acc: (FeedbackComment & { hid: string })[], currValue: FeedbackComment) => {
-				acc.push({ hid: hid, ...currValue });
-				return acc;
-			}, []);
+			const sectionComments = (headingIdxToComments[Number(hid)] ?? []).reduce(
+				(acc: (FeedbackComment & { hid: string })[], currValue: FeedbackComment) => {
+					acc.push({ hid: hid, ...currValue });
+					return acc;
+				},
+				[]
+			);
 			allComments.push(...sectionComments);
 		}
 

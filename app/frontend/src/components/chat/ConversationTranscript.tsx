@@ -32,7 +32,9 @@ export default function ConversationTranscript({
 						<span className="font-medium text-black font-display">{pair.question}</span>
 					</div>
 					<div className="lg:col-span-2 mb-4">
-						<p className={`text-stone-500 ${pair.answer === "transcribing..." ? "italic" : ""}`}>
+						<p
+							className={`text-stone-500 ${pair.answer === "transcribing..." ? "italic" : ""}`}
+						>
 							{pair.answer ?? ""}
 						</p>
 					</div>

@@ -35,12 +35,11 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 				<div className="flex justify-between items-center gap-4">
 					<div>
 						<p className="text-sm font-medium text-stone-900">Show in Dock</p>
-						<p className="text-xs text-stone-500">The Brainstory icon in the macOS Dock.</p>
+						<p className="text-xs text-stone-500">
+							The Brainstory icon in the macOS Dock.
+						</p>
 					</div>
-					<OnOffToggleButton
-						checked={dock}
-						onToggle={(enabled) => save(enabled, tray)}
-					/>
+					<OnOffToggleButton checked={dock} onToggle={(enabled) => save(enabled, tray)} />
 				</div>
 				<div className="flex justify-between items-center gap-4">
 					<div>
@@ -51,10 +50,7 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 							Brainstory.
 						</p>
 					</div>
-					<OnOffToggleButton
-						checked={tray}
-						onToggle={(enabled) => save(dock, enabled)}
-					/>
+					<OnOffToggleButton checked={tray} onToggle={(enabled) => save(dock, enabled)} />
 				</div>
 			</div>
 		</Card>

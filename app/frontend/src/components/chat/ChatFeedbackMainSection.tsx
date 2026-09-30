@@ -9,7 +9,12 @@ import EndChatButton from "./reusable/EndChatButton";
 interface ChatFeedbackMainSectionProps {
 	showTranscript: boolean;
 	setShowTranscript: (show: boolean) => void;
-	parentIdea?: { id: string; title?: string | null; summary?: string | null; creatorName?: string | null };
+	parentIdea?: {
+		id: string;
+		title?: string | null;
+		summary?: string | null;
+		creatorName?: string | null;
+	};
 	currConversation: ChatMessage[];
 	conversationState: string;
 	handleGetResult: () => void;

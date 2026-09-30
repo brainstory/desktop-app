@@ -215,31 +215,31 @@ export default function IdeaTitleBar({
 									</button>
 								</div>
 							)}
-						{isEditing && (
-							<div className="flex flex-row">
-								<input
-									ref={inputRef}
-									aria-label="Idea title"
-									value={draftTitle}
-									onChange={(e) => setDraftTitle(e.target.value)}
-									onKeyDown={handleKeyDown}
-									onBlur={finishEditing}
-									className="md:mr-4 w-full max-w-xl text-inherit border-b border-stone-300 bg-transparent outline-none focus:border-pink-400"
-								/>
+							{isEditing && (
+								<div className="flex flex-row">
+									<input
+										ref={inputRef}
+										aria-label="Idea title"
+										value={draftTitle}
+										onChange={(e) => setDraftTitle(e.target.value)}
+										onKeyDown={handleKeyDown}
+										onBlur={finishEditing}
+										className="md:mr-4 w-full max-w-xl text-inherit border-b border-stone-300 bg-transparent outline-none focus:border-pink-400"
+									/>
 
-								<button
-									onClick={finishEditing}
-									className="disabled:text-stone-400 hover:bg-stone-200 p-1 leading-none rounded-full"
-									aria-label="Finish editing"
-								>
-									<ion-icon
-										class="w-4 h-4 hydrated pointer-events-none"
-										name="checkmark-outline"
-										role="img"
-									></ion-icon>
-								</button>
-							</div>
-						)}
+									<button
+										onClick={finishEditing}
+										className="disabled:text-stone-400 hover:bg-stone-200 p-1 leading-none rounded-full"
+										aria-label="Finish editing"
+									>
+										<ion-icon
+											class="w-4 h-4 hydrated pointer-events-none"
+											name="checkmark-outline"
+											role="img"
+										></ion-icon>
+									</button>
+								</div>
+							)}
 						</div>
 						<h2 className="text-sm tracking-tight text-stone-500 mt-1">
 							Created by {createdByText}

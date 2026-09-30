@@ -7,7 +7,10 @@ interface AppContextValue {
 	setSludgeman: (state: SludgemanState) => void;
 }
 
-export const AppContext = createContext<AppContextValue>({ sludgeman: "idle", setSludgeman: () => {} });
+export const AppContext = createContext<AppContextValue>({
+	sludgeman: "idle",
+	setSludgeman: () => {}
+});
 
 export function AppWrapper({ children }: { children: ReactNode }) {
 	const [sludgeman, setSludgeman] = useState<SludgemanState>("idle");

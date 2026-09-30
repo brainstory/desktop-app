@@ -153,11 +153,7 @@ export default function DashboardSection() {
 						href="/get-started"
 					>
 						<div className="w-56 p-6 flex flex-col items-center gap-2">
-							<ion-icon
-								class="hydrated w-16 h-16"
-								name="mic-outline"
-								role="img"
-							/>
+							<ion-icon class="hydrated w-16 h-16" name="mic-outline" role="img" />
 							<p>Find a quiet place</p>
 							<p className="text-xl font-bold">Start your first Brainstory!</p>
 						</div>

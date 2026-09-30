@@ -20,7 +20,10 @@ interface DailyLogSettingsCardProps {
 	saveSettings: (ids: number[]) => void;
 }
 
-export function DailyLogSettingsCard({ logFieldsData = [], saveSettings }: DailyLogSettingsCardProps) {
+export function DailyLogSettingsCard({
+	logFieldsData = [],
+	saveSettings
+}: DailyLogSettingsCardProps) {
 	const [enabledLogQids, setEnabledLogQids] = useState(getEnabledLogQidsFromData(logFieldsData));
 	const [hasChanged, setHasChanged] = useState(false);
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);

@@ -1,5 +1,3 @@
-
-
 import OnOffToggleButton from "@components/global/design-system/OnOffToggleButton";
 
 interface LogEntryInputProps {

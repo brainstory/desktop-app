@@ -17,7 +17,12 @@ import {
 import { markGettingStartedDone } from "@helpers/storage";
 import { getIdeaApi, createIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
-import { getQueryParam, callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
+import {
+	getQueryParam,
+	callApiWithRetry,
+	normalizeApiError,
+	isModerationError
+} from "@helpers/helpers";
 
 import ChatRecorder from "@components/chat/reusable/ChatRecorder";
 import FinishedResultSection from "@components/chat/reusable/FinishedResultSection";
@@ -51,7 +56,13 @@ export function ChatSection({
 }: ChatSectionProps) {
 	const [result, setResult] = useState("");
 	const [parentIdea, setParentIdea] = useState<
-		{ id: string; title?: string | null; summary?: string | null; creatorName?: string | null } | undefined
+		| {
+				id: string;
+				title?: string | null;
+				summary?: string | null;
+				creatorName?: string | null;
+		  }
+		| undefined
 	>();
 	const [conversationState, setConversationState] = useState(CONVERSATION_STATE.Start);
 	const [ideaId, setIdeaId] = useState<string | undefined>(draftId);
@@ -61,7 +72,9 @@ export function ChatSection({
 	/** true if user message was inappropriate by the AI provider */
 	const [isUserResendRequired, setIsUserResendRequired] = useState(false);
 	/** if isUserResendRequired is true, then this field value is the inappropriate flagged transcript */
-	const [inappropriateUserTranscript, setInappropriateUserTranscript] = useState<string | null>(null);
+	const [inappropriateUserTranscript, setInappropriateUserTranscript] = useState<string | null>(
+		null
+	);
 	const [showTranscript, setShowTranscript] = useState(false);
 	/** display error component as the section instead of mic ui */
 	const [errorComponent, setErrorComponent] = useState<React.ReactNode>();
@@ -227,7 +240,6 @@ export function ChatSection({
 		}
 	}, [ideaId, parentIdParam]);
 
-
 	/** Generate assistant response. NOT for the final outline result. */
 	const handleGetResponse = () => {
 		setConversationState(CONVERSATION_STATE.WaitingForCoach);
@@ -243,27 +255,22 @@ export function ChatSection({
 			callApiWithRetry(apiCall)
 				.then((message) => {
 					const isUser = false;
-				addConversationMessage(
-					message,
-					isUser,
-					currConversation,
-					setCurrConversation
-				);
-				setIsUserResendRequired(false);
-				setInappropriateUserTranscript(null);
+					addConversationMessage(message, isUser, currConversation, setCurrConversation);
+					setIsUserResendRequired(false);
+					setInappropriateUserTranscript(null);
 				})
-			.catch((err) => {
-				if (isModerationError(err)) {
-					const removedMessage = removeLastConversationMessage(
-						currConversation,
-						setCurrConversation
-					);
-					setInappropriateUserTranscript(removedMessage);
-					setIsUserResendRequired(true);
-				} else {
-					setAiError(normalizeApiError(err));
-				}
-			})
+				.catch((err) => {
+					if (isModerationError(err)) {
+						const removedMessage = removeLastConversationMessage(
+							currConversation,
+							setCurrConversation
+						);
+						setInappropriateUserTranscript(removedMessage);
+						setIsUserResendRequired(true);
+					} else {
+						setAiError(normalizeApiError(err));
+					}
+				})
 				.finally(() => {
 					setConversationState(CONVERSATION_STATE.Idle);
 				});
@@ -283,7 +290,10 @@ export function ChatSection({
 		}
 		conversationEndCallbacks();
 		setConversationState(CONVERSATION_STATE.FinishWithResult);
-		const resultFinishedCallbacks = async (result: string, structuredResult: unknown): Promise<void> => {
+		const resultFinishedCallbacks = async (
+			result: string,
+			structuredResult: unknown
+		): Promise<void> => {
 			// final update with saving result - only claim success once it saved
 			try {
 				await updateIdeaApi(ideaId, currConversation, result, structuredResult);

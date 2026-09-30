@@ -28,7 +28,10 @@ export default function DailyStreakSection() {
 					<p className="font-semibold tracking-wide text-stone-900">Great job!</p>
 					<p>
 						You set today&rsquo;s intent.{" "}
-						<a className="text-accent-900 font-medium hover:underline" href={`/idea?id=${intentIdeaId}`}>
+						<a
+							className="text-accent-900 font-medium hover:underline"
+							href={`/idea?id=${intentIdeaId}`}
+						>
 							See today&rsquo;s idea
 						</a>
 					</p>
@@ -42,15 +45,15 @@ export default function DailyStreakSection() {
 					<p className="font-semibold tracking-wide text-stone-900">
 						{streakCount > 0 ? "Keep that streak going!" : "Almost there!"}
 					</p>
-				<p>
-					You&rsquo;re partway through.{" "}
-					<a
-						className="text-accent-900 font-medium hover:underline"
-						href={`/chat?dailyIntent=true&id=${intentIdeaId}`}
-					>
-						Finish today&rsquo;s daily intent
-					</a>
-				</p>
+					<p>
+						You&rsquo;re partway through.{" "}
+						<a
+							className="text-accent-900 font-medium hover:underline"
+							href={`/chat?dailyIntent=true&id=${intentIdeaId}`}
+						>
+							Finish today&rsquo;s daily intent
+						</a>
+					</p>
 				</div>
 			);
 		}
@@ -59,7 +62,10 @@ export default function DailyStreakSection() {
 			<div className="text-start text-sm sm:text-base text-stone-700">
 				<p className="font-semibold tracking-wide text-stone-900">Start your streak!</p>
 				<p>
-					<a className="text-accent-900 font-medium hover:underline" href="/chat?dailyIntent=true">
+					<a
+						className="text-accent-900 font-medium hover:underline"
+						href="/chat?dailyIntent=true"
+					>
 						Do today&rsquo;s daily intent
 					</a>
 				</p>

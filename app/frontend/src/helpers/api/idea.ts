@@ -32,7 +32,7 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 				creatorEmail: response.parent_idea?.creator_email,
 				creatorName: response.parent_idea?.creator_name,
 				isUnread: response.parent_idea?.is_unread
-		  }
+			}
 		: null;
 
 	return {
@@ -97,7 +97,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 					matchedSpans: feedbackComment.matched_spans,
 					feedbackText: feedbackComment.feedback_text,
 					labels: feedbackComment.labels
-			  }))
+				}))
 			: [];
 		return {
 			id: idea.id,

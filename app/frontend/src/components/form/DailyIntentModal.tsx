@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-import {
-	getDailyLogQuestionsApi,
-	submitDailyLogQuestionsApi
-} from "@helpers/api/forms";
+import { getDailyLogQuestionsApi, submitDailyLogQuestionsApi } from "@helpers/api/forms";
 import type { LogFormAnswer } from "@helpers/api/forms";
 
 import PinkButton from "@ds/PinkButton";
@@ -27,11 +24,13 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 	useEffect(() => {
 		getDailyLogQuestionsApi()
 			.then((logQuestions) => {
-				const updateLogItems = logQuestions.map((question: { id: number; text: string }) => ({
-					id: question.id,
-					text: question.text,
-					value: false // default is always false
-				}));
+				const updateLogItems = logQuestions.map(
+					(question: { id: number; text: string }) => ({
+						id: question.id,
+						text: question.text,
+						value: false // default is always false
+					})
+				);
 				setLogItems(updateLogItems);
 				setIsLogLoading(false);
 			})

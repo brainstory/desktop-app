@@ -95,7 +95,12 @@ function NavigationInner() {
 								<li key="new-idea-pink" className="mx-5">
 									{/* Real anchors: cmd-click / open-in-new-tab / screen
 									    readers keep working */}
-									<PinkButton icon={button.icon} iconClasses="mr-0.5" full href={button.href}>
+									<PinkButton
+										icon={button.icon}
+										iconClasses="mr-0.5"
+										full
+										href={button.href}
+									>
 										{button.text}
 									</PinkButton>
 									<div className="text-center mt-2">

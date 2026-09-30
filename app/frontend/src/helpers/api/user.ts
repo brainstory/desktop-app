@@ -54,9 +54,7 @@ export function stripResultPreview(str: unknown): string {
 	// and if the next line starts with ##, remove the ##
 	// then replace all newlines with spaces
 	if (typeof str !== "string" || str === "") return "";
-	const removedFirstLine = str.includes("\n\n")
-		? str.substring(str.indexOf("\n\n") + 2)
-		: str;
+	const removedFirstLine = str.includes("\n\n") ? str.substring(str.indexOf("\n\n") + 2) : str;
 	const removedFirstLineAndHash = removedFirstLine.replace(/^##/, "");
 	const removedNewLines = removedFirstLineAndHash.replace(/\n/g, " ");
 	const trimmed = removedNewLines.trim();

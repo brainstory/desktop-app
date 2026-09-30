@@ -9,7 +9,11 @@ interface StartLogSectionProps {
 	disabled?: boolean;
 }
 
-export default function StartLogSection({ logItems = [], setLogItems, disabled }: StartLogSectionProps) {
+export default function StartLogSection({
+	logItems = [],
+	setLogItems,
+	disabled
+}: StartLogSectionProps) {
 	return (
 		<div className="flex flex-col gap-1 my-5 h-[calc(100%-152px)] overflow-y-auto">
 			{logItems.map((item: LogFormAnswer, i: number) => {

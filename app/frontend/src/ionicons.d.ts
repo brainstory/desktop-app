@@ -4,10 +4,7 @@ import "react";
 declare module "react" {
 	namespace JSX {
 		interface IntrinsicElements {
-			"ion-icon": React.DetailedHTMLProps<
-				React.HTMLAttributes<HTMLElement>,
-				HTMLElement
-			> & {
+			"ion-icon": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
 				/** icon name, e.g. "mic" or "arrow-back-outline" */
 				name?: string;
 				/** web components read `class`, not React's `className` */

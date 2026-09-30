@@ -83,10 +83,7 @@ export default function Profile() {
 		}
 	};
 
-	const handleUserSettingsSave = (
-		newName: string,
-		newTimezone: string
-	): void => {
+	const handleUserSettingsSave = (newName: string, newTimezone: string): void => {
 		saveUserSettingsApi(newName, newTimezone, null, null)
 			.then(() => {
 				loadSettings();
@@ -98,7 +95,12 @@ export default function Profile() {
 	};
 
 	const handleNotificationsSave = (notificationFields: NotificationSetting[]): void => {
-		saveUserSettingsApi(null, null, null, notificationFields as unknown as Record<string, unknown>[])
+		saveUserSettingsApi(
+			null,
+			null,
+			null,
+			notificationFields as unknown as Record<string, unknown>[]
+		)
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
@@ -182,9 +184,7 @@ export default function Profile() {
 				<ErrorSection
 					title="Couldn't load your settings"
 					paragraphs={["Something went wrong while loading your settings."]}
-					action={
-						<PinkButton onClick={retryLoadSettings}>Try again</PinkButton>
-					}
+					action={<PinkButton onClick={retryLoadSettings}>Try again</PinkButton>}
 					hideDashboardLink
 				/>
 			) : (

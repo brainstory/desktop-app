@@ -27,7 +27,10 @@ interface ValidNumberConfig {
 	loop?: boolean;
 }
 
-export function getValidNumber(value: string, { max, min = 0, loop = false }: ValidNumberConfig): string {
+export function getValidNumber(
+	value: string,
+	{ max, min = 0, loop = false }: ValidNumberConfig
+): string {
 	let numericValue = parseInt(value, 10);
 
 	if (!isNaN(numericValue)) {

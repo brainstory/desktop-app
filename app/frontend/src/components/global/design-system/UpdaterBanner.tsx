@@ -90,7 +90,9 @@ export default function UpdaterBanner() {
 					</div>
 				)}
 				{phase === "restarting" && <p className="text-xs text-stone-400">Restarting…</p>}
-				{phase === "error" && <p className="text-xs text-red-300">Update failed — try again later.</p>}
+				{phase === "error" && (
+					<p className="text-xs text-red-300">Update failed — try again later.</p>
+				)}
 			</div>
 			{phase === "available" && (
 				<button

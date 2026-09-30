@@ -16,17 +16,19 @@ interface IdeaFeedbackCardProps {
 	focusSection: (feedback: FeedbackComment & { hid: string | number }) => void;
 }
 
-export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }: IdeaFeedbackCardProps) {
+export default function IdeaFeedbackCard({
+	feedback,
+	focusedIdea,
+	focusSection
+}: IdeaFeedbackCardProps) {
 	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText, labels } = feedback;
 	const ref = useRef<HTMLDivElement | null>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
 	// derived: this card is the one the sidebar currently has focused,
 	// identified by its stable comment id (never by array identity, which
 	// breaks on every re-render)
-	const isFocused =
-		feedback.commentId != null && focusedIdea?.commentId === feedback.commentId;
+	const isFocused = feedback.commentId != null && focusedIdea?.commentId === feedback.commentId;
 	const [isShowingMore, setIsShowingMore] = useState(false);
-
 
 	useEffect(() => {
 		const { offsetHeight, scrollHeight } = ref.current || {};
@@ -64,8 +66,8 @@ export default function IdeaFeedbackCard({ feedback, focusedIdea, focusSection }
 					style="mr-1"
 				/>
 				<p className="ml-1 text-xs text-stone-500">
-				{formatISO8601ToHumanReadable(createdAt ?? "")}
-			</p>
+					{formatISO8601ToHumanReadable(createdAt ?? "")}
+				</p>
 			</div>
 			<p ref={ref} className={`text-sm leading-snug ${!isShowingMore && "line-clamp-5"}`}>
 				{feedbackText}

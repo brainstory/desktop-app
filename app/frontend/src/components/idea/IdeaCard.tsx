@@ -104,7 +104,8 @@ interface FeedbackStackProps {
 function FeedbackStack({ ideaId, feedback = [] }: FeedbackStackProps) {
 	return (
 		<>
-			{feedback && feedback.length > 0 &&
+			{feedback &&
+				feedback.length > 0 &&
 				feedback.map((feedbackItem: IdeaListItem, index: number) => {
 					if (index > 2) {
 						return null;

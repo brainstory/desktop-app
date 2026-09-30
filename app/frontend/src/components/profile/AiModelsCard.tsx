@@ -66,9 +66,10 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
 	/** last persisted snapshot of the endpoint fields, for dirty tracking */
 	const [savedSettings, setSavedSettings] = useState<AiSettingsResponse | null>(null);
-	const [runtime, setRuntime] = useState<{ llm: Partial<EngineStatus>; stt: Partial<EngineStatus> }>(
-		{ llm: {}, stt: {} }
-	);
+	const [runtime, setRuntime] = useState<{
+		llm: Partial<EngineStatus>;
+		stt: Partial<EngineStatus>;
+	}>({ llm: {}, stt: {} });
 	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
@@ -92,8 +93,12 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				setDownloadProgress(next);
 			})
 			.catch((e) => console.log("list models failed", e));
-		getRuntimeStatusApi().then(setRuntime).catch((e) => console.log("status failed", e));
-		getAppleSttStatusApi().then(setAppleStt).catch((e) => console.log("apple stt status failed", e));
+		getRuntimeStatusApi()
+			.then(setRuntime)
+			.catch((e) => console.log("status failed", e));
+		getAppleSttStatusApi()
+			.then(setAppleStt)
+			.catch((e) => console.log("apple stt status failed", e));
 		// re-checked on every refresh: downloads and deletions change it
 		getFreeDiskSpaceApi()
 			.then(setFreeBytes)
@@ -112,37 +117,40 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		const unlisteners = [
 			listen("llm-status", refresh),
 			listen("stt-status", refresh),
-		// downloads continue in the backend across page navigation
-		listen<{
-			modelId: string;
-			kind: "progress" | "done" | "error" | "load-error";
-			pct?: number;
-			message?: string;
-		}>("model-download", (event) => {
-			const { modelId, kind, pct, message } = event.payload ?? {};
-			if (kind === "progress") {
-				setDownloadProgress((prev: Record<string, number>) => ({ ...prev, [modelId]: pct ?? 0 }));
-			} else if (kind === "done") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
-				openSnackbar(true, "Model downloaded");
-				refresh();
-			} else if (kind === "error") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
-				openSnackbar(false, `Download failed: ${message}`);
-			} else if (kind === "load-error") {
-				// the download itself succeeded; activating the model failed
-				openSnackbar(false, `Model downloaded, but activating it failed: ${message}`);
-				refresh();
-			}
-		})
+			// downloads continue in the backend across page navigation
+			listen<{
+				modelId: string;
+				kind: "progress" | "done" | "error" | "load-error";
+				pct?: number;
+				message?: string;
+			}>("model-download", (event) => {
+				const { modelId, kind, pct, message } = event.payload ?? {};
+				if (kind === "progress") {
+					setDownloadProgress((prev: Record<string, number>) => ({
+						...prev,
+						[modelId]: pct ?? 0
+					}));
+				} else if (kind === "done") {
+					setDownloadProgress((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					});
+					openSnackbar(true, "Model downloaded");
+					refresh();
+				} else if (kind === "error") {
+					setDownloadProgress((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					});
+					openSnackbar(false, `Download failed: ${message}`);
+				} else if (kind === "load-error") {
+					// the download itself succeeded; activating the model failed
+					openSnackbar(false, `Model downloaded, but activating it failed: ${message}`);
+					refresh();
+				}
+			})
 		];
 		return () => {
 			unlisteners.forEach((p) => p.then((fn) => fn()));
@@ -212,15 +220,15 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		const isDownloading = downloadProgress[model.id] !== undefined;
 		const isConfirmingDelete = confirmingDeleteId === model.id;
 		const handleDeleteClick = (): void => {
-		if (!isConfirmingDelete) {
-			setConfirmingDeleteId(model.id);
-			// require a fresh confirmation click; reset if they wander off
-			// (the timer never outlives this card)
-			scheduleDeleteReset(() => {
-				setConfirmingDeleteId((current) => (current === model.id ? null : current));
-			}, 5000);
-			return;
-		}
+			if (!isConfirmingDelete) {
+				setConfirmingDeleteId(model.id);
+				// require a fresh confirmation click; reset if they wander off
+				// (the timer never outlives this card)
+				scheduleDeleteReset(() => {
+					setConfirmingDeleteId((current) => (current === model.id ? null : current));
+				}, 5000);
+				return;
+			}
 			setConfirmingDeleteId(null);
 			deleteModelApi(model.id)
 				.then(refresh)
@@ -245,31 +253,47 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					</div>
 					<div className="flex gap-2 items-center shrink-0">
 						{model.downloaded && !model.active && (
-							<BorderedButton onClick={() => activateModelApi(model.id).then(refresh).catch((e) => openSnackbar(false, normalizeApiError(e)))}>
+							<BorderedButton
+								onClick={() =>
+									activateModelApi(model.id)
+										.then(refresh)
+										.catch((e) => openSnackbar(false, normalizeApiError(e)))
+								}
+							>
 								Use
 							</BorderedButton>
 						)}
-					{model.downloaded && !isDownloading && (
-						<BorderedButton
-							onClick={handleDeleteClick}
-							classes={isConfirmingDelete ? "border-red-400 text-red-600 whitespace-nowrap" : ""}
-						>
-							{isConfirmingDelete ? "Really delete?" : "Delete"}
-						</BorderedButton>
-					)}
+						{model.downloaded && !isDownloading && (
+							<BorderedButton
+								onClick={handleDeleteClick}
+								classes={
+									isConfirmingDelete
+										? "border-red-400 text-red-600 whitespace-nowrap"
+										: ""
+								}
+							>
+								{isConfirmingDelete ? "Really delete?" : "Delete"}
+							</BorderedButton>
+						)}
 						{!model.downloaded && !isDownloading && (
 							<>
 								<PinkButton onClick={() => download(model.id)}>
 									Download ({formatSize(model.sizeBytes)})
 								</PinkButton>
-								{freeBytes !== null && <FreeSpaceNote freeBytes={freeBytes} needBytes={model.sizeBytes} />}
+								{freeBytes !== null && (
+									<FreeSpaceNote
+										freeBytes={freeBytes}
+										needBytes={model.sizeBytes}
+									/>
+								)}
 							</>
 						)}
 						{isDownloading && (
 							<BorderedButton
 								onClick={() =>
-									cancelDownloadApi(model.id)
-										.catch((e) => openSnackbar(false, normalizeApiError(e)))
+									cancelDownloadApi(model.id).catch((e) =>
+										openSnackbar(false, normalizeApiError(e))
+									)
 								}
 							>
 								Cancel
@@ -291,7 +315,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							)}
 						</div>
 						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
-							{downloadProgress[model.id] < 0 ? "…" : `${Math.floor(downloadProgress[model.id] ?? 0)}%`}
+							{downloadProgress[model.id] < 0
+								? "…"
+								: `${Math.floor(downloadProgress[model.id] ?? 0)}%`}
 						</span>
 					</div>
 				)}
@@ -302,9 +328,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const llmStatus = runtime.llm ?? {};
 	const sttStatus = runtime.stt ?? {};
 	const needsLlm =
-		llmStatus.state === "missing" &&
-		settings.llmMode !== "external" &&
-		!settings.extLlmBaseUrl;
+		llmStatus.state === "missing" && settings.llmMode !== "external" && !settings.extLlmBaseUrl;
 	// mirrors the backend's effective_stt_engine resolution
 	const appleActive =
 		settings.sttEngine === "apple" || (settings.sttEngine === "auto" && !!appleStt?.available);
@@ -319,7 +343,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				if (active?.downloaded) return `Local ${active.label} (ready)`;
 				if (active) return `Local ${active.label} (not downloaded yet)`;
 				return "Local model (none selected)";
-		  })();
+			})();
 	const activeSttLabel = usingExternalStt
 		? `External endpoint ${settings.extSttBaseUrl}`
 		: appleActive
@@ -329,7 +353,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					if (active?.downloaded) return `Local ${active.label} (ready)`;
 					if (active) return `Local ${active.label} (not downloaded yet)`;
 					return "Local model (none selected)";
-			  })();
+				})();
 
 	return (
 		<Card
@@ -351,8 +375,8 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					<p className="font-semibold mb-1">No language model is set up yet</p>
 					<p>
 						Brainstorming needs an AI brain: download one of the models below
-						(recommended: the light Gemma 4), or point at an external endpoint at
-						the bottom of this page.
+						(recommended: the light Gemma 4), or point at an external endpoint at the
+						bottom of this page.
 					</p>
 				</div>
 			)}
@@ -360,9 +384,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
 					<p className="font-semibold mb-1">No speech-to-text model is set up yet</p>
 					<p>
-						Download a whisper model below (or configure an external STT endpoint)
-						to talk out loud. Until then you can still use Brainstory by typing
-						your responses with the text button in a session.
+						Download a whisper model below (or configure an external STT endpoint) to
+						talk out loud. Until then you can still use Brainstory by typing your
+						responses with the text button in a session.
 					</p>
 				</div>
 			)}
@@ -378,19 +402,17 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 									: "bg-stone-100 text-stone-600"
 						}`}
 					>
-						{STATUS_LABELS[llmStatus.state as keyof typeof STATUS_LABELS] ?? llmStatus.state}
+						{STATUS_LABELS[llmStatus.state as keyof typeof STATUS_LABELS] ??
+							llmStatus.state}
 					</span>
 				</div>
-				{llmStatus.error && (
-					<p className="text-sm text-red-600">{llmStatus.error}</p>
-				)}
+				{llmStatus.error && <p className="text-sm text-red-600">{llmStatus.error}</p>}
 				<div className="flex gap-2 items-center">
 					<span className="text-sm text-stone-600">Use external LLM endpoint</span>
 					<OnOffToggleButton
 						checked={settings.llmMode === "external"}
 						onToggle={() => {
-							const nextMode =
-								settings.llmMode === "external" ? "local" : "external";
+							const nextMode = settings.llmMode === "external" ? "local" : "external";
 							if (nextMode === "external" && !settings.extLlmBaseUrl) {
 								openSnackbar(
 									false,
@@ -439,12 +461,11 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 									: "bg-stone-100 text-stone-600"
 						}`}
 					>
-						{STATUS_LABELS[sttStatus.state as keyof typeof STATUS_LABELS] ?? sttStatus.state}
+						{STATUS_LABELS[sttStatus.state as keyof typeof STATUS_LABELS] ??
+							sttStatus.state}
 					</span>
 				</div>
-				{sttStatus.error && (
-					<p className="text-sm text-red-600">{sttStatus.error}</p>
-				)}
+				{sttStatus.error && <p className="text-sm text-red-600">{sttStatus.error}</p>}
 				<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
 					<p className="font-semibold text-stone-900">Engine</p>
 					<div className="flex flex-wrap gap-2">
@@ -503,27 +524,32 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							Recognition.
 						</p>
 					)}
-				{appleActive && (
-					<div className="mt-1 max-w-xs">
-						<label htmlFor="stt-language-select" className="block mb-1 text-sm font-medium text-stone-900">
-							Speech language
-						</label>
-						<select
-							id="stt-language-select"
-							value={settings.sttLanguage || "en-US"}
-							onChange={(e) => save({ sttLanguage: e.target.value })}
-							className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 bg-white"
-						>
+					{appleActive && (
+						<div className="mt-1 max-w-xs">
+							<label
+								htmlFor="stt-language-select"
+								className="block mb-1 text-sm font-medium text-stone-900"
+							>
+								Speech language
+							</label>
+							<select
+								id="stt-language-select"
+								value={settings.sttLanguage || "en-US"}
+								onChange={(e) => save({ sttLanguage: e.target.value })}
+								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 bg-white"
+							>
 								{(appleStt?.supportedLocales ?? ["en-US"]).map((loc) => (
 									<option key={loc} value={loc}>
 										{localeLabel(loc)} ({loc})
-										{appleStt?.installedLocales.includes(loc) ? "" : " - not installed yet"}
+										{appleStt?.installedLocales.includes(loc)
+											? ""
+											: " - not installed yet"}
 									</option>
 								))}
 							</select>
 							<p className="text-sm text-stone-500 mt-1">
-								Applies to the Apple Speech engine. Missing languages are fetched
-								by macOS on first use.
+								Applies to the Apple Speech engine. Missing languages are fetched by
+								macOS on first use.
 							</p>
 						</div>
 					)}
@@ -534,124 +560,141 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				{models.stt.map(renderModelRow)}
 			</div>
 
-		<hr className="my-6 border-stone-200" />
+			<hr className="my-6 border-stone-200" />
 
-		<div className="flex flex-col gap-4">
-			<h3 className="font-semibold">External endpoints (optional)</h3>
-			<p className="text-sm text-stone-500 -mt-2">
-				Offload AI to any OpenAI-compatible server (Ollama, llama.cpp server, LM
-				Studio, ...). Base URL example: <code>http://localhost:11434</code>
-			</p>
-			{/* One consistent save model: these text fields save via the button
+			<div className="flex flex-col gap-4">
+				<h3 className="font-semibold">External endpoints (optional)</h3>
+				<p className="text-sm text-stone-500 -mt-2">
+					Offload AI to any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio,
+					...). Base URL example: <code>http://localhost:11434</code>
+				</p>
+				{/* One consistent save model: these text fields save via the button
 			    (dirty-gated); the toggles above save immediately because they're
 			    explicit single actions. Test always saves what's typed first, so
 			    it can never test a stale endpoint. */}
-			{(() => {
-				const endpointDirty =
-					(settings.extLlmBaseUrl ?? "") !== (savedSettings?.extLlmBaseUrl ?? "") ||
-					(settings.extLlmModel ?? "") !== (savedSettings?.extLlmModel ?? "") ||
-					(settings.extSttBaseUrl ?? "") !== (savedSettings?.extSttBaseUrl ?? "") ||
-					(settings.extSttModel ?? "") !== (savedSettings?.extSttModel ?? "");
+				{(() => {
+					const endpointDirty =
+						(settings.extLlmBaseUrl ?? "") !== (savedSettings?.extLlmBaseUrl ?? "") ||
+						(settings.extLlmModel ?? "") !== (savedSettings?.extLlmModel ?? "") ||
+						(settings.extSttBaseUrl ?? "") !== (savedSettings?.extSttBaseUrl ?? "") ||
+						(settings.extSttModel ?? "") !== (savedSettings?.extSttModel ?? "");
 
-				const saveEndpoints = (): Promise<void> =>
-					saveAiSettingsApi(settings)
-						.then(() => {
-							setSavedSettings(settings);
-							refresh();
-							openSnackbar(true, "Settings saved");
-						})
-						.catch((e) => {
-							openSnackbar(false, normalizeApiError(e));
-							throw e;
-						});
+					const saveEndpoints = (): Promise<void> =>
+						saveAiSettingsApi(settings)
+							.then(() => {
+								setSavedSettings(settings);
+								refresh();
+								openSnackbar(true, "Settings saved");
+							})
+							.catch((e) => {
+								openSnackbar(false, normalizeApiError(e));
+								throw e;
+							});
 
-				const saveAndTest = (testFn: () => Promise<string>): void => {
-					const runTest = () =>
-						testFn()
-							.then((msg) => openSnackbar(true, msg))
-							.catch((e) => openSnackbar(false, normalizeApiError(e)));
-					if (endpointDirty) {
-						saveEndpoints()
-							.then(runTest)
-							.catch(() => {});
-					} else {
-						runTest();
-					}
-				};
+					const saveAndTest = (testFn: () => Promise<string>): void => {
+						const runTest = () =>
+							testFn()
+								.then((msg) => openSnackbar(true, msg))
+								.catch((e) => openSnackbar(false, normalizeApiError(e)));
+						if (endpointDirty) {
+							saveEndpoints()
+								.then(runTest)
+								.catch(() => {});
+						} else {
+							runTest();
+						}
+					};
 
-				const endpointFields: {
-					key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel";
-					label: string;
-					placeholder: string;
-				}[] = [
-					{ key: "extLlmBaseUrl", label: "LLM base URL", placeholder: "http://localhost:11434" },
-					{ key: "extLlmModel", label: "LLM model", placeholder: "llama3.1:8b" },
-					{ key: "extSttBaseUrl", label: "STT base URL", placeholder: "http://localhost:8080" },
-					{ key: "extSttModel", label: "STT model", placeholder: "whisper-1" }
-				];
+					const endpointFields: {
+						key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel";
+						label: string;
+						placeholder: string;
+					}[] = [
+						{
+							key: "extLlmBaseUrl",
+							label: "LLM base URL",
+							placeholder: "http://localhost:11434"
+						},
+						{ key: "extLlmModel", label: "LLM model", placeholder: "llama3.1:8b" },
+						{
+							key: "extSttBaseUrl",
+							label: "STT base URL",
+							placeholder: "http://localhost:8080"
+						},
+						{ key: "extSttModel", label: "STT model", placeholder: "whisper-1" }
+					];
 
-				return (
-					<>
-						<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-							{endpointFields.map((field) => (
-								<div key={field.key}>
+					return (
+						<>
+							<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+								{endpointFields.map((field) => (
+									<div key={field.key}>
+										<label
+											htmlFor={`endpoint-${field.key}`}
+											className="block mb-1 text-sm font-medium text-stone-900"
+										>
+											{field.label}
+										</label>
+										<input
+											id={`endpoint-${field.key}`}
+											type="text"
+											value={settings[field.key] ?? ""}
+											onChange={updateField(field.key)}
+											className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2"
+											placeholder={field.placeholder}
+										/>
+									</div>
+								))}
+								<div>
 									<label
-										htmlFor={`endpoint-${field.key}`}
+										htmlFor="ext-llm-api-key"
 										className="block mb-1 text-sm font-medium text-stone-900"
 									>
-										{field.label}
+										LLM API key (if needed)
 									</label>
-									<input
-										id={`endpoint-${field.key}`}
-										type="text"
-										value={settings[field.key] ?? ""}
-										onChange={updateField(field.key)}
-										className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2"
-										placeholder={field.placeholder}
+									<SecretField
+										inputId="ext-llm-api-key"
+										stored={settings.extLlmApiKeySet}
+										hint={settings.extLlmApiKeyHint}
+										placeholder="sk-..."
+										onSave={(value) => saveSecret("extLlmApiKey", value)}
 									/>
 								</div>
-							))}
-							<div>
-								<label htmlFor="ext-llm-api-key" className="block mb-1 text-sm font-medium text-stone-900">
-									LLM API key (if needed)
-								</label>
-								<SecretField
-									inputId="ext-llm-api-key"
-									stored={settings.extLlmApiKeySet}
-									hint={settings.extLlmApiKeyHint}
-									placeholder="sk-..."
-									onSave={(value) => saveSecret("extLlmApiKey", value)}
-								/>
+								<div>
+									<label
+										htmlFor="ext-stt-api-key"
+										className="block mb-1 text-sm font-medium text-stone-900"
+									>
+										STT API key (if needed)
+									</label>
+									<SecretField
+										inputId="ext-stt-api-key"
+										stored={settings.extSttApiKeySet}
+										hint={settings.extSttApiKeyHint}
+										placeholder="sk-..."
+										onSave={(value) => saveSecret("extSttApiKey", value)}
+									/>
+								</div>
 							</div>
-							<div>
-								<label htmlFor="ext-stt-api-key" className="block mb-1 text-sm font-medium text-stone-900">
-									STT API key (if needed)
-								</label>
-								<SecretField
-									inputId="ext-stt-api-key"
-									stored={settings.extSttApiKeySet}
-									hint={settings.extSttApiKeyHint}
-									placeholder="sk-..."
-									onSave={(value) => saveSecret("extSttApiKey", value)}
-								/>
+							<div className="flex gap-3">
+								<PinkButton
+									disabled={!endpointDirty}
+									onClick={() => saveEndpoints().catch(() => {})}
+								>
+									{endpointDirty ? "Save Endpoints" : "All changes saved"}
+								</PinkButton>
+								<BorderedButton onClick={() => saveAndTest(testLlmEndpointApi)}>
+									Test LLM
+								</BorderedButton>
+								<BorderedButton onClick={() => saveAndTest(testSttEndpointApi)}>
+									Test STT
+								</BorderedButton>
 							</div>
-						</div>
-						<div className="flex gap-3">
-							<PinkButton disabled={!endpointDirty} onClick={() => saveEndpoints().catch(() => {})}>
-								{endpointDirty ? "Save Endpoints" : "All changes saved"}
-							</PinkButton>
-							<BorderedButton onClick={() => saveAndTest(testLlmEndpointApi)}>
-								Test LLM
-							</BorderedButton>
-							<BorderedButton onClick={() => saveAndTest(testSttEndpointApi)}>
-								Test STT
-							</BorderedButton>
-						</div>
-					</>
-				);
-			})()}
-		</div>
-	</Card>
+						</>
+					);
+				})()}
+			</div>
+		</Card>
 	);
 }
 
@@ -661,13 +704,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
  * margin. Never blocks the download - running out mid-transfer fails
  * cleanly through the normal verification path.
  */
-function FreeSpaceNote({
-	freeBytes,
-	needBytes
-}: {
-	freeBytes: number;
-	needBytes?: number;
-}) {
+function FreeSpaceNote({ freeBytes, needBytes }: { freeBytes: number; needBytes?: number }) {
 	if (!needBytes) return null;
 	const isLow = freeBytes < needBytes + DOWNLOAD_SPACE_MARGIN_BYTES;
 	if (isLow) {

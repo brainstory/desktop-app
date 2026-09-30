@@ -57,23 +57,20 @@ export default function ChatApp() {
 		<AppWrapper>
 			<AiSetupNeeded />
 			{isLogModalOpen && (
-				<DailyIntentModal
-					setLogId={setLogId}
-					onClose={() => setIsLogModalOpen(false)}
-				/>
+				<DailyIntentModal setLogId={setLogId} onClose={() => setIsLogModalOpen(false)} />
 			)}
 			{/* key field so that rerender happens if daily intent draft idea found */}
-		<ChatSection
-			key={draftId}
-			dailyLogId={logId}
-			draftId={draftId ?? undefined}
-			chatType={chatType}
-			parentIdParam={parentId}
-			fromGuideParam={isFromGuide}
-			conversationEndCallbacks={() => {
-				// end-of-session survey intentionally not part of the desktop app
-			}}
-		/>
+			<ChatSection
+				key={draftId}
+				dailyLogId={logId}
+				draftId={draftId ?? undefined}
+				chatType={chatType}
+				parentIdParam={parentId}
+				fromGuideParam={isFromGuide}
+				conversationEndCallbacks={() => {
+					// end-of-session survey intentionally not part of the desktop app
+				}}
+			/>
 		</AppWrapper>
 	);
 }

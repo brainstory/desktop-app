@@ -62,9 +62,14 @@ export default function ChatTopBar({
 	};
 
 	return (
-		<div className={`flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg ${!parentIdea && "sm:grid sm:grid-cols-3"}`} >
+		<div
+			className={`flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg ${!parentIdea && "sm:grid sm:grid-cols-3"}`}
+		>
 			{renderLeftComponent()}
-			<ChatIntroText parentIdea={parentIdea} classes={`sm:block ${(!parentIdea || saveIconName) && "hidden"} text-center grow`} />
+			<ChatIntroText
+				parentIdea={parentIdea}
+				classes={`sm:block ${(!parentIdea || saveIconName) && "hidden"} text-center grow`}
+			/>
 			{!parentIdea && (
 				<TransparentButton
 					classes="border border-stone-200 order-last ml-auto text-nowrap"
