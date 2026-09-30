@@ -167,6 +167,9 @@ jobs:
     permissions:
       # write access only where it is needed: this job
       contents: write
+      # build provenance attestations (subject-path below)
+      id-token: write
+      attestations: write
     steps:
       - name: Download built packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -212,6 +215,18 @@ jobs:
       # Draft: a human flips the release live. Until then the updater
       # feed (releases/latest/download/latest.json) still serves the
       # previous version - one bad tag can no longer auto-ship.
+      - name: Generate checksums (SHA256SUMS.txt)
+        shell: bash
+        run: |
+          sha256sum artifacts/* > artifacts/SHA256SUMS.txt
+          cat artifacts/SHA256SUMS.txt
+
+      # verifiable link from the artifacts back to this workflow run
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: artifacts/*
+
       - name: Attach packages + updater feed to release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
