@@ -56,7 +56,7 @@ export function NotificationsCard({ notificationsData = [], saveSettings }: Noti
 						</div>
 						<div className="flex flex-wrap gap-1 justify-end">
 							<OnOffToggleButton
-								defaultChecked={field.enabled}
+								checked={field.enabled}
 								onToggle={handleEnabledToggle}
 							/>
 							<div className="flex items-center flex-nowrap m-1 gap-1">

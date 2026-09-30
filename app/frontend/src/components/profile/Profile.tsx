@@ -123,11 +123,7 @@ export default function Profile() {
 						notificationsData={notifications}
 						saveSettings={handleNotificationsSave}
 					/>
-					<AppPresenceCard
-						key={`${presence.dock}-${presence.tray}`}
-						presence={presence}
-						openSnackbar={openSnackbar}
-					/>
+					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
 				</div>
 			)
 		},

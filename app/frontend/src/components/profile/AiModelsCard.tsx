@@ -375,7 +375,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				<div className="flex gap-2 items-center">
 					<span className="text-sm text-stone-600">Use external LLM endpoint</span>
 					<OnOffToggleButton
-						defaultChecked={settings.llmMode === "external"}
+						checked={settings.llmMode === "external"}
 						onToggle={() => {
 							const nextMode =
 								settings.llmMode === "external" ? "local" : "external";

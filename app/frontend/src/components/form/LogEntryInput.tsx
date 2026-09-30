@@ -28,7 +28,7 @@ export default function LogEntryInput({
 				id={id}
 				checkedState={checkedState}
 				uncheckedState={uncheckedState}
-				defaultChecked={value}
+				checked={value ?? false}
 				onToggle={onChange ?? (() => {})}
 				{...props}
 			/>
