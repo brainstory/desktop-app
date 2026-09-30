@@ -113,7 +113,7 @@ describe("getAllIdeasApi", () => {
 describe("saveUserSettingsApi", () => {
 	it("sends only the provided fields", async () => {
 		mockInvoke({ save_user_settings: () => ({ id: "settings" }) });
-		await saveUserSettingsApi(null, "Europe/Berlin", null, null);
+		await saveUserSettingsApi({ timezone: "Europe/Berlin" });
 		const call = vi.mocked(invoke).mock.calls[0];
 		expect(call[0]).toBe("save_user_settings");
 		expect(call[1]).toEqual({ user: { timezone: "Europe/Berlin" } });

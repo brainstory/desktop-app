@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { COMMANDS } from "@src/tauri/commands";
 import { invoke } from "@tauri-apps/api/core";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
@@ -91,7 +92,7 @@ function RecordButton({
 				if (timerRef.current !== null) clearTimeout(timerRef.current);
 			}
 			if (activeRecordingRef.current) {
-				invoke("stop_voice_capture").catch(() => {});
+				invoke(COMMANDS.stopVoiceCapture).catch(() => {});
 			}
 		};
 	}, []);
@@ -100,11 +101,11 @@ function RecordButton({
 	// getUserMedia delivers silent audio in some permission states. ----
 
 	const startWavCapture = async () => {
-		await invoke("start_voice_capture");
+		await invoke(COMMANDS.startVoiceCapture);
 	};
 
 	const stopWavCapture = async (): Promise<void> => {
-		const wav = await invoke<ArrayBuffer>("stop_voice_capture"); // ArrayBuffer
+		const wav = await invoke<ArrayBuffer>(COMMANDS.stopVoiceCapture); // ArrayBuffer
 		// Only clear the flag once the Rust side has actually stopped:
 		// clearing first would make the unmount cleanup skip the stop and
 		// leave cpal capturing forever.

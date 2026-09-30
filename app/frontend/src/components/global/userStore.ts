@@ -33,7 +33,7 @@ getUserApi()
 		if (!userRes?.timezone) {
 			const userBrowserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 			import("@helpers/api/settings").then(({ saveUserSettingsApi }) => {
-				saveUserSettingsApi(null, userBrowserTimezone)
+				saveUserSettingsApi({ timezone: userBrowserTimezone })
 					.then(() => {
 						$userState.setKey("timezone", userBrowserTimezone);
 					})

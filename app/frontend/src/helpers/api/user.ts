@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { COMMANDS } from "@src/tauri/commands";
 import type { DailyStatus, IdeaListItem } from "@src/types";
 
 export interface CurrentUser {
@@ -17,7 +18,7 @@ export async function getUserApi(): Promise<CurrentUser> {
 		mail_verified: boolean;
 		timezone?: string;
 		created_at: string;
-	}>("get_user");
+	}>(COMMANDS.getUser);
 	return {
 		email: response.email,
 		name: response?.name,
@@ -34,7 +35,7 @@ export async function getUserDailyStatusApi(): Promise<DailyStatus> {
 		survey_id: string | null;
 		is_completed: boolean;
 		streak: number;
-	}>("get_daily_status");
+	}>(COMMANDS.getDailyStatus);
 	return {
 		logId: response.log_id,
 		intentIdeaId: response.intent_idea_id,
@@ -80,7 +81,7 @@ interface RawIdeaItem {
 
 /** Get all ideas that the user created */
 export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
-	const response = await invoke<{ ideas: RawIdeaItem[] }>("get_all_ideas");
+	const response = await invoke<{ ideas: RawIdeaItem[] }>(COMMANDS.getAllIdeas);
 
 	const displayDraftSummary = (idea: RawIdeaItem): string | undefined => {
 		if (idea?.result === "") {

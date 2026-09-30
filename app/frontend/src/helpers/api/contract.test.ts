@@ -26,20 +26,31 @@ function walk(dir: string, files: string[] = []): string[] {
 	return files;
 }
 
-const INVOKE_RE = /invoke(?:<[^>]*>)?\(\s*"([a-z_]+)"/g;
+// the contract module resolves COMMANDS.camel -> snake_case names
+const COMMANDS_TS = readFileSync(resolve(srcRoot, "tauri/commands.ts"), "utf8");
+const cmdMap = new Map<string, string>();
+for (const m of COMMANDS_TS.matchAll(/(\w+):\s*"([a-z_]+)"/g)) {
+	cmdMap.set(m[1], m[2]);
+}
+
+// matches invoke("cmd") and invoke(COMMANDS.camel)
+const INVOKE_RE = /invoke(?:<[^>]*>)?\(\s*(?:"([a-z_]+)"|COMMANDS\.(\w+))/g;
 
 describe("frontend <-> rust IPC contract", () => {
 	it("every invoked command is registered in generate_handler!", () => {
 		const files = [
 			...walk(resolve(srcRoot, "helpers/api")),
 			...walk(resolve(srcRoot, "components"))
-		];
+		].filter((f) => !f.endsWith("contract.test.ts"));
 
 		const used = new Set<string>();
 		for (const file of files) {
 			const source = readFileSync(file, "utf8");
 			for (const match of source.matchAll(INVOKE_RE)) {
-				used.add(match[1]);
+				const resolved = match[1] ?? cmdMap.get(match[2] ?? "");
+				if (resolved) {
+					used.add(resolved);
+				}
 			}
 		}
 		expect(used.size).toBeGreaterThan(10);

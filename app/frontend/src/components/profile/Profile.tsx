@@ -84,7 +84,7 @@ export default function Profile() {
 	};
 
 	const handleUserSettingsSave = (newName: string, newTimezone: string): void => {
-		saveUserSettingsApi(newName, newTimezone, null, null)
+		saveUserSettingsApi({ name: newName, timezone: newTimezone })
 			.then(() => {
 				loadSettings();
 				openSnackbar(true, SUCCESS_COPY.SAVE);
@@ -95,12 +95,9 @@ export default function Profile() {
 	};
 
 	const handleNotificationsSave = (notificationFields: NotificationSetting[]): void => {
-		saveUserSettingsApi(
-			null,
-			null,
-			null,
-			notificationFields as unknown as Record<string, unknown>[]
-		)
+		saveUserSettingsApi({
+			notifications: notificationFields as unknown as Record<string, unknown>[]
+		})
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
@@ -113,7 +110,7 @@ export default function Profile() {
 		// copy before sorting (the prop is the child's state) and sort
 		// numerically - lexicographic sort puts 10 before 2
 		const sortedEnabledLogQids = [...enabledLogQids].sort((a, b) => a - b);
-		saveUserSettingsApi(null, null, sortedEnabledLogQids, null)
+		saveUserSettingsApi({ enabledLogQids: sortedEnabledLogQids })
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})

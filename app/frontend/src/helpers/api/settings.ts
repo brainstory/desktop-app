@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { COMMANDS } from "@src/tauri/commands";
 
 export interface DailyLogQuestion {
 	id: number;
@@ -58,7 +59,7 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 			enabled: boolean;
 		}[];
 		presence: { dock: boolean; tray: boolean };
-	}>("get_user_settings");
+	}>(COMMANDS.getUserSettings);
 
 	const user = {
 		name: response.user?.name,
@@ -93,22 +94,30 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 
 /** Toggle dock / menu-bar (tray) icon visibility */
 export function setAppPresenceApi(dock: boolean, tray: boolean): Promise<void> {
-	return invoke("set_app_presence", { dock, tray });
+	return invoke(COMMANDS.setAppPresence, { dock, tray });
 }
 
 /** Save user settings */
-export async function saveUserSettingsApi(
-	newName: string | null = null,
-	newTimezone: string | null = null,
-	enabledLogQids: number[] | null = null,
-	notifications: Record<string, unknown>[] | null = null
-): Promise<{ id: string }> {
+export interface SaveUserSettingsOptions {
+	name?: string | null;
+	timezone?: string | null;
+	enabledLogQids?: number[] | null;
+	notifications?: Record<string, unknown>[] | null;
+}
+
+/** Persist user settings. Only the provided fields are sent. */
+export async function saveUserSettingsApi({
+	name,
+	timezone,
+	enabledLogQids,
+	notifications
+}: SaveUserSettingsOptions = {}): Promise<{ id: string }> {
 	const body: Record<string, unknown> = {};
-	if (newName) {
-		body.user = { name: newName };
+	if (name) {
+		body.user = { name };
 	}
-	if (newTimezone) {
-		body.user = { ...(body.user as object), timezone: newTimezone };
+	if (timezone) {
+		body.user = { ...(body.user as object), timezone };
 	}
 	if (enabledLogQids) {
 		body.enabled_log_question_ids = enabledLogQids;
@@ -116,6 +125,6 @@ export async function saveUserSettingsApi(
 	if (notifications) {
 		body.notifications = notifications;
 	}
-	const response = await invoke<{ id: string }>("save_user_settings", body);
+	const response = await invoke<{ id: string }>(COMMANDS.saveUserSettings, body);
 	return response;
 }

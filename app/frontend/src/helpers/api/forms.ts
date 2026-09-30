@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { COMMANDS } from "@src/tauri/commands";
 
 export interface DailyLogQuestionApi {
 	id: number;
@@ -19,7 +20,7 @@ export interface LogFormAnswer {
 }
 
 export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestionApi[]> {
-	const response = await invoke<{ log: DailyLogQuestionApi[] }>("get_log_questions");
+	const response = await invoke<{ log: DailyLogQuestionApi[] }>(COMMANDS.getLogQuestions);
 
 	return response.log.map((question) => ({
 		id: question.id,
@@ -30,10 +31,10 @@ export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestionApi[]> 
 
 /**
  * Submit user's answers to their daily log
- * @param logItems list of objects with field "id" and "value" [bool]
+ * @param logItems list of objects with field COMMANDS.id and "value" [bool]
  */
 export async function submitDailyLogQuestionsApi(logItems: LogAnswerItem[]): Promise<string> {
-	const response = await invoke<{ id: string }>("submit_log", { log: logItems });
+	const response = await invoke<{ id: string }>(COMMANDS.submitLog, { log: logItems });
 	return response.id;
 }
 
