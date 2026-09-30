@@ -27,7 +27,7 @@ export default function IdeaTranscript({
 					key={`transcript-${index}`}
 				>
 					<div className="flex flex-col flex-shrink-0 mb-6 lg:pr-12 md:mb-0">
-						<span className="text-lg font-semibold leading-6 text-black font-display tracking-tight">
+						<span className="text-lg font-semibold leading-6 text-black tracking-tight">
 							{pair.question}
 						</span>
 					</div>

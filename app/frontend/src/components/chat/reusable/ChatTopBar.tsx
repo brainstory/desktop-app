@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { CHAT_SAVE_STATE } from "@src/const";
+import { cn } from "@helpers/cn";
 
 import TransparentButton from "@ds/TransparentButton";
 import ChatIntroText from "@components/chat/ChatIntroText";
@@ -63,7 +64,7 @@ export default function ChatTopBar({
 
 	return (
 		<div
-			className={`flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg ${!parentIdea && "sm:grid sm:grid-cols-3"}`}
+			className={`flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg ${cn(!parentIdea && "sm:grid sm:grid-cols-3")}`}
 		>
 			{renderLeftComponent()}
 			<ChatIntroText

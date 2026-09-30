@@ -2,6 +2,7 @@ import RivePencil from "@components/global/RivePencil";
 import { useAppContext } from "@src/components/chat/reusable/AppWrapper";
 import TransparentButton from "@ds/TransparentButton";
 import Tooltip from "@ds/Tooltip";
+import { cn } from "@helpers/cn";
 
 interface AssistantResponseTextProps {
 	content?: string | null;
@@ -22,7 +23,7 @@ export function AssistantResponseText({
 
 	const assistantTextStyle = `tracking-tight text-black whitespace-pre-wrap ${
 		styleSetting === "feedback"
-			? "font-medium text-md md:text-lg leading-tight md:leading-snug mr-1 md:my-0"
+			? "font-medium text-base md:text-lg leading-tight md:leading-snug mr-1 md:my-0"
 			: "font-semibold text-xl md:text-2xl max-w-2xl"
 	}`;
 
@@ -58,7 +59,7 @@ export function AssistantResponseText({
 				<TransparentButton
 					icon="refresh"
 					title="Ask a different question"
-					classes={`${!enableSkip && "cursor-not-allowed"}`}
+					classes={`${cn(!enableSkip && "cursor-not-allowed")}`}
 					onClick={handleSkipQuestion}
 					disabled={!enableSkip}
 				/>

@@ -12,7 +12,7 @@ export default function TransparentButton({
 }: ButtonProps) {
 	return (
 		<Button
-			classes={`bg-transparent hover:font-bold hover:bg-stone-400 hover:bg-opacity-20 text-black ${classes}`}
+			classes={`bg-transparent hover:font-bold hover:bg-stone-400/20 text-black ${classes}`}
 			icon={icon}
 			full={full}
 			left={left}

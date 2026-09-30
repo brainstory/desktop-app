@@ -68,7 +68,7 @@ export default function IdeaCard({
 							<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">
 								{(creatorName || "You").trim().charAt(0).toUpperCase()}
 							</div>
-							<div className="width-full truncate">
+							<div className="w-full truncate">
 								<p className="text-xs font-medium text-stone-800">Created by</p>
 								<p className="text-xs font-medium text-stone-800 truncate">
 									{creatorName || "You"}
@@ -83,7 +83,7 @@ export default function IdeaCard({
 									e.preventDefault();
 									window.location.href = `/idea?id=${id}&tab=feedback`;
 								}}
-								className="hover:underline font-bold w-[130px] text-blue-600 uppercase p-1 text-xs rounded-full"
+								className="hover:underline font-bold w-[130px] text-accent-700 uppercase p-1 text-xs rounded-full"
 							>
 								{feedbackList.length}{" "}
 								{feedbackList.length > 1 ? "feedback items" : "feedback item"}
@@ -119,7 +119,7 @@ function FeedbackStack({ feedback = [] }: FeedbackStackProps) {
 								? "group-hover:translate-x-2 group-hover:bg-stone-200"
 								: "group-hover:translate-x-1 group-hover:bg-stone-50"
 						} -rotate-2 group-hover:top-2 ${sharedCardPart}`,
-						1: `group-hover:translate-x-1 rotate-4 group-hover:top-1.5 group-hover:bg-stone-100 ${sharedCardPart}`,
+						1: `group-hover:translate-x-1 rotate-6 group-hover:top-1.5 group-hover:bg-stone-100 ${sharedCardPart}`,
 						2: `rotate-2 group-hover:top-1 group-hover:bg-stone-50 ${sharedCardPart} group-hover:shadow`
 					};
 

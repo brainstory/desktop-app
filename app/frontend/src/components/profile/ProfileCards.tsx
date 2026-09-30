@@ -149,7 +149,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 							fontSize: "0.875rem",
 							lineHeight: "1.5rem",
 							borderRadius: "0.5rem",
-							fontFamily: `"Inter var", sans-serif`,
+							fontFamily: `"Inter", sans-serif`,
 							padding: "0",
 							"&:hover": {
 								borderColor: "#a8a29e"

@@ -228,7 +228,7 @@ function RecordButton({
 				<div className="flex justify-center items-end w-full">
 					<div className="flex flex-col w-full max-w-[500px]">
 						<textarea
-							className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-blue-500 resize-none md:resize-y"
+							className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-accent-500 resize-none md:resize-y"
 							placeholder="Type something..."
 							aria-label="Type your response"
 							rows={5}
@@ -239,7 +239,7 @@ function RecordButton({
 						{enterHint}
 					</div>
 					<button
-						className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring focus:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed"
+						className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-accent-600 text-white hover:bg-accent-700 focus:outline-none focus:ring focus:border-accent-400 disabled:opacity-40 disabled:cursor-not-allowed"
 						aria-label="Send message"
 						disabled={!userTextInput.trim()}
 						onClick={handleTextSend}

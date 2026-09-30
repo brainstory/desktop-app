@@ -1,5 +1,6 @@
 import Avatar from "@ds/Avatar";
 import Tooltip from "@ds/Tooltip";
+import { cn } from "@helpers/cn";
 
 interface EmojiItemProps {
 	ideaId?: string | null;
@@ -29,7 +30,7 @@ export default function EmojiItem({
 			onClick={() => onReactionClick()}
 		>
 			<div
-				className={`flex items-center ${!labelsHasBorder && "p-1"} ${
+				className={`flex items-center ${cn(!labelsHasBorder && "p-1")} ${
 					isBlue && "border rounded-md border-blue-400 bg-blue-50 hover:bg-blue-200"
 				}`}
 			>

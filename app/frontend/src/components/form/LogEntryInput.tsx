@@ -23,7 +23,7 @@ export default function LogEntryInput({
 }: LogEntryInputProps) {
 	const labelId = useId();
 	return (
-		<div className="flex justify-between items-center text-sm md:text-md leading-snug">
+		<div className="flex justify-between items-center text-sm md:text-base leading-snug">
 			<p className="pr-2" id={labelId}>
 				{text}
 			</p>

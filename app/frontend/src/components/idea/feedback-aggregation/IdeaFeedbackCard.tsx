@@ -1,5 +1,6 @@
 import type { FeedbackComment } from "@src/types";
 import { useState, useEffect, useRef } from "react";
+import { cn } from "@helpers/cn";
 
 import EmojiItem from "@components/idea/feedback-aggregation/EmojiItem";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
@@ -46,7 +47,7 @@ export default function IdeaFeedbackCard({
 	}, [ref, focusedIdea, feedback.commentId]);
 
 	const containerClasses = `border-stone-200 ${
-		isFocused && "outline outline-blue-500 outline-2"
+		isFocused && "outline outline-accent-500 outline-2"
 	} m-1 p-3 border rounded-lg shadow transition-all ease-in-out duration-300`;
 
 	function feedbackClicked() {
@@ -78,7 +79,7 @@ export default function IdeaFeedbackCard({
 				</div>
 				<p
 					ref={ref}
-					className={`text-sm leading-snug ${!isShowingMore && "line-clamp-5"}`}
+					className={`text-sm leading-snug ${cn(!isShowingMore && "line-clamp-5")}`}
 				>
 					{feedbackText}
 				</p>

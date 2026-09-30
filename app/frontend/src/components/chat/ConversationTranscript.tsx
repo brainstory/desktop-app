@@ -29,7 +29,7 @@ export default function ConversationTranscript({
 					key={`transcript-${index}`}
 				>
 					<div className="flex flex-col flex-shrink-0">
-						<span className="font-medium text-black font-display">{pair.question}</span>
+						<span className="font-medium text-black">{pair.question}</span>
 					</div>
 					<div className="lg:col-span-2 mb-4">
 						<p
