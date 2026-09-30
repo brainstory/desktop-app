@@ -64,18 +64,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake
 
-      - name: Set version from tag
+      - name: Verify tag matches committed version
+        # Releases no longer rewrite the version from the tag: the
+        # versions must be committed (scripts/bump-version.mjs) and the
+        # tag must agree with all of them.
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "setting app version to $VERSION"
-          VERSION="$VERSION" node -e "
-            const fs = require('fs');
-            const p = 'src-tauri/tauri.conf.json';
-            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-            j.version = process.env.VERSION;
-            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-          "
+          check() {
+            if [ "$2" != "$VERSION" ]; then
+              echo "::error::$1 is $2 but the tag says $VERSION - run: node scripts/bump-version.mjs $VERSION"
+              exit 1
+            fi
+          }
+          check tauri.conf.json "$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          check Cargo.toml "$(sed -n 's/^version *= *"\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"
+          check package.json "$(node -p "require('./package.json').version")"
+          check app/frontend/package.json "$(node -p "require('./app/frontend/package.json').version")"
 
       # The updater signing key is scoped to the build steps ONLY: a
       # job-level env would expose the production key to every step
