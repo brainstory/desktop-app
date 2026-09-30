@@ -46,7 +46,7 @@ tokio = { version = "1", features = ["rt", "fs", "io-util", "sync", "time", "mac
 # Pinned exactly on purpose: the crates vendor their own llama.cpp /
 # whisper.cpp / ggml C++, and the binary's force_exit() workaround depends
 # on that C++'s teardown behavior. Let a deliberate upgrade change it.
-llama-cpp-2 = "=0.1.156"
+llama-cpp-2 = "=0.1.157"
 hound = "3"
 
 thiserror = "2"
