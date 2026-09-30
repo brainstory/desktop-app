@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # called by release.yml so a tag can never ship without the checks
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

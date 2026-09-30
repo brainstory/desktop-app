@@ -5,11 +5,23 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+# one release pipeline per tag; never cancel an in-flight release midway
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  test:
+    name: Checks
+    # a bad tag must fail the checks, not ship to every installed client
+    # (the updater points at releases/latest/download/latest.json)
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build (${{ matrix.name }})
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -147,6 +159,9 @@ jobs:
     name: Publish GitHub release + updater feed
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      # write access only where it is needed: this job
+      contents: write
     steps:
       - name: Download built packages
         uses: actions/download-artifact@v8
@@ -189,8 +204,13 @@ jobs:
           echo "--- latest.json ---"
           cat artifacts/latest.json
 
+      # Draft: a human flips the release live. Until then the updater
+      # feed (releases/latest/download/latest.json) still serves the
+      # previous version - one bad tag can no longer auto-ship.
       - name: Attach packages + updater feed to release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: artifacts/*
