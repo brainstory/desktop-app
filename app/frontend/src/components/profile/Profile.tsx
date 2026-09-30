@@ -13,6 +13,8 @@ import AiModelsCard from "./AiModelsCard";
 import AppPresenceCard from "./AppPresenceCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
+import ErrorSection from "@components/error/ErrorSection";
+import PinkButton from "@ds/PinkButton";
 import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
 
@@ -40,8 +42,9 @@ export default function Profile() {
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState(ERROR_COPY.DEFAULT);
 	const [isLoading, setIsLoading] = useState(true);
+	const [errorFound, setErrorFound] = useState(false);
 
-	const setSettingDataFromApi = () => {
+	const loadSettings = () => {
 		getUserSettingsApi()
 			.then((res) => {
 				setUserName(res.user.name ?? "");
@@ -49,13 +52,25 @@ export default function Profile() {
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);
-				setIsLoading(false);
 			})
-			.catch((e) => console.log("error getting user settings", e));
+			.catch((e) => {
+				// without this the spinner never ends
+				console.error("error getting user settings", e);
+				setErrorFound(true);
+			})
+			.finally(() => setIsLoading(false));
+	};
+
+	/** retry path: re-arm the loading state (a click handler may set state
+	 * synchronously; the mount effect may not) */
+	const retryLoadSettings = () => {
+		setIsLoading(true);
+		setErrorFound(false);
+		loadSettings();
 	};
 
 	useEffect(() => {
-		setSettingDataFromApi();
+		loadSettings();
 	}, []);
 
 	const openSnackbar = (isSuccess: boolean, message: string): void => {
@@ -74,7 +89,7 @@ export default function Profile() {
 	): void => {
 		saveUserSettingsApi(newName, newTimezone, null, null)
 			.then(() => {
-				setSettingDataFromApi();
+				loadSettings();
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 			})
 			.catch((e) => {
@@ -93,7 +108,9 @@ export default function Profile() {
 	};
 
 	const handleLogSettingsSave = (enabledLogQids: number[]): void => {
-		const sortedEnabledLogQids = enabledLogQids.sort(); // sorting isn't necessary, but makes it easier for humans to look through
+		// copy before sorting (the prop is the child's state) and sort
+		// numerically - lexicographic sort puts 10 before 2
+		const sortedEnabledLogQids = [...enabledLogQids].sort((a, b) => a - b);
 		saveUserSettingsApi(null, null, sortedEnabledLogQids, null)
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
@@ -161,6 +178,15 @@ export default function Profile() {
 
 			{isLoading ? (
 				<LoadingAnimation text="Loading your settings..." />
+			) : errorFound ? (
+				<ErrorSection
+					title="Couldn't load your settings"
+					paragraphs={["Something went wrong while loading your settings."]}
+					action={
+						<PinkButton onClick={retryLoadSettings}>Try again</PinkButton>
+					}
+					hideDashboardLink
+				/>
 			) : (
 				<TailwindComposedTabs
 					data={tabData}
