@@ -1,5 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach, vi } from "vitest";
+
+// no vitest globals: testing-library cannot self-register its cleanup
+afterEach(cleanup);
 
 // Every component test runs against a mocked Tauri IPC layer: the real
 // `invoke` only exists inside the desktop webview.
