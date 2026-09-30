@@ -60,3 +60,11 @@ export async function generateResponseApi(
 	});
 	return response?.response ?? "";
 }
+
+/**
+ * Cancel the in-flight generation. The backend checks the token between
+ * chunks, so the invoke rejects with "generation cancelled" shortly after.
+ */
+export function cancelGenerationApi(): Promise<void> {
+	return invoke("cancel_generation");
+}

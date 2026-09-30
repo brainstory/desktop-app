@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { useStore } from "@nanostores/react";
+import { $aiStatus, llmBusy } from "@components/global/aiStatusStore";
 import {
 	CONVERSATION_STATE,
 	CHAT_SAVE_STATE,
@@ -83,6 +85,8 @@ export function ChatSection({
 	/** error from the AI layer that is not the 469 resend case (e.g. no model downloaded) */
 	const [aiError, setAiError] = useState<string | null>(null);
 
+	const aiStatus = useStore($aiStatus);
+	const showModelLoading = llmBusy(aiStatus);
 	const firstPrompt = getFirstPrompt(chatType);
 	const [currConversation, setCurrConversation] = useState([
 		{ role: "assistant", content: firstPrompt }
@@ -403,6 +407,15 @@ export function ChatSection({
 					</div>
 				)}
 
+				{showModelLoading && (
+					<p
+						role="status"
+						className="mx-4 mt-2 text-sm text-stone-500 bg-stone-100 rounded-lg px-4 py-2"
+					>
+						Loading the AI model - you can type already, sending unlocks when it is
+						ready...
+					</p>
+				)}
 				<ChatTopBar
 					parentIdea={parentIdea}
 					showTranscript={showTranscript}

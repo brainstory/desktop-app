@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useStore } from "@nanostores/react";
 import { listModelsApi, getAiSettingsApi } from "@helpers/api/models";
 import PinkButton from "@ds/PinkButton";
+import { $aiStatus } from "@components/global/aiStatusStore";
 
 /**
  * Shown until the app has an AI brain: either a downloaded local model or a
@@ -10,6 +12,8 @@ import PinkButton from "@ds/PinkButton";
 export default function AiSetupNeeded() {
 	const [needsSetup, setNeedsSetup] = useState(false);
 	const [checked, setChecked] = useState(false);
+	// live engine status from the shared store (fed once per app)
+	useStore($aiStatus);
 
 	useEffect(() => {
 		Promise.all([listModelsApi(), getAiSettingsApi()])

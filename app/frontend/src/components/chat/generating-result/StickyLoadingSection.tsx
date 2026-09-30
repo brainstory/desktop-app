@@ -1,5 +1,6 @@
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import BorderedButton from "@ds/BorderedButton";
+import { CancelGenerationButton } from "@components/chat/reusable/ChatStateNotification";
 
 const headingStyle = "mb-4 lg:mb-5 font-bold text-stone-900 text-center text-xl lg:text-2xl";
 
@@ -38,6 +39,9 @@ export default function StickyLoadingSection({
 				<>
 					<h1 className={headingStyle}>Hang tight! Writing your thoughts down...</h1>
 					<LoadingAnimation text="Saving your summary — keep the app open." />
+					<div className="flex justify-center mt-2">
+						<CancelGenerationButton />
+					</div>
 				</>
 			)}
 		</div>

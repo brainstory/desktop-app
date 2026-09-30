@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { initAiStatus } from "@components/global/aiStatusStore";
 
 export type SludgemanState = "idle" | "jump" | "wave";
 
@@ -14,6 +15,11 @@ export const AppContext = createContext<AppContextValue>({
 
 export function AppWrapper({ children }: { children: ReactNode }) {
 	const [sludgeman, setSludgeman] = useState<SludgemanState>("idle");
+	// one runtime-status read + event subscription per app, shared by
+	// every consumer of $aiStatus
+	useEffect(() => {
+		initAiStatus();
+	}, []);
 	const sharedState: AppContextValue = {
 		sludgeman,
 		setSludgeman
