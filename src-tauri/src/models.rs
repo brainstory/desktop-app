@@ -942,6 +942,219 @@ pub fn hf_cache_model_path(cache_dir: &Path, spec: &ModelSpec) -> Option<PathBuf
 	best.map(|(_, path)| path)
 }
 
+/// The one cache directory Brainstory writes into: the first
+/// environment-configured candidate, else the default. Discovery reads
+/// every candidate; writes need exactly one target.
+pub fn primary_hub_cache() -> PathBuf {
+	hf_hub_cache_candidates()
+		.into_iter()
+		.next()
+		.unwrap_or_else(|| {
+			dirs::home_dir()
+				.unwrap_or_else(|| PathBuf::from("."))
+				.join(".cache")
+				.join("huggingface")
+				.join("hub")
+		})
+}
+
+fn hf_repo_dir(cache: &Path, spec: &ModelSpec) -> PathBuf {
+	cache.join(format!("models--{}", spec.repo.replace('/', "--")))
+}
+
+/// The content-addressed blob for this model: `blobs/<pinned sha256>`,
+/// the same name huggingface tooling uses for LFS files, so a blob we
+/// download or migrate is deduped against theirs automatically.
+pub fn hf_blob_path(cache: &Path, spec: &ModelSpec) -> PathBuf {
+	hf_repo_dir(cache, spec).join("blobs").join(spec.sha256)
+}
+
+/// Link a blob into a snapshot under `snapshots/<sha>/<filename>`,
+/// trying a relative symlink (the standard layout) first, then a
+/// hardlink (Windows without symlink privileges), then a copy. Idempotent.
+pub fn materialize_snapshot(cache: &Path, spec: &ModelSpec) -> Result<(), String> {
+	let snapshot_dir = hf_repo_dir(cache, spec).join("snapshots").join(spec.sha256);
+	std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
+	let link = snapshot_dir.join(spec.filename);
+	if link.symlink_metadata().is_ok() {
+		return Ok(());
+	}
+	let blob = hf_blob_path(cache, spec);
+	if !blob.is_file() {
+		return Err(format!("blob missing for {}", spec.id));
+	}
+	let rel = std::path::Path::new("../../blobs").join(spec.sha256);
+	#[cfg(target_family = "unix")]
+	{
+		std::os::unix::fs::symlink(&rel, &link).map_err(|e| e.to_string())?;
+	}
+	#[cfg(target_os = "windows")]
+	{
+		use std::os::windows::fs as win_fs;
+		if win_fs::symlink_file(&rel, &link).is_err() {
+			std::fs::hard_link(&blob, &link)
+				.or_else(|_| std::fs::copy(&blob, &link).map(|_| ()))
+				.map_err(|e| e.to_string())?;
+		}
+	}
+	Ok(())
+}
+
+/// Streaming sha256 of a file, lowercase hex.
+fn sha256_of_file(path: &Path) -> Option<String> {
+	use sha2::{Digest, Sha256};
+	let mut file = std::fs::File::open(path).ok()?;
+	let mut hasher = Sha256::new();
+	let mut buf = vec![0u8; 1024 * 1024];
+	use std::io::Read;
+	loop {
+		let n = file.read(&mut buf).ok()?;
+		if n == 0 {
+			break;
+		}
+		hasher.update(&buf[..n]);
+	}
+	Some(
+		hasher
+			.finalize()
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect(),
+	)
+}
+
+/// One-time migration: move legacy app-dir model files into the hub
+/// cache so one copy serves Brainstory and every other HF tool. The
+/// source is hash-verified first - a corrupt or foreign file must never
+/// be renamed into a content-addressed store under a sha it doesn't
+/// have. An existing blob means the content is already cached: the app
+/// copy is redundant and simply removed.
+pub fn migrate_legacy_models(models_dir: &Path, cache: &Path) {
+	for spec in LLM_MODELS.iter().chain(STT_MODELS.iter()) {
+		migrate_one(models_dir, cache, spec);
+	}
+}
+
+/// Migrate a single spec's app-dir file into the cache (separate so
+/// tests can drive it with fixture specs instead of the catalog pins).
+fn migrate_one(models_dir: &Path, cache: &Path, spec: &ModelSpec) {
+	let app_file = models_dir.join(spec.filename);
+	if !app_file.is_file() {
+		return;
+	}
+	let blob = hf_blob_path(cache, spec);
+	if blob.is_file() {
+		log::info!(
+			"migrating {}: blob already cached, dropping the app copy",
+			spec.id
+		);
+		if let Err(e) = std::fs::remove_file(&app_file) {
+			log::warn!("could not remove the redundant app copy: {e}");
+			return;
+		}
+	} else {
+		match sha256_of_file(&app_file) {
+			Some(hash) if hash.eq_ignore_ascii_case(spec.sha256) => {}
+			other => {
+				log::warn!(
+					"leaving {} in the app models dir: its content does not match the pinned hash ({:?})",
+					spec.id,
+					other
+				);
+				return;
+			}
+		}
+		if let Some(parent) = blob.parent() {
+			if let Err(e) = std::fs::create_dir_all(parent) {
+				log::warn!("could not create the cache blobs dir: {e}");
+				return;
+			}
+		}
+		// rename within a volume; fall back to copy-via-.part across
+		// volumes (a partial copy never lands under the final name)
+		if std::fs::rename(&app_file, &blob).is_err() {
+			let tmp = part_path(&blob);
+			match std::fs::copy(&app_file, &tmp)
+				.and_then(|_| std::fs::rename(&tmp, &blob))
+				.and_then(|_| std::fs::remove_file(&app_file))
+			{
+				Ok(()) => {}
+				Err(e) => {
+					log::warn!("could not migrate {} into the cache: {e}", spec.id);
+					let _ = std::fs::remove_file(&tmp);
+					return;
+				}
+			}
+		}
+		log::info!("migrated {} into the hub cache", spec.id);
+	}
+	if let Err(e) = materialize_snapshot(cache, spec) {
+		log::warn!("could not create the cache snapshot for {}: {e}", spec.id);
+	}
+}
+
+/// True when some snapshot entry still links to `blobs/<sha>`.
+/// Symlinks are inspected precisely; a non-symlink entry (hardlink or
+/// copied fallback, e.g. on Windows) hides its target, so it is treated
+/// as referencing the blob - never prune what might be in use.
+fn blob_referenced(snapshots_dir: &Path, sha: &str) -> bool {
+	for rev in std::fs::read_dir(snapshots_dir)
+		.into_iter()
+		.flatten()
+		.flatten()
+	{
+		let rev_dir = rev.path();
+		if !rev_dir.is_dir() {
+			continue;
+		}
+		for entry in std::fs::read_dir(rev_dir).into_iter().flatten().flatten() {
+			let path = entry.path();
+			if !path.is_file() {
+				continue; // broken symlink or directory
+			}
+			match std::fs::read_link(&path) {
+				Ok(target) => {
+					if target.file_name().map(|n| n == sha).unwrap_or(false) {
+						return true;
+					}
+				}
+				Err(_) => return true, // not a symlink: conservatively in use
+			}
+		}
+	}
+	false
+}
+
+/// Remove this model's cache entry: every `snapshots/*/<filename>` link,
+/// then the blob when nothing else in the repo references it. This is
+/// the same rule huggingface's own cache pruning applies, so deleting
+/// in Brainstory never breaks another tool's snapshot (worst case, that
+/// tool re-downloads a blob we removed as unreferenced).
+pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, String> {
+	let repo_dir = hf_repo_dir(cache, spec);
+	let snapshots = repo_dir.join("snapshots");
+	if !snapshots.is_dir() {
+		return Ok(false);
+	}
+	let mut removed = false;
+	for rev in std::fs::read_dir(&snapshots)
+		.map_err(|e| e.to_string())?
+		.flatten()
+	{
+		let target = rev.path().join(spec.filename);
+		if target.symlink_metadata().is_ok() {
+			std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+			removed = true;
+		}
+	}
+	let blob = hf_blob_path(cache, spec);
+	if blob.is_file() && !blob_referenced(&snapshots, spec.sha256) {
+		std::fs::remove_file(&blob).map_err(|e| e.to_string())?;
+		removed = true;
+	}
+	Ok(removed)
+}
+
 /// The `.part` staging path for a download destination: `<file>.part`
 /// appended to the full name (with_extension would collapse `x.bin` and
 /// `x.gguf` to the same `x.part`).
@@ -1900,5 +2113,135 @@ mod hf_cache_tests {
 		);
 		// neither set: the default
 		assert_eq!(resolve_hf_endpoint("", None), default);
+	}
+}
+
+#[cfg(test)]
+mod cache_storage_tests {
+	use super::{
+		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, remove_cached_model,
+		LLM_MODELS,
+	};
+	use sha2::{Digest, Sha256};
+
+	fn sha256_hex(bytes: &[u8]) -> String {
+		Sha256::digest(bytes)
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect()
+	}
+
+	/// A spec-shaped fixture whose pinned sha matches `content`, so
+	/// migration/materialization accept it.
+	fn spec_for(content: &[u8]) -> super::ModelSpec {
+		let mut spec = LLM_MODELS[0].clone();
+		spec.sha256 = Box::leak(sha256_hex(content).into_boxed_str());
+		spec
+	}
+
+	#[test]
+	fn materialize_publishes_a_blob_and_resolves_through_the_snapshot() {
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"model bytes";
+		let spec = spec_for(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+		// idempotent
+		materialize_snapshot(cache.path(), &spec).expect("materialize again");
+
+		let found = hf_cache_model_path(cache.path(), &spec).expect("resolved");
+		assert_eq!(std::fs::read(&found).unwrap(), content);
+	}
+
+	#[test]
+	fn migration_moves_verified_files_and_dedupes_existing_blobs() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let models = dir.path().join("models");
+		let cache = dir.path().join("hub");
+		std::fs::create_dir_all(&models).unwrap();
+
+		let good = b"good model content";
+		let good_spec = spec_for(good);
+		let good_app = models.join(good_spec.filename);
+		std::fs::write(&good_app, good).unwrap();
+
+		// wrong-content file: must stay in the app dir untouched
+		let mut bad_spec = spec_for(b"different bytes");
+		// pin bad_spec's sha to something the file does NOT have
+
+		bad_spec.sha256 = "deadbeef";
+		bad_spec.filename = "stale-file.gguf";
+		let bad_app = models.join(bad_spec.filename);
+		std::fs::write(&bad_app, b"stale content").unwrap();
+
+		// pre-existing blob: the app copy is redundant and just removed
+		let mut dup_spec = spec_for(b"already cached");
+		dup_spec.filename = "dup.gguf";
+		let dup_blob = hf_blob_path(&cache, &dup_spec);
+		std::fs::create_dir_all(dup_blob.parent().unwrap()).unwrap();
+		std::fs::write(&dup_blob, b"already cached").unwrap();
+		std::fs::write(models.join(dup_spec.filename), b"already cached").unwrap();
+
+		migrate_one(&models, &cache, &good_spec);
+		migrate_one(&models, &cache, &bad_spec);
+		migrate_one(&models, &cache, &dup_spec);
+
+		// good: moved into the blob, published, app copy gone
+		assert!(!good_app.exists(), "app copy removed after migration");
+		assert_eq!(
+			std::fs::read(hf_blob_path(&cache, &good_spec)).unwrap(),
+			good
+		);
+		assert!(hf_cache_model_path(&cache, &good_spec).is_some());
+
+		// bad: left alone (content does not match the pin)
+		assert!(bad_app.exists(), "unverifiable file stays in the app dir");
+		assert!(!hf_blob_path(&cache, &bad_spec).exists());
+
+		// dup: blob already present, app copy dropped, snapshot exists
+		assert!(!models.join(dup_spec.filename).exists());
+		assert!(hf_cache_model_path(&cache, &dup_spec).is_some());
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn remove_prunes_snapshots_and_only_unreferenced_blobs() {
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"shared model bytes";
+		let spec = spec_for(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+
+		// a second snapshot revision sharing the blob (as another tool
+		// would have created it)
+		let repo_snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+		let other = repo_snapshots.join("realcommit");
+		std::fs::create_dir_all(&other).unwrap();
+		std::os::unix::fs::symlink(
+			std::path::Path::new("../../blobs").join(spec.sha256),
+			other.join("different-name.gguf"),
+		)
+		.unwrap();
+
+		// delete: both snapshot links go, blob kept while referenced
+		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(!hf_cache_model_path(cache.path(), &spec).is_some());
+		assert!(
+			blob.is_file(),
+			"blob survives while another snapshot references it"
+		);
+
+		// the other tool's link is the only thing holding the blob now
+		assert!(!remove_cached_model(cache.path(), &spec).expect("no-op remove"));
+		assert!(blob.is_file(), "still referenced: kept");
+		// once that link is gone too, the next remove prunes the blob
+		std::fs::remove_file(other.join("different-name.gguf")).unwrap();
+		assert!(remove_cached_model(cache.path(), &spec).expect("prune remove"));
+		assert!(!blob.is_file(), "unreferenced blob is pruned");
 	}
 }

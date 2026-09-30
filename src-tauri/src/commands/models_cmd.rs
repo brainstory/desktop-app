@@ -105,9 +105,13 @@ pub async fn get_apple_stt_status() -> Result<serde_json::Value, String> {
 /// path (hash/size verification catches the truncated file).
 #[tauri::command]
 pub async fn get_free_disk_space(state: State<'_, AppState>) -> Result<u64, String> {
-	let models_dir = state.models_dir();
-	tauri::async_runtime::spawn_blocking(move || {
-		fs4::available_space(&models_dir).map_err(|e| e.to_string())
+	// Downloads land in the hub cache now: warn about the volume they
+	// will actually hit, not the (legacy) app models dir.
+	let _ = state;
+	tauri::async_runtime::spawn_blocking(|| {
+		let dir = crate::models::primary_hub_cache();
+		std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+		fs4::available_space(&dir).map_err(|e| e.to_string())
 	})
 	.await
 	.map_err(|e| format!("disk space task failed: {e}"))?
@@ -177,10 +181,22 @@ pub async fn download_model(
 		.ok_or_else(|| format!("unknown model {model_id}"))?
 		.clone();
 
+	// Already present (app copy or hub cache)? Nothing to download -
+	// the UI hides the button, this covers races and stale cards.
+	if state.resolve_model_file(&spec).is_some() {
+		return Err("model is already downloaded".into());
+	}
+
+	// Downloads land directly in the hub cache as content-addressed
+	// blobs (blobs/<pinned sha256>), the same layout other HF tooling
+	// uses, so one copy serves everyone and nothing migrates later.
+	let cache = crate::models::primary_hub_cache();
+	let dest = crate::models::hf_blob_path(&cache, &spec);
 	// All fallible setup happens BEFORE the bookkeeping is registered: a
 	// failure here must not leave the model reported as "downloading"
 	// forever (which would block re-download and delete until restart).
-	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
+	std::fs::create_dir_all(dest.parent().ok_or("blob path has no parent")?)
+		.map_err(|e| e.to_string())?;
 
 	// This download gets its own cancel token, fully independent of the
 	// generation token - chatting must never kill a download and vice versa.
@@ -193,7 +209,6 @@ pub async fn download_model(
 	};
 
 	let app_handle = app.clone();
-	let dest = state.model_path(&spec);
 	let url = model_url(&spec, &crate::models::hf_endpoint(&state.ai_settings()));
 	let hf_token = state.ai_settings().hf_token;
 
@@ -227,6 +242,11 @@ pub async fn download_model(
 
 			match result {
 				Ok(()) => {
+					// publish the blob under snapshots/<sha>/<file> so
+					// discovery (ours and other HF tools) sees it
+					if let Err(e) = crate::models::materialize_snapshot(&cache, &spec) {
+						log::error!("could not create the cache snapshot for {}: {e}", spec.id);
+					}
 					let _ = on_event.send(json!({ "kind": "done" }));
 					let _ = app_handle.emit(
 						"model-download",
@@ -325,19 +345,9 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		// that lives in the user's HuggingFace hub cache was put there by
 		// another tool, and removing other tools' cache entries is not
 		// ours to do.
-		let app_path = state.model_path(spec);
-		if !app_path.is_file() {
-			let cache_path = crate::models::hf_hub_cache_candidates()
-				.iter()
-				.find_map(|cache| crate::models::hf_cache_model_path(cache, spec));
-			if let Some(cache) = cache_path {
-				return Err(format!(
-					"this model is only present in your HuggingFace cache ({}); Brainstory does not delete files it does not own - remove it there if you want the space back",
-					cache.display()
-				));
-			}
-			return Err("model file not found".into());
-		}
+		// Unload the engine BEFORE deleting the files: a loaded engine
+		// mmaps the model, and on Windows an open mmap makes remove_file
+		// fail. Covers the legacy app copy and every cache candidate.
 		// Unload the engine BEFORE deleting the file: the loaded engine mmaps
 		// the model, and on Windows an open mmap makes remove_file fail.
 		let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
@@ -353,7 +363,22 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		}
 		drop(runtime);
 
-		std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
+		// Delete every copy: the legacy app-dir file first, then the hub
+		// cache entry (snapshot links, and the blob only when no other
+		// snapshot in that repo still references it - the same pruning
+		// rule huggingface's own cache manager applies).
+		let mut deleted = false;
+		let app_path = state.model_path(spec);
+		if app_path.is_file() {
+			std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
+			deleted = true;
+		}
+		for cache in crate::models::hf_hub_cache_candidates() {
+			deleted |= crate::models::remove_cached_model(&cache, spec)?;
+		}
+		if !deleted {
+			return Err("model file not found".into());
+		}
 
 		if llm_gone {
 			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =

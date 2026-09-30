@@ -94,7 +94,7 @@ Everything is local:
 | What | Where |
 | --- | --- |
 | Ideas, drafts, daily logs | SQLite database at `~/Library/Application Support/ai.brainstory.desktop/brainstory.db` (macOS; `~/.local/share/...` on Linux, `%APPDATA%\...` on Windows) |
-| Downloaded models | `.../ai.brainstory.desktop/models/` (multi-GB files) |
+| Downloaded models | the HuggingFace hub cache (`~/.cache/huggingface/hub/`), shared with other HF tooling; legacy app-folder copies are migrated there (hash-verified) at first launch |
 | HuggingFace token, external API keys | the macOS Keychain / system keyring (never in the database; a plaintext fallback row exists only where no keychain service is available) |
 | Logs | rotating `brainstory.log` under the OS log dir |
 

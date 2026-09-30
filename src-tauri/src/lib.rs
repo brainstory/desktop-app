@@ -149,7 +149,7 @@ pub fn run() {
 				}
 			};
 			std::fs::create_dir_all(data_dir.join("models")).ok();
-			sweep_stale_part_files(&data_dir.join("models"));
+			sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());
 
 			let db = match open_database(&data_dir) {
 				Ok(db) => db,
@@ -231,7 +231,7 @@ pub fn run() {
 					});
 				}
 			}
-			spawn_model_loader(
+			spawn_migration_and_model_loader(
 				app.handle().clone(),
 				AiSettings::load(&app.state::<AppState>().db),
 			);
@@ -275,20 +275,37 @@ pub fn run() {
 
 /// Remove `.part` files left behind by a quit (or crash) mid-download; the
 /// in-process error path can't clean up when the process itself is gone.
-fn sweep_stale_part_files(models_dir: &std::path::Path) {
-	let Ok(entries) = std::fs::read_dir(models_dir) else {
-		return;
-	};
-	for entry in entries.flatten() {
-		let path = entry.path();
-		let is_part = path.extension().map(|e| e == "part").unwrap_or(false);
-		if is_part {
-			log::warn!("removing leftover partial download {}", path.display());
-			if let Err(e) = std::fs::remove_file(&path) {
-				log::warn!("could not remove {}: {e}", path.display());
+fn sweep_stale_part_files(models_dir: &std::path::Path, cache_dir: &std::path::Path) {
+	for dir in sweep_dirs(models_dir, cache_dir) {
+		let Ok(entries) = std::fs::read_dir(&dir) else {
+			continue;
+		};
+		for entry in entries.flatten() {
+			let path = entry.path();
+			let is_part = path.extension().map(|e| e == "part").unwrap_or(false);
+			if is_part {
+				log::warn!("removing leftover partial download {}", path.display());
+				if let Err(e) = std::fs::remove_file(&path) {
+					log::warn!("could not remove {}: {e}", path.display());
+				}
 			}
 		}
 	}
+}
+
+/// Directories that can hold `.part` staging files: the legacy app
+/// models dir and every repo's blobs dir in the hub cache.
+fn sweep_dirs(
+	models_dir: &std::path::Path,
+	cache_dir: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+	let mut dirs = vec![models_dir.to_path_buf()];
+	if let Ok(repos) = std::fs::read_dir(cache_dir) {
+		for repo in repos.flatten() {
+			dirs.push(repo.path().join("blobs"));
+		}
+	}
+	dirs
 }
 
 /// Open the database, quarantining a *corrupt* file instead of failing to
@@ -475,7 +492,25 @@ fn show_main_window(app: &AppHandle) {
 /// Load active models at startup / after settings changes. Heavy loading
 /// happens on a background thread so the UI starts instantly.
 pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
+	std::thread::spawn(move || run_model_loader(app, settings));
+}
+
+/// Startup path: migrate legacy app-dir downloads into the hub cache
+/// first (hash-verified, so a corrupt file never poisons a
+/// content-addressed store), then load. Ordered so the loader never
+/// mmaps a file the migration is about to move.
+pub fn spawn_migration_and_model_loader(app: AppHandle, settings: AiSettings) {
 	std::thread::spawn(move || {
+		if let Some(state) = app.try_state::<AppState>() {
+			models::migrate_legacy_models(&state.models_dir(), &models::primary_hub_cache());
+		}
+		run_model_loader(app, settings);
+	});
+}
+
+fn run_model_loader(app: AppHandle, settings: AiSettings) {
+	{
+		// the original thread body, unchanged below
 		let Some(state) = app.try_state::<AppState>() else {
 			return;
 		};
@@ -569,7 +604,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				state.emit_llm_status(&app);
 			}
 		}
-	});
+	}
 }
 
 #[cfg(test)]
