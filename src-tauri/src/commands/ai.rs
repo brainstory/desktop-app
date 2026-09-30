@@ -62,14 +62,16 @@ pub async fn transcribe(
 		return Ok(serde_json::json!({ "transcript": transcript }));
 	}
 
-	// Apple Speech: tried whenever auto/apple is set; it errors fast on
-	// unsupported systems. Auto falls back to whisper on any failure; an
-	// explicit Apple choice surfaces real failures (permission prompts,
+	// Apple Speech: tried whenever auto/apple is set AND the engine
+	// exists on this system (no pointless clone + bridge call otherwise).
+	// Auto falls back to whisper on any failure; an explicit Apple choice
+	// on a supported system surfaces real failures (permission prompts,
 	// asset problems) instead of hiding them behind whisper.
-	if matches!(
-		settings.stt_engine,
-		crate::models::SpeechEngine::Apple | crate::models::SpeechEngine::Auto
-	) {
+	if crate::apple::speech_available()
+		&& matches!(
+			settings.stt_engine,
+			crate::models::SpeechEngine::Apple | crate::models::SpeechEngine::Auto
+		) {
 		let apple_bytes = bytes.clone();
 		let locale = settings.stt_language.clone();
 		let result = tauri::async_runtime::spawn_blocking(move || {

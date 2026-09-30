@@ -133,6 +133,8 @@ const BASELINE_SCHEMA: &str = "
 ///   2: `daily.created_at` column + lookup indexes
 ///   3: `local_date` columns on ideas/log_entries/surveys, freezing each
 ///      activity's local calendar day at write time
+///   4: indexes on the local_date columns (streak and activity-today
+///      queries scan them on every dashboard load)
 /// The baseline also gained `ideas.parent_idea_id REFERENCES ideas(id)
 /// ON DELETE CASCADE` before first release; databases from pre-release dev
 /// builds simply don't have the constraint (the app-level recursive delete
@@ -140,7 +142,7 @@ const BASELINE_SCHEMA: &str = "
 /// A database created before this framework exists reports version 0 and is
 /// brought forward through every step (the CREATE IF NOT EXISTS statements
 /// make step 1 a no-op for its tables).
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 impl Db {
 	pub fn open(path: &Path) -> Result<Self, OpenError> {
@@ -219,6 +221,18 @@ impl Db {
 				))?;
 			}
 			tx.pragma_update(None, "user_version", 3)?;
+			tx.commit()?;
+		}
+		if version < 4 {
+			// The streak and has_activity_today queries filter on
+			// local_date across three tables on every dashboard load.
+			let tx = conn.transaction()?;
+			tx.execute_batch(
+				"CREATE INDEX IF NOT EXISTS idx_ideas_local_date ON ideas(local_date);
+				 CREATE INDEX IF NOT EXISTS idx_log_entries_local_date ON log_entries(local_date);
+				 CREATE INDEX IF NOT EXISTS idx_surveys_local_date ON surveys(local_date);",
+			)?;
+			tx.pragma_update(None, "user_version", 4)?;
 			tx.commit()?;
 		}
 		// Self-healing backfill on every open: any row still carrying an
@@ -1605,5 +1619,51 @@ mod coverage_tests {
 		assert_eq!(arr.len(), 2);
 		assert_eq!(arr[0]["body"], "intro line");
 		assert_eq!(arr[1]["heading"], "## Only");
+	}
+}
+
+#[cfg(test)]
+mod v4_tests {
+	use super::*;
+
+	#[test]
+	fn migration_v4_adds_local_date_indexes() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("t.db");
+		// a database exactly as schema version 3 left it (columns and
+		// indexes present, local_date columns backfilled)
+		{
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(BASELINE_SCHEMA).unwrap();
+			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+				.unwrap();
+			for table in ["ideas", "log_entries", "surveys"] {
+				conn.execute_batch(&format!(
+					"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';"
+				))
+				.unwrap();
+			}
+			conn.pragma_update(None, "user_version", 3).unwrap();
+		}
+		let db = Db::open(&path).expect("migrate v3 -> v4");
+		{
+			let conn = db.lock();
+			let version: i64 = conn
+				.query_row("PRAGMA user_version", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(version, SCHEMA_VERSION);
+			for table in ["ideas", "log_entries", "surveys"] {
+				let has: i64 = conn
+					.query_row(
+						&format!(
+							"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_{table}_local_date'"
+						),
+						[],
+						|r| r.get(0),
+					)
+					.unwrap();
+				assert_eq!(has, 1, "{table} local_date index exists");
+			}
+		}
 	}
 }

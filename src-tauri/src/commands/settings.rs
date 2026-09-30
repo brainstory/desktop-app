@@ -278,8 +278,8 @@ pub async fn test_stt_endpoint(state: State<'_, AppState>) -> Result<String, Str
 		return Err("no external STT endpoint configured".into());
 	}
 	// 0.5 s of silence is enough to validate auth + routing.
-	let silence = vec![0i16; 8000];
-	let wav = encode_tiny_wav(&silence, 16000);
+	let silence = vec![0.0f32; 8000];
+	let wav = crate::voice::encode_wav_16k(&silence)?;
 	let _ = crate::stt::transcribe_external(
 		&settings.ext_stt_base_url,
 		&settings.ext_stt_api_key,
@@ -288,28 +288,6 @@ pub async fn test_stt_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	)
 	.await?;
 	Ok(format!("endpoint OK ({})", settings.ext_stt_base_url))
-}
-
-fn encode_tiny_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
-	let mut out: Vec<u8> = Vec::new();
-	out.extend_from_slice(b"RIFF");
-	let data_len = (samples.len() * 2) as u32;
-	out.extend_from_slice(&(36 + data_len).to_le_bytes());
-	out.extend_from_slice(b"WAVE");
-	out.extend_from_slice(b"fmt ");
-	out.extend_from_slice(&16u32.to_le_bytes());
-	out.extend_from_slice(&1u16.to_le_bytes()); // PCM
-	out.extend_from_slice(&1u16.to_le_bytes()); // mono
-	out.extend_from_slice(&sample_rate.to_le_bytes());
-	out.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
-	out.extend_from_slice(&2u16.to_le_bytes()); // block align
-	out.extend_from_slice(&16u16.to_le_bytes()); // bits
-	out.extend_from_slice(b"data");
-	out.extend_from_slice(&data_len.to_le_bytes());
-	for sample in samples {
-		out.extend_from_slice(&sample.to_le_bytes());
-	}
-	out
 }
 
 /// Toggle dock / menu-bar (tray) icon visibility. Applied immediately and

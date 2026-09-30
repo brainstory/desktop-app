@@ -161,11 +161,11 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 	let capture = guard.take().ok_or_else(|| "not recording".to_string())?;
 	drop(capture._stream);
 
-	let samples = capture
-		.samples
-		.lock()
-		.unwrap_or_else(|e| e.into_inner())
-		.clone();
+	// take (not clone): the capture is gone after this call anyway, and
+	// the buffer can hold ~minutes of audio
+	let mut samples_guard = capture.samples.lock().unwrap_or_else(|e| e.into_inner());
+	let samples = std::mem::take(&mut *samples_guard);
+	drop(samples_guard);
 	drop(guard);
 	if samples.is_empty() {
 		return Err("no audio captured".into());
@@ -174,9 +174,12 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 	// fold interleaved channels to mono, then resample to 16 kHz
 	let channels = capture.channels.max(1) as usize;
 	let mono: Vec<f32> = if channels > 1 {
+		// divide by the frame's own length (matching stt.rs): a truncated
+		// final frame must not get a spurious volume dip from dividing by
+		// the full channel count
 		samples
 			.chunks(channels)
-			.map(|frame| frame.iter().sum::<f32>() / channels as f32)
+			.map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
 			.collect()
 	} else {
 		samples
@@ -186,7 +189,7 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 	encode_wav_16k(&mono)
 }
 
-fn encode_wav_16k(samples: &[f32]) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_wav_16k(samples: &[f32]) -> Result<Vec<u8>, String> {
 	let data_len = (samples.len() * 2) as u32;
 	let mut out: Vec<u8> = Vec::with_capacity(44 + samples.len() * 2);
 	out.extend_from_slice(b"RIFF");
