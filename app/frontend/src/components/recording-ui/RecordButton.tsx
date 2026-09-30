@@ -102,8 +102,11 @@ function RecordButton({
 	};
 
 	const stopWavCapture = async (): Promise<void> => {
-		activeRecordingRef.current = false;
 		const wav = await invoke<ArrayBuffer>("stop_voice_capture"); // ArrayBuffer
+		// Only clear the flag once the Rust side has actually stopped:
+		// clearing first would make the unmount cleanup skip the stop and
+		// leave cpal capturing forever.
+		activeRecordingRef.current = false;
 		if (!wav || wav.byteLength <= 44) {
 			handleError("no audio captured");
 			return;
@@ -113,14 +116,18 @@ function RecordButton({
 
 	const handleToggleRecording = async (): Promise<void> => {
 		if (isRecording) {
-			setIsRecording(false);
 			setWarningType(null);
 			if (timerRef.current !== null) clearTimeout(timerRef.current);
-			setStatus("idle");
+			setStatus("stopping mic...");
 			try {
 				await stopWavCapture();
+				setIsRecording(false);
+				setStatus("idle");
 			} catch (error) {
-				handleError(error);
+				// The stop failed: the mic may still be running, so keep
+				// the recording state (the button offers to stop again and
+				// the unmount cleanup still fires) and say what happened.
+				handleMicStopError(error);
 			}
 		} else {
 			setStatus("starting mic...");
@@ -134,9 +141,10 @@ function RecordButton({
 				await startWavCapture();
 				activeRecordingRef.current = true;
 				const recordingTimeout = window.setTimeout(() => {
-					stopWavCapture().catch((error) => handleError(error));
-					setIsRecording(false);
 					setWarningType("timer"); // Set warning when time limit is exceeded
+					stopWavCapture()
+						.then(() => setIsRecording(false))
+						.catch((error) => handleMicStopError(error));
 				}, RECORDING_MAX_DURATION);
 				timerRef.current = recordingTimeout;
 				setStatus("recording");
@@ -151,6 +159,16 @@ function RecordButton({
 			}
 		}
 	};
+
+	function handleMicStopError(error: unknown): void {
+		console.error("failed to stop the microphone", error);
+		setIsTranscribing(false);
+		setErrorMessage(
+			"Couldn't stop the microphone - try again. If it stays on, restart the app."
+		);
+		setWarningType("error");
+		setStatus("recording");
+	}
 
 	function handleError(error: unknown): void {
 		setIsTranscribing(false);
