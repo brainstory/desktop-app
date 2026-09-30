@@ -10,14 +10,17 @@ fn idea_list(ideas: Vec<IdeaItem>) -> serde_json::Value {
 
 #[tauri::command]
 pub async fn get_user(state: State<'_, AppState>) -> Result<UserData, String> {
-	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
+	let name = state
+		.db
+		.get_setting(crate::keys::setting::USER_NAME)
+		.filter(|s| !s.is_empty());
 	let timezone = state
 		.db
-		.get_setting("user_timezone")
+		.get_setting(crate::keys::setting::USER_TIMEZONE)
 		.filter(|s| !s.is_empty());
 	let created_at = state
 		.db
-		.get_setting("created_at")
+		.get_setting(crate::keys::setting::CREATED_AT)
 		.unwrap_or_else(|| "1970-01-01T00:00:00".into());
 	Ok(UserData {
 		email: None,
@@ -221,7 +224,7 @@ pub fn get_notifications() -> serde_json::Value {
 pub fn enabled_log_ids(state: &AppState) -> Vec<i64> {
 	state
 		.db
-		.get_setting("enabled_log_question_ids")
+		.get_setting(crate::keys::setting::ENABLED_LOG_QUESTION_IDS)
 		.and_then(|s| serde_json::from_str::<Vec<i64>>(&s).ok())
 		.map(|ids| {
 			// ignore ids that don't correspond to a known question

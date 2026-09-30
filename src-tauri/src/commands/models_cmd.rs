@@ -343,12 +343,12 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 
 		if llm_gone {
 			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				crate::models::EngineStatus::new("missing", None, None);
+				crate::models::EngineStatus::missing();
 			state.emit_llm_status(&app);
 		}
 		if stt_gone {
 			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				crate::models::EngineStatus::new("missing", None, None);
+				crate::models::EngineStatus::missing();
 			state.emit_stt_status(&app);
 		}
 		Ok(())

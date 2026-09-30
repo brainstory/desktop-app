@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::db::Db;
+use crate::keys::setting;
 use crate::llm::LocalLlm;
 use crate::stt::SttEngine;
 
@@ -228,10 +229,10 @@ pub struct AiSettings {
 /// persists the default once so this read-path helper never mutates.
 pub(crate) fn default_stt_engine(db: &Db) -> SpeechEngine {
 	const PREVIOUS_AI_KEYS: [&str; 4] = [
-		"ai_llm_mode",
-		"ai_llm_model",
-		"ai_stt_model",
-		"ext_stt_base_url",
+		setting::AI_LLM_MODE,
+		setting::AI_LLM_MODEL,
+		setting::AI_STT_MODEL,
+		setting::EXT_STT_BASE_URL,
 	];
 	let existing_install = PREVIOUS_AI_KEYS.iter().any(|k| db.get_setting(k).is_some());
 	if existing_install {
@@ -251,12 +252,12 @@ impl AiSettings {
 				// hand-edited) degrades to local - the same rule generation
 				// applies, so the loader's status can never disagree with
 				// what chats actually use.
-				get("ai_llm_mode")
+				get(setting::AI_LLM_MODE)
 					.parse::<LlmMode>()
 					.unwrap_or(LlmMode::Local)
 			},
 			llm_model: {
-				let m = get("ai_llm_model");
+				let m = get(setting::AI_LLM_MODEL);
 				if m.is_empty() {
 					LLM_MODELS[0].id.to_string()
 				} else {
@@ -264,21 +265,21 @@ impl AiSettings {
 				}
 			},
 			stt_model: {
-				let m = get("ai_stt_model");
+				let m = get(setting::AI_STT_MODEL);
 				if m.is_empty() {
 					STT_MODELS[0].id.to_string()
 				} else {
 					m
 				}
 			},
-			stt_engine: match db.get_setting("ai_stt_engine") {
+			stt_engine: match db.get_setting(setting::AI_STT_ENGINE) {
 				Some(v) => v
 					.parse::<SpeechEngine>()
 					.unwrap_or_else(|_| default_stt_engine(db)),
 				None => default_stt_engine(db),
 			},
 			stt_language: {
-				let v = get("ai_stt_language");
+				let v = get(setting::AI_STT_LANGUAGE);
 				if v.is_empty() {
 					"en-US".into()
 				} else {
@@ -286,12 +287,12 @@ impl AiSettings {
 				}
 			},
 			hf_token: secret(crate::secrets::Secret::HfToken),
-			ext_llm_base_url: get("ext_llm_base_url"),
+			ext_llm_base_url: get(setting::EXT_LLM_BASE_URL),
 			ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
-			ext_llm_model: get("ext_llm_model"),
-			ext_stt_base_url: get("ext_stt_base_url"),
+			ext_llm_model: get(setting::EXT_LLM_MODEL),
+			ext_stt_base_url: get(setting::EXT_STT_BASE_URL),
 			ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
-			ext_stt_model: get("ext_stt_model"),
+			ext_stt_model: get(setting::EXT_STT_MODEL),
 		}
 	}
 
@@ -390,15 +391,15 @@ impl AiSettings {
 	/// secrets could not be written - callers must not report success.
 	pub fn save(&self, db: &Db) -> Result<(), String> {
 		db.set_settings(&[
-			("ai_llm_mode", self.llm_mode.as_str().to_string()),
-			("ai_llm_model", self.llm_model.clone()),
-			("ai_stt_model", self.stt_model.clone()),
-			("ai_stt_engine", self.stt_engine.as_str().to_string()),
-			("ai_stt_language", self.stt_language.clone()),
-			("ext_llm_base_url", self.ext_llm_base_url.clone()),
-			("ext_llm_model", self.ext_llm_model.clone()),
-			("ext_stt_base_url", self.ext_stt_base_url.clone()),
-			("ext_stt_model", self.ext_stt_model.clone()),
+			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
+			(setting::AI_LLM_MODEL, self.llm_model.clone()),
+			(setting::AI_STT_MODEL, self.stt_model.clone()),
+			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),
+			(setting::AI_STT_LANGUAGE, self.stt_language.clone()),
+			(setting::EXT_LLM_BASE_URL, self.ext_llm_base_url.clone()),
+			(setting::EXT_LLM_MODEL, self.ext_llm_model.clone()),
+			(setting::EXT_STT_BASE_URL, self.ext_stt_base_url.clone()),
+			(setting::EXT_STT_MODEL, self.ext_stt_model.clone()),
 		])?;
 		let save_secret = |secret: crate::secrets::Secret, value: &str| -> Result<(), String> {
 			let stored = crate::secrets::load(secret, db);
@@ -430,9 +431,21 @@ pub struct Runtime {
 	pub stt: Option<Arc<SttEngine>>,
 }
 
+/// Lifecycle of one engine slot. Serialized lowercase so the existing
+/// frontend contract (`state === "ready"` etc.) is unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EngineState {
+	Ready,
+	Loading,
+	Error,
+	Missing,
+	External,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EngineStatus {
-	pub state: String,
+	pub state: EngineState,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub model_id: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -440,12 +453,32 @@ pub struct EngineStatus {
 }
 
 impl EngineStatus {
-	pub fn new(state: &str, model_id: Option<&str>, error: Option<&str>) -> Self {
+	pub fn new(state: EngineState, model_id: Option<&str>, error: Option<&str>) -> Self {
 		Self {
-			state: state.into(),
+			state,
 			model_id: model_id.map(|s| s.into()),
 			error: error.map(|s| s.into()),
 		}
+	}
+
+	pub fn ready(model_id: Option<&str>) -> Self {
+		Self::new(EngineState::Ready, model_id, None)
+	}
+
+	pub fn loading(model_id: &str) -> Self {
+		Self::new(EngineState::Loading, Some(model_id), None)
+	}
+
+	pub fn error(model_id: Option<&str>, error: &str) -> Self {
+		Self::new(EngineState::Error, model_id, Some(error))
+	}
+
+	pub fn missing() -> Self {
+		Self::new(EngineState::Missing, None, None)
+	}
+
+	pub fn external() -> Self {
+		Self::new(EngineState::External, None, None)
 	}
 }
 
@@ -486,8 +519,8 @@ impl AppState {
 				llm: None,
 				stt: None,
 			}),
-			llm_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
-			stt_status: std::sync::Mutex::new(EngineStatus::new("missing", None, None)),
+			llm_status: std::sync::Mutex::new(EngineStatus::new(EngineState::Missing, None, None)),
+			stt_status: std::sync::Mutex::new(EngineStatus::new(EngineState::Missing, None, None)),
 			generation_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
 			download_progress: std::sync::Mutex::new(std::collections::HashMap::new()),
 			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -555,7 +588,7 @@ impl AppState {
 	fn load_llm_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		{
 			let mut s = lock(&self.llm_status);
-			*s = EngineStatus::new("loading", Some(spec.id), None);
+			*s = EngineStatus::new(EngineState::Loading, Some(spec.id), None);
 		}
 		self.emit_llm_status(app);
 
@@ -608,7 +641,7 @@ impl AppState {
 				runtime.llm = Some(Arc::new(engine));
 				drop(runtime);
 				let mut s = lock(&self.llm_status);
-				*s = EngineStatus::new("ready", Some(spec.id), None);
+				*s = EngineStatus::new(EngineState::Ready, Some(spec.id), None);
 				Ok(())
 			}
 			None => {
@@ -628,7 +661,7 @@ impl AppState {
 							);
 							let mut s = lock(&self.llm_status);
 							*s = EngineStatus::new(
-								"ready",
+								EngineState::Ready,
 								Some(prev.id),
 								Some(&format!(
 									"could not load {0} - {1} is still active",
@@ -647,10 +680,14 @@ impl AppState {
 				}
 				let mut s = lock(&self.llm_status);
 				if vanished {
-					*s = EngineStatus::new("missing", None, None);
+					*s = EngineStatus::new(EngineState::Missing, None, None);
 					return Err(format!("{} was deleted while loading", spec.id));
 				}
-				*s = EngineStatus::new("error", Some(spec.id), Some("model failed to load"));
+				*s = EngineStatus::new(
+					EngineState::Error,
+					Some(spec.id),
+					Some("model failed to load"),
+				);
 				Err("model failed to load".into())
 			}
 		}
@@ -691,7 +728,7 @@ impl AppState {
 	fn load_stt_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		{
 			let mut s = lock(&self.stt_status);
-			*s = EngineStatus::new("loading", Some(spec.id), None);
+			*s = EngineStatus::new(EngineState::Loading, Some(spec.id), None);
 		}
 		self.emit_stt_status(app);
 
@@ -718,7 +755,7 @@ impl AppState {
 				runtime.stt = Some(Arc::new(engine));
 				drop(runtime);
 				let mut s = lock(&self.stt_status);
-				*s = EngineStatus::new("ready", Some(spec.id), None);
+				*s = EngineStatus::new(EngineState::Ready, Some(spec.id), None);
 				Ok(())
 			}
 			None => {
@@ -742,7 +779,7 @@ impl AppState {
 								);
 								let mut s = lock(&self.stt_status);
 								*s = EngineStatus::new(
-									"ready",
+									EngineState::Ready,
 									Some(prev.id),
 									Some(&format!(
 										"could not load {0} - {1} is still active",
@@ -761,7 +798,11 @@ impl AppState {
 					}
 				}
 				let mut s = lock(&self.stt_status);
-				*s = EngineStatus::new("error", Some(spec.id), Some("model failed to load"));
+				*s = EngineStatus::new(
+					EngineState::Error,
+					Some(spec.id),
+					Some("model failed to load"),
+				);
 				Err("model failed to load".into())
 			}
 		}
@@ -928,6 +969,7 @@ pub async fn download_model_file(
 #[cfg(test)]
 mod tests {
 	use super::{download_model_file, AiSettings, Db};
+	use crate::keys::setting;
 
 	fn temp_db(name: &str) -> (Db, tempfile::TempDir) {
 		// TempDir keeps the file (and its WAL sidecars) alive until the
@@ -946,7 +988,7 @@ mod tests {
 		// loading is a pure read now: the default is persisted once by
 		// app setup, not as a side effect of every load
 		assert_eq!(
-			db.get_setting("ai_stt_engine"),
+			db.get_setting(setting::AI_STT_ENGINE),
 			None,
 			"load must not write the resolved default"
 		);
@@ -955,7 +997,7 @@ mod tests {
 	#[test]
 	fn stt_engine_defaults_to_whisper_for_existing_installs() {
 		let (db, _dir) = temp_db("existing");
-		db.set_setting("ai_stt_model", "whisper-small-en")
+		db.set_setting(setting::AI_STT_MODEL, "whisper-small-en")
 			.expect("set");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.stt_engine, super::SpeechEngine::Whisper);
@@ -964,7 +1006,8 @@ mod tests {
 	#[test]
 	fn stt_engine_keeps_stored_value() {
 		let (db, _dir) = temp_db("stored");
-		db.set_setting("ai_stt_engine", "apple").expect("set");
+		db.set_setting(setting::AI_STT_ENGINE, "apple")
+			.expect("set");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.stt_engine, super::SpeechEngine::Apple);
 	}
@@ -1043,13 +1086,14 @@ mod tests {
 		let (db, _dir) = temp_db("mode");
 		// a garbage stored mode (legacy/hand-edited row) must not split the
 		// callers: generation and the model loader agree on local
-		db.set_setting("ai_llm_mode", "banana").expect("set");
+		db.set_setting(setting::AI_LLM_MODE, "banana").expect("set");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.llm_mode, super::LlmMode::Local);
 		assert!(!s.uses_external_llm());
-		db.set_setting("ai_llm_mode", "external").expect("set");
+		db.set_setting(setting::AI_LLM_MODE, "external")
+			.expect("set");
 		assert!(AiSettings::load(&db).uses_external_llm());
-		db.set_setting("ai_llm_mode", "local").expect("set");
+		db.set_setting(setting::AI_LLM_MODE, "local").expect("set");
 		assert!(!AiSettings::load(&db).uses_external_llm());
 	}
 

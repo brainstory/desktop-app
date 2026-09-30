@@ -31,7 +31,11 @@ impl Secret {
 
 	/// Legacy settings-table key (also the DB fallback location).
 	pub fn db_key(self) -> &'static str {
-		self.account()
+		match self {
+			Secret::HfToken => crate::keys::setting::secret::HF_TOKEN,
+			Secret::ExtLlmApiKey => crate::keys::setting::secret::EXT_LLM_API_KEY,
+			Secret::ExtSttApiKey => crate::keys::setting::secret::EXT_STT_API_KEY,
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ use chrono::Timelike;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::keys;
 use crate::models::AppState;
 
 /// Reminder scheduler. Reads the reminder settings periodically and fires a
@@ -19,7 +20,7 @@ pub fn spawn(app: AppHandle) {
 
 			let enabled = state
 				.db
-				.get_setting("reminder_enabled")
+				.get_setting(keys::setting::REMINDER_ENABLED)
 				.map(|v| v == "true")
 				.unwrap_or(false);
 			if !enabled {
@@ -28,7 +29,7 @@ pub fn spawn(app: AppHandle) {
 
 			let time_str = state
 				.db
-				.get_setting("reminder_time")
+				.get_setting(keys::setting::REMINDER_TIME)
 				.filter(|s| !s.is_empty())
 				.unwrap_or_else(|| "09:00".into());
 			let (hour, minute) = parse_time(&time_str);
@@ -36,7 +37,7 @@ pub fn spawn(app: AppHandle) {
 			let today = now.format("%Y-%m-%d").to_string();
 			let last_fired = state
 				.db
-				.get_setting("reminder_last_fired")
+				.get_setting(keys::setting::REMINDER_LAST_FIRED)
 				.unwrap_or_default();
 			if last_fired == today {
 				continue;
@@ -49,7 +50,10 @@ pub fn spawn(app: AppHandle) {
 
 			// Already brainstormed today? Then the reminder has nothing to do.
 			if state.db.has_activity_today() {
-				if let Err(e) = state.db.set_setting("reminder_last_fired", &today) {
+				if let Err(e) = state
+					.db
+					.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
+				{
 					log::warn!("failed to record reminder: {e}");
 				}
 				continue;
@@ -61,7 +65,10 @@ pub fn spawn(app: AppHandle) {
 				.title("Brainstory")
 				.body("What's on your mind today? Take a few minutes to think out loud.")
 				.show();
-			if let Err(e) = state.db.set_setting("reminder_last_fired", &today) {
+			if let Err(e) = state
+				.db
+				.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
+			{
 				log::warn!("failed to record reminder: {e}");
 			}
 		}

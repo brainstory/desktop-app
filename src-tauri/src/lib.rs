@@ -1,6 +1,7 @@
 pub mod apple;
 mod commands;
 pub mod db;
+pub mod keys;
 pub mod llm;
 pub mod models;
 pub mod prompts;
@@ -181,13 +182,13 @@ pub fn run() {
 					log::warn!("failed to persist default speech engine: {e}");
 				}
 			}
-			if db.get_setting("created_at").is_none() {
+			if db.get_setting(keys::setting::CREATED_AT).is_none() {
 				// naive UTC, no trailing Z (the frontend appends it itself)
 				let now = Utc::now()
 					.naive_utc()
 					.format("%Y-%m-%dT%H:%M:%S")
 					.to_string();
-				if let Err(e) = db.set_setting("created_at", &now) {
+				if let Err(e) = db.set_setting(keys::setting::CREATED_AT, &now) {
 					log::error!("failed to record account creation date: {e}");
 				}
 			}
@@ -378,13 +379,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 				let state = app.state::<AppState>();
 				let enabled = !state
 					.db
-					.get_setting("reminder_enabled")
+					.get_setting(keys::setting::REMINDER_ENABLED)
 					.map(|v| v == "true")
 					.unwrap_or(false);
-				if let Err(e) = state
-					.db
-					.set_setting("reminder_enabled", if enabled { "true" } else { "false" })
-				{
+				if let Err(e) = state.db.set_setting(
+					keys::setting::REMINDER_ENABLED,
+					if enabled { "true" } else { "false" },
+				) {
 					log::error!("failed to save reminder setting: {e}");
 				}
 				// keep the native checkmark and the setting in lockstep
@@ -493,7 +494,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 						// matches the reported status, not a stale model.
 						state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-							models::EngineStatus::new("missing", None, None);
+							models::EngineStatus::new(models::EngineState::Missing, None, None);
 						state.emit_stt_status(app);
 					}
 				}
@@ -504,7 +505,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				load_whisper(&state, &app);
 				*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
 					models::EngineStatus::new(
-						"error",
+						models::EngineState::Error,
 						Some("apple-speech"),
 						Some("Apple Speech requires macOS 26+ - using whisper instead"),
 					);
@@ -522,7 +523,11 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 							state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 						}
 						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-							models::EngineStatus::new("ready", Some("apple-speech"), None);
+							models::EngineStatus::new(
+								models::EngineState::Ready,
+								Some("apple-speech"),
+								None,
+							);
 						state.emit_stt_status(&app);
 					}
 					// whisper (effective() never reports Auto)
@@ -534,7 +539,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 			// engine and say "external" where the UI can see it.
 			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				models::EngineStatus::new("external", None, None);
+				models::EngineStatus::new(models::EngineState::External, None, None);
 			state.emit_stt_status(&app);
 		}
 
@@ -542,7 +547,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 		if settings.uses_external_llm() {
 			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
 			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				models::EngineStatus::new("external", None, None);
+				models::EngineStatus::new(models::EngineState::External, None, None);
 			state.emit_llm_status(&app);
 			return;
 		}
@@ -558,7 +563,7 @@ pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
 				// engine that no longer matches the settings.
 				state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
 				*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-					models::EngineStatus::new("missing", None, None);
+					models::EngineStatus::new(models::EngineState::Missing, None, None);
 				state.emit_llm_status(&app);
 			}
 		}

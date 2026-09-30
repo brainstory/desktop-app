@@ -1,6 +1,7 @@
 use tauri::{Manager, State};
 
 use crate::db::DEFAULT_LOG_QUESTIONS;
+use crate::keys;
 use crate::models::AiSettings;
 use crate::types::{
 	AppPresence, LogSettingsItem, NotificationSettingsItem, UserSettings, UserSettingsUser,
@@ -9,30 +10,33 @@ use crate::AppState;
 
 #[tauri::command]
 pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSettings, String> {
-	let name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
+	let name = state
+		.db
+		.get_setting(keys::setting::USER_NAME)
+		.filter(|s| !s.is_empty());
 	let timezone = state
 		.db
-		.get_setting("user_timezone")
+		.get_setting(keys::setting::USER_TIMEZONE)
 		.filter(|s| !s.is_empty());
 	let reminder_enabled = state
 		.db
-		.get_setting("reminder_enabled")
+		.get_setting(keys::setting::REMINDER_ENABLED)
 		.map(|v| v == "true")
 		.unwrap_or(false);
 	let reminder_time = state
 		.db
-		.get_setting("reminder_time")
+		.get_setting(keys::setting::REMINDER_TIME)
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| "09:00".into());
 	let presence = AppPresence {
 		dock: state
 			.db
-			.get_setting("show_in_dock")
+			.get_setting(keys::setting::SHOW_IN_DOCK)
 			.map(|v| v == "true")
 			.unwrap_or(true),
 		tray: state
 			.db
-			.get_setting("show_in_tray")
+			.get_setting(keys::setting::SHOW_IN_TRAY)
 			.map(|v| v == "true")
 			.unwrap_or(true),
 	};
@@ -99,10 +103,10 @@ pub async fn save_user_settings(
 	let mut kv: Vec<(&str, String)> = Vec::new();
 	if let Some(user) = &user {
 		if let Some(name) = user["name"].as_str() {
-			kv.push(("user_name", name.to_string()));
+			kv.push((keys::setting::USER_NAME, name.to_string()));
 		}
 		if let Some(timezone) = user["timezone"].as_str() {
-			kv.push(("user_timezone", timezone.to_string()));
+			kv.push((keys::setting::USER_TIMEZONE, timezone.to_string()));
 		}
 	}
 
@@ -118,7 +122,7 @@ pub async fn save_user_settings(
 			return Err("at least one log question must be enabled".into());
 		}
 		kv.push((
-			"enabled_log_question_ids",
+			keys::setting::ENABLED_LOG_QUESTION_IDS,
 			serde_json::to_string(&ids).expect("serializing Vec<i64> cannot fail"),
 		));
 	}
@@ -132,11 +136,11 @@ pub async fn save_user_settings(
 					if !valid_reminder_time(value) {
 						return Err(format!("invalid reminder time '{value}' (expected HH:MM)"));
 					}
-					kv.push(("reminder_time", value.to_string()));
+					kv.push((keys::setting::REMINDER_TIME, value.to_string()));
 				}
 				if let Some(enabled) = notification["enabled"].as_bool() {
 					kv.push((
-						"reminder_enabled",
+						keys::setting::REMINDER_ENABLED,
 						if enabled {
 							"true".into()
 						} else {
@@ -305,12 +309,14 @@ pub fn set_app_presence(
 				.into(),
 		);
 	}
-	state
-		.db
-		.set_setting("show_in_dock", if dock { "true" } else { "false" })?;
-	state
-		.db
-		.set_setting("show_in_tray", if tray { "true" } else { "false" })?;
+	state.db.set_setting(
+		keys::setting::SHOW_IN_DOCK,
+		if dock { "true" } else { "false" },
+	)?;
+	state.db.set_setting(
+		keys::setting::SHOW_IN_TRAY,
+		if tray { "true" } else { "false" },
+	)?;
 	crate::apply_presence(app.app_handle(), dock, tray);
 	Ok(())
 }
