@@ -224,8 +224,9 @@ pub struct AiSettings {
 
 /// Engine default for the first launch after this setting was introduced:
 /// installs that already have AI configuration keep whisper (no behavior
-/// change), brand-new installs get "auto".
-fn default_stt_engine(db: &Db) -> SpeechEngine {
+/// change), brand-new installs get "auto". Pure - no writes; setup
+/// persists the default once so this read-path helper never mutates.
+pub(crate) fn default_stt_engine(db: &Db) -> SpeechEngine {
 	const PREVIOUS_AI_KEYS: [&str; 4] = [
 		"ai_llm_mode",
 		"ai_llm_model",
@@ -233,13 +234,11 @@ fn default_stt_engine(db: &Db) -> SpeechEngine {
 		"ext_stt_base_url",
 	];
 	let existing_install = PREVIOUS_AI_KEYS.iter().any(|k| db.get_setting(k).is_some());
-	let default = if existing_install {
+	if existing_install {
 		SpeechEngine::Whisper
 	} else {
 		SpeechEngine::Auto
-	};
-	let _ = db.set_setting("ai_stt_engine", default.as_str());
-	default
+	}
 }
 
 impl AiSettings {
@@ -939,8 +938,13 @@ mod tests {
 		let db = temp_db("fresh");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.stt_engine, super::SpeechEngine::Auto);
-		// the resolved default is persisted so later behavior is stable
-		assert_eq!(db.get_setting("ai_stt_engine").as_deref(), Some("auto"));
+		// loading is a pure read now: the default is persisted once by
+		// app setup, not as a side effect of every load
+		assert_eq!(
+			db.get_setting("ai_stt_engine"),
+			None,
+			"load must not write the resolved default"
+		);
 	}
 
 	#[test]

@@ -173,6 +173,14 @@ pub fn run() {
 			};
 			// Move any plaintext secrets from early builds into the keychain.
 			secrets::migrate_from_db(&db);
+			// Persist the speech-engine default for fresh installs once,
+			// here: resolving a settings *read* must never write.
+			if db.get_setting("ai_stt_engine").is_none() {
+				let default = models::default_stt_engine(&db);
+				if let Err(e) = db.set_setting("ai_stt_engine", default.as_str()) {
+					log::warn!("failed to persist default speech engine: {e}");
+				}
+			}
 			if db.get_setting("created_at").is_none() {
 				// naive UTC, no trailing Z (the frontend appends it itself)
 				let now = Utc::now()
