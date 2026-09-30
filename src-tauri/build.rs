@@ -1,4 +1,5 @@
 fn main() {
+	println!("cargo:rerun-if-env-changed=REQUIRE_MACOS26_SDK");
 	guard_macos_sdk();
 	tauri_build::build()
 }

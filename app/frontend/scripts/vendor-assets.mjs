@@ -53,7 +53,7 @@ const walk = (dir) => {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const path = join(dir, entry.name);
 		if (entry.isDirectory()) walk(path);
-		else if (/\.(jsx|js|astro)$/.test(entry.name)) {
+		else if (/\.(tsx?|jsx?|astro)$/.test(entry.name)) {
 			const text = readFileSync(path, "utf8");
 			for (const match of text.matchAll(
 				/(?:name|icon|iconName)\s*[:=]\s*"?([a-z0-9]+(?:-[a-z0-9]+)+)"?/g
