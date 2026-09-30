@@ -31,16 +31,22 @@ export function NotificationsCard({ notificationsData = [], saveSettings }: Noti
 	const renderNotificationFields = (fields: NotificationSetting[]) => {
 		return fields.map((field: NotificationSetting, i: number) => {
 			const handleEnabledToggle = () => {
-				const updatedNotificationFields = [...notificationFields];
-				updatedNotificationFields[i].enabled = !updatedNotificationFields[i].enabled;
-				setNotificationFields(updatedNotificationFields);
+				// map to new objects: mutating the spread copy's elements
+				// still edited the existing state in place
+				setNotificationFields((prev) =>
+					prev.map((entry, idx) =>
+						idx === i ? { ...entry, enabled: !entry.enabled } : entry
+					)
+				);
 				setHasChanged(true);
 			};
 			const setHour = (inputDate: Date): void => {
 				const hourDigitPadded = String(inputDate.getHours()).padStart(2, "0");
-				const updatedNotificationFields = [...notificationFields];
-				updatedNotificationFields[i].value = `${hourDigitPadded}:00:00`;
-				setNotificationFields([...updatedNotificationFields]);
+				setNotificationFields((prev) =>
+					prev.map((entry, idx) =>
+						idx === i ? { ...entry, value: `${hourDigitPadded}:00:00` } : entry
+					)
+				);
 				setHasChanged(true);
 			};
 

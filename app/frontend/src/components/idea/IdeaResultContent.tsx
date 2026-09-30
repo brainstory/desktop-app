@@ -48,9 +48,15 @@ export default function IdeaResultContent() {
 
 		let isCurrent = true;
 
-		// legacy behavior: a missing id still fires the API and lands in
-		// the error path below
-		const id = ideaId as string;
+		// no ?id in the URL: there is nothing to load (rendered as an
+		// error section below instead of invoking the API with undefined)
+		const id = ideaId ?? "";
+		if (!id) {
+			return () => {
+				isCurrent = false;
+				window.removeEventListener("resize", handleResize);
+			};
+		}
 		getIdeaApi(id)
 			.then((res) => {
 				if (isCurrent) {
@@ -170,6 +176,9 @@ export default function IdeaResultContent() {
 		}
 	}
 
+	if (!ideaId) {
+		return <ErrorSection title="No idea selected" paragraphs={["Open an idea from your library."]} />;
+	}
 	if (errorFound) {
 		return <ErrorSection title="Idea not found" />;
 	} else if (isLoading) {

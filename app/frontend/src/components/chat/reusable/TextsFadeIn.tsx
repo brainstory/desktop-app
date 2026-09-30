@@ -6,7 +6,9 @@ interface TextsFadeInProps {
 import type { ReactNode } from "react";
 
 export default function TextsFadeIn({ children, classes }: TextsFadeInProps) {
-	// very manual mapping of animation names to various delays
+	// global.css defines appear0..appear6; wrap around instead of
+	// emitting an animation class that doesn't exist (appear7 never
+	// animated anything)
 	const animateClass = [
 		"animate-appear0",
 		"animate-appear1",
@@ -14,11 +16,12 @@ export default function TextsFadeIn({ children, classes }: TextsFadeInProps) {
 		"animate-appear3",
 		"animate-appear4",
 		"animate-appear5",
-		"animate-appear6",
-		"animate-appear7"
+		"animate-appear6"
 	];
 
-	const fadeClasses = children.map((_: unknown, i: number) => `${animateClass[i]} opacity-0`);
+	const fadeClasses = children.map(
+		(_: unknown, i: number) => `${animateClass[i % animateClass.length]} opacity-0`
+	);
 
 	return (
 		<div className={classes}>

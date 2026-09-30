@@ -70,11 +70,13 @@ function RecordButton({
 			respondedRef.current = true;
 			resetTimer();
 			getCoachResponse()
-				.catch((err) => console.error("coach response failed", err))
-				.finally(() => {
-					// clear any possible user text input
+				.then(() => {
+					// the message made it into the conversation - clear the
+					// composer for the next one. On failure the text stays
+					// so the user can edit and resend it.
 					setUserTextInput("");
-				});
+				})
+				.catch((err) => console.error("coach response failed", err));
 		}
 		if (!readyToSend) {
 			respondedRef.current = false;

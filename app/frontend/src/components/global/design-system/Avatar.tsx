@@ -1,7 +1,18 @@
+// Literal class strings: Tailwind v4 only emits the utilities it can
+// see at build time, so h-${size} templates never resolved to anything.
+const SIZE_CLASSES: Record<string, string> = {
+	"4": "h-4 w-4",
+	"6": "h-6 w-6",
+	"8": "h-8 w-8",
+	"10": "h-10 w-10",
+	"12": "h-12 w-12",
+	"14": "h-14 w-14"
+};
+
 export default function Avatar({
 	id,
 	charToShow,
-	size = 10,
+	size = "10",
 	style = ""
 }: {
 	id?: string | null;
@@ -9,7 +20,8 @@ export default function Avatar({
 	size?: number | string;
 	style?: string;
 }) {
-	const containerClasses = `h-${size} w-${size} relative inline-flex items-center justify-center overflow-hidden rounded-full ${style} `;
+	const sizeClasses = SIZE_CLASSES[String(size)] ?? SIZE_CLASSES["10"];
+	const containerClasses = `${sizeClasses} relative inline-flex items-center justify-center overflow-hidden rounded-full ${style} `;
 
 	return (
 		<div className={containerClasses + getColorFromId(id ?? "?")}>

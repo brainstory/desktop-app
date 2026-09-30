@@ -14,9 +14,13 @@ export default function StartLogSection({ logItems = [], setLogItems, disabled }
 		<div className="flex flex-col gap-1 my-5 h-[calc(100%-152px)] overflow-y-auto">
 			{logItems.map((item: LogFormAnswer, i: number) => {
 				const toggleItem = (): void => {
-					const updateLogItems = [...logItems];
-					updateLogItems[i].value = !updateLogItems[i].value;
-					setLogItems(updateLogItems);
+					// map to new objects: mutating the spread copy's elements
+					// still edited the child's state in place
+					setLogItems((prev) =>
+						prev.map((entry, idx) =>
+							idx === i ? { ...entry, value: !entry.value } : entry
+						)
+					);
 				};
 				const lineBreak =
 					logItems.length == i + 1 ? null : (
