@@ -66,7 +66,7 @@ describe("getFirstPrompt", () => {
 
 describe("addConversationMessage", () => {
 	it("appends a user message and returns the new array", () => {
-		let stored: ChatMessage[] = [{ role: "assistant", content: "hi" }];
+		let stored: ChatMessage[] = [{ role: "assistant" as const, content: "hi" }];
 		const setConversation = (next: ChatMessage[]) => {
 			stored = next;
 		};
@@ -84,7 +84,7 @@ describe("addConversationMessage", () => {
 	});
 
 	it("does not mutate the previous array", () => {
-		const before = [{ role: "user", content: "a" }];
+		const before: ChatMessage[] = [{ role: "user", content: "a" }];
 		addConversationMessage("b", false, before, () => {});
 		expect(before).toEqual([{ role: "user", content: "a" }]);
 	});
@@ -103,7 +103,7 @@ describe("addConversationMessage", () => {
 
 describe("removeLastConversationMessage", () => {
 	it("removes and returns the last message content", () => {
-		const conversation = [
+		const conversation: ChatMessage[] = [
 			{ role: "user", content: "a" },
 			{ role: "assistant", content: "b" }
 		];
@@ -123,7 +123,7 @@ describe("removeLastConversationMessage", () => {
 });
 
 describe("findMostRecent*", () => {
-	const conversation = [
+	const conversation: ChatMessage[] = [
 		{ role: "assistant", content: "one" },
 		{ role: "user", content: "two" },
 		{ role: "assistant", content: "three" }

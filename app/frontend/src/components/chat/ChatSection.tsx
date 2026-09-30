@@ -17,6 +17,7 @@ import {
 	useIdeaIdFromUrl
 } from "@helpers/chat";
 import { markGettingStartedDone } from "@helpers/storage";
+import type { ChatMessage } from "@src/types";
 import { getIdeaApi, createIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
 import {
@@ -88,7 +89,7 @@ export function ChatSection({
 	const aiStatus = useStore($aiStatus);
 	const showModelLoading = llmBusy(aiStatus);
 	const firstPrompt = getFirstPrompt(chatType);
-	const [currConversation, setCurrConversation] = useState([
+	const [currConversation, setCurrConversation] = useState<ChatMessage[]>([
 		{ role: "assistant", content: firstPrompt }
 	]);
 	const minConversationLenForCreateAndEnd =

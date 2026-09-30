@@ -67,7 +67,7 @@ export const addConversationMessage = (
 	conversation: ChatMessage[],
 	setConversation: SetConversation
 ): ChatMessage[] => {
-	const role = isUser ? "user" : "assistant";
+	const role: ChatMessage["role"] = isUser ? "user" : "assistant";
 	const next = [...conversation, { role, content: message }];
 	setConversation(next);
 	return next;
