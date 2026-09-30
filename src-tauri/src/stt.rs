@@ -209,7 +209,7 @@ pub async fn transcribe_external(
 		.map_err(|e| e.to_string())?;
 	let mut request = client
 		.post(url)
-		.header("User-Agent", "brainstory-desktop/0.1")
+		.header("User-Agent", crate::models::USER_AGENT)
 		.multipart(form);
 	if !api_key.is_empty() {
 		request = request.bearer_auth(api_key);

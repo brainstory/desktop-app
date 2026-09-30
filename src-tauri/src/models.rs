@@ -9,6 +9,9 @@ use crate::db::Db;
 use crate::llm::LocalLlm;
 use crate::stt::SttEngine;
 
+/// User-Agent for all outbound HTTP (downloads, external endpoints).
+pub(crate) const USER_AGENT: &str = concat!("brainstory-desktop/", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelKind {
@@ -616,11 +619,7 @@ impl AppState {
 					// while loading; don't resurrect a deleted model.
 					log::warn!("{} was deleted while loading; not activating it", spec.id);
 				}
-				// Attempt the rollback even when the failed model is the
-				// previously loaded one: the engine was already dropped
-				// above, and a transient read failure deserves a second
-				// chance rather than leaving nothing loaded.
-				if let Some(prev) = prev_spec {
+				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
 					match self.reload_llm(&prev) {
 						Ok(()) => {
 							log::warn!(
@@ -727,7 +726,11 @@ impl AppState {
 				if had_loaded {
 					log::warn!("{} was deleted while loading; not activating it", spec.id);
 				}
-				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
+				// Attempt the rollback even when the failed model is the
+				// previously loaded one: the engine was already dropped
+				// above, and a transient read failure deserves a second
+				// chance rather than leaving nothing loaded.
+				if let Some(prev) = prev_spec {
 					let prev_path = self.model_path(&prev);
 					if prev_path.is_file() {
 						match SttEngine::load(&prev_path, prev.id) {
@@ -808,9 +811,7 @@ pub async fn download_model_file(
 		.connect_timeout(std::time::Duration::from_secs(15))
 		.build()
 		.map_err(|e| e.to_string())?;
-	let mut request = client
-		.get(url)
-		.header("User-Agent", "brainstory-desktop/0.1");
+	let mut request = client.get(url).header("User-Agent", USER_AGENT);
 	if !hf_token.is_empty() {
 		request = request.bearer_auth(hf_token);
 	}

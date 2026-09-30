@@ -542,7 +542,7 @@ impl ExternalLlm {
 		let mut request = self
 			.client
 			.post(self.completions_url())
-			.header("User-Agent", "brainstory-desktop/0.1")
+			.header("User-Agent", crate::models::USER_AGENT)
 			.json(&serde_json::json!({
 				"model": self.model,
 				"messages": body_messages,
