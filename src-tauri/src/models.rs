@@ -215,6 +215,11 @@ pub struct AiSettings {
 	/// HuggingFace access token; sent with model downloads, where it
 	/// avoids anonymous rate limits and can speed up large transfers.
 	pub hf_token: String,
+	/// HuggingFace download endpoint override (mirror). Empty falls back
+	/// to the HF_ENDPOINT environment variable, then huggingface.co. A
+	/// GUI app does not inherit shell env vars, so this setting is how
+	/// mirror users configure one without launchctl gymnastics.
+	pub hf_endpoint: String,
 	pub ext_llm_base_url: String,
 	pub ext_llm_api_key: String,
 	pub ext_llm_model: String,
@@ -287,6 +292,7 @@ impl AiSettings {
 				}
 			},
 			hf_token: secret(crate::secrets::Secret::HfToken),
+			hf_endpoint: get(setting::HF_ENDPOINT),
 			ext_llm_base_url: get(setting::EXT_LLM_BASE_URL),
 			ext_llm_api_key: secret(crate::secrets::Secret::ExtLlmApiKey),
 			ext_llm_model: get(setting::EXT_LLM_MODEL),
@@ -375,6 +381,10 @@ impl AiSettings {
 		}
 		// Secrets: the real value never comes back to the webview, so an
 		// absent/null field keeps the stored value and an explicit "" clears it.
+		if let Some(v) = get_str("hfEndpoint") {
+			base_url("hfEndpoint", &v)?;
+			self.hf_endpoint = v.trim().trim_end_matches('/').to_string();
+		}
 		if let Some(v) = get_str("hfToken") {
 			self.hf_token = v;
 		}
@@ -396,6 +406,7 @@ impl AiSettings {
 			(setting::AI_STT_MODEL, self.stt_model.clone()),
 			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),
 			(setting::AI_STT_LANGUAGE, self.stt_language.clone()),
+			(setting::HF_ENDPOINT, self.hf_endpoint.clone()),
 			(setting::EXT_LLM_BASE_URL, self.ext_llm_base_url.clone()),
 			(setting::EXT_LLM_MODEL, self.ext_llm_model.clone()),
 			(setting::EXT_STT_BASE_URL, self.ext_stt_base_url.clone()),
@@ -845,23 +856,31 @@ impl AppState {
 	}
 }
 
-/// The HuggingFace API base. `HF_ENDPOINT` (e.g. https://hf-mirror.com)
-/// overrides the default, matching hf-hub/transformers semantics.
-pub fn hf_endpoint() -> String {
-	std::env::var("HF_ENDPOINT")
-		.ok()
-		.map(|e| e.trim().trim_end_matches('/').to_string())
+/// Precedence: the in-app setting (GUI apps don't inherit shell env
+/// vars), then `HF_ENDPOINT` (hf-hub/transformers semantics, e.g.
+/// https://hf-mirror.com set via launchctl or a terminal launch), then
+/// the default. Pure for tests.
+pub fn resolve_hf_endpoint(setting: &str, env: Option<&str>) -> String {
+	let clean = |v: &str| v.trim().trim_end_matches('/').to_string();
+	if !setting.trim().is_empty() {
+		return clean(setting);
+	}
+	env.map(clean)
 		.filter(|e| !e.is_empty())
 		.unwrap_or_else(|| "https://huggingface.co".into())
 }
 
-pub fn model_url(spec: &ModelSpec) -> String {
-	format!(
-		"{}/{}/resolve/main/{}",
-		hf_endpoint(),
-		spec.repo,
-		spec.filename
+/// The endpoint this install downloads models from, resolving the
+/// in-app setting against the environment.
+pub fn hf_endpoint(settings: &AiSettings) -> String {
+	resolve_hf_endpoint(
+		&settings.hf_endpoint,
+		std::env::var("HF_ENDPOINT").ok().as_deref(),
 	)
+}
+
+pub fn model_url(spec: &ModelSpec, endpoint: &str) -> String {
+	format!("{}/{}/resolve/main/{}", endpoint, spec.repo, spec.filename)
 }
 
 /// Every hub-cache directory a model file could already live in, in
@@ -1826,7 +1845,7 @@ mod resume_tests {
 
 #[cfg(test)]
 mod hf_cache_tests {
-	use super::{hf_cache_model_path, hf_endpoint, LLM_MODELS};
+	use super::{hf_cache_model_path, LLM_MODELS};
 
 	#[test]
 	fn hf_cache_layout_resolves_and_picks_the_newest_snapshot() {
@@ -1861,17 +1880,25 @@ mod hf_cache_tests {
 	}
 
 	#[test]
-	fn endpoint_defaults_to_huggingface_co_and_trims_overrides() {
-		// pure check of the override formatting logic (env read is
-		// process-global; the default is what matters when unset)
+	fn endpoint_resolution_setting_env_default_precedence() {
+		use super::resolve_hf_endpoint;
 		let default = "https://huggingface.co";
-		let override_val = " https://hf-mirror.com/ ";
-		let cleaned = override_val.trim().trim_end_matches('/').to_string();
-		assert_eq!(cleaned, "https://hf-mirror.com");
-		assert_eq!(default, "https://huggingface.co");
-		// when the env var is unset the endpoint is the default
-		if std::env::var("HF_ENDPOINT").is_err() {
-			assert_eq!(hf_endpoint(), default);
-		}
+		// setting wins over everything, trimmed
+		assert_eq!(
+			resolve_hf_endpoint(" https://hf-mirror.com/ ", Some("https://other.example")),
+			"https://hf-mirror.com"
+		);
+		// empty setting falls to the env var
+		assert_eq!(
+			resolve_hf_endpoint("", Some("https://hf-mirror.com/")),
+			"https://hf-mirror.com"
+		);
+		// blank-only setting counts as empty
+		assert_eq!(
+			resolve_hf_endpoint("   ", Some("https://hf-mirror.com")),
+			"https://hf-mirror.com"
+		);
+		// neither set: the default
+		assert_eq!(resolve_hf_endpoint("", None), default);
 	}
 }

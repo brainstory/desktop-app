@@ -194,7 +194,7 @@ pub async fn download_model(
 
 	let app_handle = app.clone();
 	let dest = state.model_path(&spec);
-	let url = model_url(&spec);
+	let url = model_url(&spec, &crate::models::hf_endpoint(&state.ai_settings()));
 	let hf_token = state.ai_settings().hf_token;
 
 	tauri::async_runtime::spawn(async move {

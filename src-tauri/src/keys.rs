@@ -22,6 +22,8 @@ pub mod setting {
 	pub const AI_STT_MODEL: &str = "ai_stt_model";
 	pub const AI_STT_ENGINE: &str = "ai_stt_engine";
 	pub const AI_STT_LANGUAGE: &str = "ai_stt_language";
+	/// HuggingFace download endpoint override (mirror); empty = env/default
+	pub const HF_ENDPOINT: &str = "hf_endpoint";
 	pub const EXT_LLM_BASE_URL: &str = "ext_llm_base_url";
 	pub const EXT_LLM_MODEL: &str = "ext_llm_model";
 	pub const EXT_STT_BASE_URL: &str = "ext_stt_base_url";
@@ -56,6 +58,7 @@ mod tests {
 			setting::AI_STT_MODEL,
 			setting::AI_STT_ENGINE,
 			setting::AI_STT_LANGUAGE,
+			setting::HF_ENDPOINT,
 			setting::EXT_LLM_BASE_URL,
 			setting::EXT_LLM_MODEL,
 			setting::EXT_STT_BASE_URL,

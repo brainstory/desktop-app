@@ -107,7 +107,11 @@ one, so your data is never silently discarded.
 
 The app is local-first, but it is not network-free. It contacts exactly:
 
-- `huggingface.co` — model downloads (and only when you click Download).
+- `huggingface.co` — model downloads (and only when you click Download). Users behind
+  the Great Firewall can point downloads at a mirror (e.g. `https://hf-mirror.com`) in
+  **Settings → AI Models → HuggingFace download endpoint**, or via the `HF_ENDPOINT`
+  environment variable; models already downloaded into a HuggingFace hub cache
+  (`~/.cache/huggingface/hub`) are recognized and reused as-is.
 - `github.com` — update checks on startup.
 - Any **external AI endpoint you configure** yourself (Settings → AI Models).
 

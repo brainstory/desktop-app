@@ -210,6 +210,21 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			.catch((e) => openSnackbar(false, normalizeApiError(e)));
 	};
 
+	/** Mirror endpoint row sends ONLY its field (like the secret rows):
+	 * a half-typed token or endpoint in the form must never ride along. */
+	const saveEndpoint = (value: string): void => {
+		if (!settings) return;
+		saveAiSettingsApi({ hfEndpoint: value })
+			.then(() => {
+				refresh();
+				getAiSettingsApi()
+					.then((saved) => setSavedSettings(saved))
+					.catch((e) => console.error("failed to reload ai settings", e));
+				openSnackbar(true, value.trim() ? "Mirror saved" : "Mirror cleared");
+			})
+			.catch((e) => openSnackbar(false, normalizeApiError(e)));
+	};
+
 	const updateField =
 		(key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel") =>
 		(e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -466,6 +481,22 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							hint={settings.hfTokenHint}
 							saveLabel="Save Token"
 							onSave={(value) => saveSecret("hfToken", value)}
+						/>
+						<label
+							htmlFor="hf-endpoint-input"
+							className="font-semibold mb-1 mt-4 block"
+						>
+							HuggingFace download endpoint (mirror, optional)
+						</label>
+						<p className="text-stone-500 mb-2">
+							Leave empty to download from huggingface.co directly, or point at a
+							mirror (e.g. https://hf-mirror.com). Also picks up the HF_ENDPOINT
+							environment variable when launched from a terminal.
+						</p>
+						<EndpointField
+							inputId="hf-endpoint-input"
+							initial={settings.hfEndpoint}
+							onSave={saveEndpoint}
 						/>
 					</div>
 				)}
@@ -748,3 +779,32 @@ function FreeSpaceNote({ freeBytes, needBytes }: { freeBytes: number; needBytes?
 }
 
 export default AiModelsCard;
+
+/** Plain-text field with its own Save button for a single non-secret
+ * setting (the download endpoint/mirror). Sends only its own value. */
+function EndpointField({
+	inputId,
+	initial,
+	onSave
+}: {
+	inputId: string;
+	initial?: string;
+	onSave: (value: string) => void;
+}) {
+	const [value, setValue] = useState(initial ?? "");
+	return (
+		<div className="flex flex-wrap gap-2">
+			<input
+				id={inputId}
+				type="url"
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				placeholder="https://huggingface.co"
+				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 min-w-0 p-2"
+			/>
+			<PinkButton disabled={value === (initial ?? "")} onClick={() => onSave(value)}>
+				Save
+			</PinkButton>
+		</div>
+	);
+}

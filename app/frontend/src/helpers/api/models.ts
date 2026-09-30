@@ -34,6 +34,8 @@ export interface AiSettingsResponse {
 	sttLanguage: string;
 	hfTokenSet: boolean;
 	hfTokenHint: string | null;
+	/** Download endpoint override (mirror); empty = env/default */
+	hfEndpoint: string;
 	extLlmBaseUrl: string;
 	extLlmApiKeySet: boolean;
 	extLlmApiKeyHint: string | null;

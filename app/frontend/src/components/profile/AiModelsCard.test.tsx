@@ -15,6 +15,7 @@ const aiSettings = {
 	sttLanguage: "en-US",
 	hfTokenSet: false,
 	hfTokenHint: null as string | null,
+	hfEndpoint: "",
 	extLlmBaseUrl: "",
 	extLlmApiKeySet: false,
 	extLlmApiKeyHint: null as string | null,
@@ -124,6 +125,22 @@ describe("AiModelsCard", () => {
 			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
 			expect(call, "save_ai_settings was called").toBeTruthy();
 			expect(call![1]).toEqual({ ai: { hfToken: "hf_secret" } });
+		});
+	});
+
+	it("saving the mirror endpoint sends only that field", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const input = await screen.findByLabelText(/download endpoint/i);
+		await user.type(input, "https://hf-mirror.com");
+		const row = input.parentElement!;
+		const save = within(row).getByRole("button", { name: "Save" });
+		await user.click(save);
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call, "save_ai_settings was called").toBeTruthy();
+			expect(call![1]).toEqual({ ai: { hfEndpoint: "https://hf-mirror.com" } });
 		});
 	});
 });
