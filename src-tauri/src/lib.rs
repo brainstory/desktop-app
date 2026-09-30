@@ -286,7 +286,7 @@ fn open_database(data_dir: &std::path::Path) -> Result<db::Db, String> {
 	let db_path = data_dir.join("brainstory.db");
 	match db::Db::open(&db_path) {
 		Ok(db) => Ok(db),
-		Err(e) if is_db_corruption(&e) => {
+		Err(db::OpenError::Sqlite(e)) if is_db_corruption(&e) => {
 			log::error!("database is corrupt ({e}); quarantining it and starting fresh");
 			let stamp = Utc::now().format("%Y%m%d-%H%M%S");
 			let corrupt = data_dir.join(format!("brainstory.db.corrupt-{stamp}"));

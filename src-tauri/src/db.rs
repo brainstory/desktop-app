@@ -27,6 +27,38 @@ pub struct Db {
 	conn: Mutex<Connection>,
 }
 
+/// Failure to open (and migrate) the database file.
+#[derive(Debug)]
+pub enum OpenError {
+	/// SQLite itself failed (I/O error, corruption, ...).
+	Sqlite(rusqlite::Error),
+	/// The file was written by a newer Brainstory build. Refuse to touch
+	/// it instead of misreading newer rows or stamping an older
+	/// `user_version` over it (which would re-run migrations against an
+	/// already-migrated schema on the next launch).
+	NewerSchema { found: i64, supported: i64 },
+}
+
+impl std::fmt::Display for OpenError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Sqlite(e) => write!(f, "{e}"),
+			Self::NewerSchema { found, supported } => write!(
+				f,
+				"this database was created by a newer version of Brainstory (schema version {found}, this build supports {supported}) - update Brainstory to open it"
+			),
+		}
+	}
+}
+
+impl std::error::Error for OpenError {}
+
+impl From<rusqlite::Error> for OpenError {
+	fn from(e: rusqlite::Error) -> Self {
+		Self::Sqlite(e)
+	}
+}
+
 fn now_iso() -> String {
 	// naive UTC without a trailing Z, matching what the frontend expects
 	// (helpers/formatISO8601ToHumanReadable appends the Z itself)
@@ -111,7 +143,7 @@ const BASELINE_SCHEMA: &str = "
 const SCHEMA_VERSION: i64 = 3;
 
 impl Db {
-	pub fn open(path: &Path) -> rusqlite::Result<Self> {
+	pub fn open(path: &Path) -> Result<Self, OpenError> {
 		let conn = Connection::open(path)?;
 		conn.pragma_update(None, "journal_mode", "WAL")?;
 		// A second app instance (or a stray backup tool) can hold the write
@@ -123,6 +155,15 @@ impl Db {
 		conn.pragma_update(None, "foreign_keys", "ON")?;
 
 		let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+		if version > SCHEMA_VERSION {
+			// Never migrate (or stamp) a database from a newer build: this
+			// build does not know what its schema looks like. Leave the
+			// file exactly as found for the newer version to reopen.
+			return Err(OpenError::NewerSchema {
+				found: version,
+				supported: SCHEMA_VERSION,
+			});
+		}
 		if version < 1 {
 			conn.execute_batch(BASELINE_SCHEMA)?;
 			// Earlier builds stored timestamps with a trailing Z; the
@@ -162,7 +203,12 @@ impl Db {
 				}
 			}
 		}
-		conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+		// Only touch user_version when a migration actually ran; stamping
+		// it unconditionally would also stomp a future newer version (the
+		// check above already prevents reaching this point in that case).
+		if version != SCHEMA_VERSION {
+			conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+		}
 		Ok(Self {
 			conn: Mutex::new(conn),
 		})
@@ -946,6 +992,31 @@ mod tests {
 		db.create_daily_intent_idea("i2", "T", "## Result", &[], &serde_json::json!({}))
 			.unwrap();
 		assert!(db.get_daily_status().is_completed);
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn open_rejects_newer_schema_version() {
+		let path = temp_db_path();
+		{
+			let conn = Connection::open(&path).unwrap();
+			conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+				.unwrap();
+		}
+		let err = match Db::open(&path) {
+			Ok(_) => panic!("a newer schema must be refused"),
+			Err(e) => e,
+		};
+		assert!(
+			matches!(err, super::OpenError::NewerSchema { found, .. } if found == SCHEMA_VERSION + 1),
+			"unexpected error: {err:?}"
+		);
+		// the file must be left exactly as found: no stamping, no migration
+		let conn = Connection::open(&path).unwrap();
+		let version: i64 = conn
+			.query_row("PRAGMA user_version", [], |r| r.get(0))
+			.unwrap();
+		assert_eq!(version, SCHEMA_VERSION + 1);
 		std::fs::remove_file(path).ok();
 	}
 
