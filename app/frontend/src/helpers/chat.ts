@@ -20,10 +20,21 @@ export function useIdeaIdFromUrl(
 	}, [hasMountedRef, setIdeaId]);
 }
 
-export function getFirstPrompt(chatType: string): string {
-	const isQotd = getQueryParam("qotd") !== null;
-	const topicIndex = Number(getQueryParam("topic"));
-	const topic = Number.isInteger(topicIndex) ? TOPICS[topicIndex] : undefined;
+/** Query params relevant to the first prompt (null/undefined = absent). */
+export type FirstPromptParams = Record<"qotd" | "topic", string | null | undefined>;
+
+/** The params for the current page URL. */
+export function currentQueryParams(): FirstPromptParams {
+	return { qotd: getQueryParam("qotd"), topic: getQueryParam("topic") };
+}
+
+export function getFirstPrompt(chatType: string, params: FirstPromptParams = currentQueryParams()): string {
+	const isQotd = params.qotd != null;
+	// Only a bare non-negative integer selects a topic: Number(null) is 0
+	// and Number("") is 0, so a missing or empty param used to pin the
+	// conversation to TOPICS[0]'s prompt instead of the default greeting.
+	const raw = params.topic ?? null;
+	const topic = raw !== null && /^\d+$/.test(raw) ? TOPICS[Number(raw)] : undefined;
 
 	let firstPrompt = "Hi, how's it going? What's on your mind?";
 	if (chatType === CHAT_TYPE.FEEDBACK) {

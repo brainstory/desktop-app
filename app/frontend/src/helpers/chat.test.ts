@@ -1,12 +1,67 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@src/types";
+import { TOPICS, CHAT_TYPE } from "@src/const";
+import { getQuestionOfTheDay } from "@helpers/qotd";
 import {
 	addConversationMessage,
 	removeLastConversationMessage,
 	findMostRecentAssistantContent,
 	findMostRecentUserContent,
+	getFirstPrompt,
 	groupTranscript
 } from "./chat";
+
+describe("getFirstPrompt", () => {
+	const guide = (n: number) => TOPICS[n].prompt;
+
+	it("uses the default greeting when no topic param is present", () => {
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: null })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+	});
+
+	it("uses the default greeting for an empty or invalid topic param", () => {
+		// "?topic=" used to resolve to Number("") === 0 -> TOPICS[0]
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "" })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "abc" })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "-1" })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "1.5" })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+	});
+
+	it("uses the topic's prompt for a valid index, including 0", () => {
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "2" })).toBe(guide(2));
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "0" })).toBe(guide(0));
+	});
+
+	it("falls back to the greeting for an out-of-range index", () => {
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "99" })).toBe(
+			"Hi, how's it going? What's on your mind?"
+		);
+	});
+
+	it("qotd wins over topic", () => {
+		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: "", topic: "1" })).toBe(
+			getQuestionOfTheDay()
+		);
+	});
+
+	it("chatType overrides topic and qotd", () => {
+		expect(getFirstPrompt(CHAT_TYPE.FEEDBACK, { qotd: "", topic: "1" })).toContain(
+			"extend this idea"
+		);
+		expect(getFirstPrompt(CHAT_TYPE.DAILY_INTENT, { qotd: "", topic: "1" })).toBe(
+			"Walk me through how you want your day to go."
+		);
+	});
+});
 
 describe("addConversationMessage", () => {
 	it("appends a user message and returns the new array", () => {
