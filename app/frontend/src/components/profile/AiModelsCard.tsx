@@ -182,9 +182,17 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	// The stored value is never round-tripped through the UI.
 	const saveSecret = (key: string, value: string): void => {
 		if (!settings) return;
-		saveAiSettingsApi({ ...settings, [key]: value } as Record<string, unknown>)
+		// Send ONLY the secret: the Rust command applies present keys, and
+		// the spread form would persist whatever is sitting half-typed in
+		// the endpoint inputs right now.
+		saveAiSettingsApi({ [key]: value })
 			.then(() => {
 				refresh();
+				// re-sync only the saved snapshot (the dirty flag's
+				// reference): `settings` keeps the live form state
+				getAiSettingsApi()
+					.then((saved) => setSavedSettings(saved))
+					.catch((e) => console.error("failed to reload ai settings", e));
 				openSnackbar(true, value === "" ? "Removed" : "Saved");
 			})
 			.catch((e) => openSnackbar(false, e));
