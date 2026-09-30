@@ -208,3 +208,20 @@ fn encode_wav_16k(samples: &[f32]) -> Result<Vec<u8>, String> {
 	}
 	Ok(out)
 }
+
+#[cfg(test)]
+mod wav_tests {
+	#[test]
+	fn encode_wav_16k_roundtrips_through_wav_to_samples() {
+		let samples: Vec<f32> = vec![0.0, 0.5, -0.5, 0.99, -1.0];
+		let wav = super::encode_wav_16k(&samples).expect("encode");
+		let decoded = crate::stt::wav_to_samples(&wav).expect("decode");
+		assert_eq!(decoded.len(), samples.len(), "same sample count");
+		for (original, roundtripped) in samples.iter().zip(decoded.iter()) {
+			assert!(
+				(original - roundtripped).abs() < 0.001,
+				"{original} vs {roundtripped}"
+			);
+		}
+	}
+}

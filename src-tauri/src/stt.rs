@@ -332,3 +332,76 @@ mod tests {
 		assert_eq!(up.len(), 4);
 	}
 }
+
+#[cfg(test)]
+mod wav_depth_tests {
+	use super::wav_to_samples;
+
+	type CursorWavWriter<'a> = hound::WavWriter<&'a mut std::io::Cursor<Vec<u8>>>;
+
+	fn wav_bytes(spec: hound::WavSpec, write_samples: &dyn Fn(&mut CursorWavWriter)) -> Vec<u8> {
+		let mut cursor = std::io::Cursor::new(Vec::new());
+		{
+			let mut writer = hound::WavWriter::new(&mut cursor, spec).expect("writer");
+			write_samples(&mut writer);
+		}
+		cursor.into_inner()
+	}
+
+	#[test]
+	fn decodes_24_and_32bit_and_float_wavs() {
+		// 24-bit int: full-scale positive reads as ~1.0
+		let spec = hound::WavSpec {
+			channels: 1,
+			sample_rate: 16_000,
+			bits_per_sample: 24,
+			sample_format: hound::SampleFormat::Int,
+		};
+		let bytes = wav_bytes(spec, &|w| {
+			w.write_sample(8_388_607i32).unwrap(); // 2^23 - 1
+			w.write_sample(-8_388_608i32).unwrap();
+		});
+		let samples = wav_to_samples(&bytes).expect("decode 24-bit");
+		assert!(
+			(samples[0] - 1.0).abs() < 1e-4,
+			"24-bit full scale: {}",
+			samples[0]
+		);
+		assert!(
+			(samples[1] + 1.0).abs() < 1e-4,
+			"24-bit negative full scale: {}",
+			samples[1]
+		);
+
+		// 32-bit int
+		let spec = hound::WavSpec {
+			channels: 1,
+			sample_rate: 16_000,
+			bits_per_sample: 32,
+			sample_format: hound::SampleFormat::Int,
+		};
+		let bytes = wav_bytes(spec, &|w| {
+			w.write_sample(1_073_741_823i32).unwrap();
+		});
+		let samples = wav_to_samples(&bytes).expect("decode 32-bit");
+		assert!(
+			(samples[0] - 0.5).abs() < 1e-6,
+			"32-bit half scale: {}",
+			samples[0]
+		);
+
+		// 32-bit float
+		let spec = hound::WavSpec {
+			channels: 1,
+			sample_rate: 16_000,
+			bits_per_sample: 32,
+			sample_format: hound::SampleFormat::Float,
+		};
+		let bytes = wav_bytes(spec, &|w| {
+			w.write_sample(0.25f32).unwrap();
+			w.write_sample(-0.75f32).unwrap();
+		});
+		let samples = wav_to_samples(&bytes).expect("decode float");
+		assert_eq!(samples, vec![0.25, -0.75]);
+	}
+}

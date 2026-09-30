@@ -949,3 +949,193 @@ mod tests {
 		assert_eq!(truncate_at_boundary(s, 100), s);
 	}
 }
+
+#[cfg(test)]
+mod sse_tests {
+	use super::{consume_sse_event, find_event_end, map_provider_error};
+
+	#[test]
+	fn find_event_end_handles_lf_and_crlf() {
+		assert_eq!(find_event_end(b"data: x\n\nrest"), Some(9));
+		assert_eq!(find_event_end(b"data: x\r\n\r\nrest"), Some(11));
+		// whichever separator comes first wins
+		assert_eq!(find_event_end(b"a\n\nb\r\n\r\n"), Some(3));
+		assert_eq!(find_event_end(b"no separator"), None);
+		assert_eq!(find_event_end(b"trailing\n"), None);
+	}
+
+	#[test]
+	fn consume_sse_event_appends_deltas_and_stops_on_done() {
+		let mut output = String::new();
+		let mut chunks = Vec::new();
+		let done = consume_sse_event(
+			"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}",
+			&mut output,
+			&mut |c| chunks.push(c),
+		)
+		.expect("parse");
+		assert!(!done);
+		assert_eq!(output, "ab");
+		assert_eq!(chunks, vec!["a".to_string(), "b".to_string()]);
+
+		let done = consume_sse_event("data: [DONE]", &mut output, &mut |_| {}).expect("parse");
+		assert!(done);
+	}
+
+	#[test]
+	fn consume_sse_event_surfaces_error_objects() {
+		let mut output = String::new();
+		let err = consume_sse_event(
+			"data: {\"error\":{\"message\":\"content filter flagged this\"}}",
+			&mut output,
+			&mut |_| {},
+		)
+		.expect_err("error objects must surface");
+		assert!(err.contains("content filter"), "unexpected: {err}");
+	}
+
+	#[test]
+	fn map_provider_error_maps_content_filter_to_469() {
+		assert_eq!(
+			map_provider_error(400, r#"{"error":{"code":"content_filter"}}"#),
+			"HttpError 469: Inappropriate input"
+		);
+		assert!(map_provider_error(401, "bad key").contains("rejected credentials"));
+		assert!(map_provider_error(500, "boom").contains("500"));
+	}
+}
+
+#[cfg(test)]
+mod external_stream_tests {
+	use super::{read_body_capped, ExternalLlm};
+
+	/// Minimal loopback SSE server: writes the given events after the
+	/// request head, keeps the socket open briefly.
+	fn serve_sse(events: Vec<String>) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let body: String = events.concat();
+				let head = format!(
+					"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+					body.len()
+				);
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(body.as_bytes());
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(400));
+			}
+		});
+		format!("http://{addr}/v1")
+	}
+
+	#[tokio::test]
+	async fn external_generate_streams_from_loopback_sse_server() {
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n".into(),
+			"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n".into(),
+			"data: [DONE]\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "test-model").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let mut chunks = Vec::new();
+		let (output, prompt_tokens) = client
+			.generate("you are a test", &[], &cancel, 32, |c| chunks.push(c))
+			.await
+			.expect("generate");
+		assert_eq!(output, "Hello");
+		assert_eq!(chunks, vec!["Hel".to_string(), "lo".to_string()]);
+		assert!(
+			prompt_tokens.is_none(),
+			"external endpoints report no prompt tokens"
+		);
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_non_sse_responses() {
+		// plain JSON content type: must produce a descriptive error, and
+		// the capped reader must bound the body
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut byte = [0u8; 1];
+				let mut request = String::new();
+				loop {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let body = "{\"not\":\"sse\"}";
+				let head = format!(
+					"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+					body.len()
+				);
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(body.as_bytes());
+				std::thread::sleep(std::time::Duration::from_millis(400));
+			}
+		});
+		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("non-SSE must fail");
+		assert!(
+			err.contains("did not return an SSE stream"),
+			"unexpected: {err}"
+		);
+	}
+
+	// keep the capped reader honest alongside the stream tests
+	#[tokio::test]
+	async fn read_body_capped_is_also_exercised_here() {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut byte = [0u8; 1];
+				let mut request = String::new();
+				loop {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let _ =
+					sock.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 4\r\n\r\nnope");
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		let response = reqwest::Client::new()
+			.get(format!("http://{addr}/"))
+			.send()
+			.await
+			.expect("send");
+		let body = read_body_capped(response, 64 * 1024, 5).await;
+		assert_eq!(body, "nope");
+	}
+}
