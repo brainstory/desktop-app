@@ -250,3 +250,62 @@ fn title_from_result(result: &str) -> String {
 		.take(60)
 		.collect()
 }
+
+#[cfg(test)]
+mod tests {
+	use super::{enabled_log_ids, title_from_result};
+	use crate::AppState;
+
+	fn state() -> (AppState, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
+		let db = crate::db::Db::open(&dir.path().join("t.db")).expect("db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	#[test]
+	fn enabled_log_ids_filters_unknown_and_falls_back_to_all() {
+		let (state, _dir) = state();
+		// no setting yet: every default question is enabled
+		assert_eq!(
+			enabled_log_ids(&state),
+			crate::db::DEFAULT_LOG_QUESTIONS
+				.iter()
+				.map(|(id, _, _)| *id)
+				.collect::<Vec<_>>()
+		);
+		// garbage / unknown ids are dropped, real ones kept in stored order
+		state
+			.db
+			.set_setting("enabled_log_question_ids", "[2, 99, 1]")
+			.expect("set");
+		assert_eq!(enabled_log_ids(&state), vec![2, 1]);
+		// an empty (or all-unknown) selection falls back to all rather
+		// than disabling the daily log entirely
+		state
+			.db
+			.set_setting("enabled_log_question_ids", "[99]")
+			.expect("set");
+		assert_eq!(
+			enabled_log_ids(&state),
+			crate::db::DEFAULT_LOG_QUESTIONS
+				.iter()
+				.map(|(id, _, _)| *id)
+				.collect::<Vec<_>>()
+		);
+	}
+
+	#[test]
+	fn title_from_result_prefers_heading_then_first_line_60_chars() {
+		assert_eq!(
+			title_from_result("## The Heading\n\nbody"),
+			"The Heading",
+			"first heading wins"
+		);
+		assert_eq!(title_from_result("no heading\nsecond line"), "no heading");
+		let sixty_a = "a".repeat(80);
+		let title = title_from_result(&sixty_a);
+		assert_eq!(title.chars().count(), 60, "first line capped at 60 chars");
+		assert!(title.starts_with('a'));
+	}
+}

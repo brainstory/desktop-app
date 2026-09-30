@@ -435,21 +435,18 @@ mod tests {
 	use crate::AppState;
 	use std::sync::atomic::Ordering;
 
-	fn temp_state(name: &str) -> AppState {
-		let dir = std::env::temp_dir().join(format!(
-			"brainstory-dl-bookkeeping-{name}-{}",
-			uuid::Uuid::new_v4()
-		));
-		std::fs::create_dir_all(&dir).expect("make temp dir");
-		let db = crate::db::Db::open(&dir.join("test.db")).expect("open test db");
-		AppState::new(db, dir)
+	fn temp_state(name: &str) -> (AppState, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
+		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
 	}
 
 	/// A download that ends (or never really starts) must release its slot,
 	/// or the model is stuck as "downloading" until app restart.
 	#[test]
 	fn registration_is_atomic_and_cleanup_releases_the_slot() {
-		let state = temp_state("slot");
+		let (state, _dir) = temp_state("slot");
 		let cancel = register_download(&state, "m").expect("first registration wins");
 		cancel.store(true, Ordering::Relaxed);
 

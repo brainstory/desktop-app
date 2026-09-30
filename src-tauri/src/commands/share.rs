@@ -507,14 +507,10 @@ mod tests {
 	};
 	use crate::db::Db;
 
-	fn temp_db(name: &str) -> Db {
-		let path = std::env::temp_dir().join(format!(
-			"brainstory-share-test-{name}-{}.db",
-			uuid::Uuid::new_v4()
-		));
-		let db = Db::open(&path).expect("open test db");
-		std::fs::remove_file(&path).ok();
-		db
+	fn temp_db(name: &str) -> (Db, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
+		(db, dir)
 	}
 
 	fn idea_share(share_id: &str, title: &str) -> ParsedShare {
@@ -565,7 +561,7 @@ mod tests {
 
 	#[test]
 	fn import_idea_twice_is_duplicate() {
-		let db = temp_db("dup");
+		let (db, _dir) = temp_db("dup");
 		let first = import_parsed(&db, idea_share("share-1", "My Idea")).expect("first import");
 		assert_eq!(first["duplicate"], false);
 		assert_eq!(first["kind"], "idea");
@@ -578,7 +574,7 @@ mod tests {
 
 	#[test]
 	fn import_feedback_attaches_by_share_id_then_unambiguous_title_else_refuses() {
-		let db = temp_db("attach");
+		let (db, _dir) = temp_db("attach");
 		// nothing to attach to: clean refusal
 		let err = import_parsed(&db, feedback_share("ghost", "No Such"))
 			.expect_err("missing target must refuse");

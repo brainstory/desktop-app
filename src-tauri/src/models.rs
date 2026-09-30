@@ -831,6 +831,13 @@ pub async fn download_model_file(
 	}
 
 	let total = response.content_length().unwrap_or(0);
+	// Fail fast when the advertised length already contradicts the spec:
+	// streaming multi-GB only to reject it at the end wastes the transfer.
+	if total > 0 && expected_size > 0 && total != expected_size {
+		return Err(format!(
+			"download size mismatch (server says {total} bytes, expected {expected_size}) - please retry"
+		));
+	}
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
 	let mut file = tokio::fs::File::create(&tmp)
@@ -922,20 +929,18 @@ pub async fn download_model_file(
 mod tests {
 	use super::{download_model_file, AiSettings, Db};
 
-	fn temp_db(name: &str) -> Db {
-		let path = std::env::temp_dir().join(format!(
-			"brainstory-settings-test-{name}-{}.db",
-			uuid::Uuid::new_v4()
-		));
-		let db = Db::open(&path).expect("open test db");
-		// WAL sidecars would linger in the temp dir; best effort is fine.
-		std::fs::remove_file(&path).ok();
-		db
+	fn temp_db(name: &str) -> (Db, tempfile::TempDir) {
+		// TempDir keeps the file (and its WAL sidecars) alive until the
+		// test ends and removes them all together - deleting the DB file
+		// while the connection was open failed on Windows.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
+		(db, dir)
 	}
 
 	#[test]
 	fn stt_engine_defaults_to_auto_for_new_installs() {
-		let db = temp_db("fresh");
+		let (db, _dir) = temp_db("fresh");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.stt_engine, super::SpeechEngine::Auto);
 		// loading is a pure read now: the default is persisted once by
@@ -949,7 +954,7 @@ mod tests {
 
 	#[test]
 	fn stt_engine_defaults_to_whisper_for_existing_installs() {
-		let db = temp_db("existing");
+		let (db, _dir) = temp_db("existing");
 		db.set_setting("ai_stt_model", "whisper-small-en")
 			.expect("set");
 		let s = AiSettings::load(&db);
@@ -958,7 +963,7 @@ mod tests {
 
 	#[test]
 	fn stt_engine_keeps_stored_value() {
-		let db = temp_db("stored");
+		let (db, _dir) = temp_db("stored");
 		db.set_setting("ai_stt_engine", "apple").expect("set");
 		let s = AiSettings::load(&db);
 		assert_eq!(s.stt_engine, super::SpeechEngine::Apple);
@@ -966,7 +971,7 @@ mod tests {
 
 	#[test]
 	fn stt_language_defaults_to_en_us_and_round_trips() {
-		let db = temp_db("lang");
+		let (db, _dir) = temp_db("lang");
 		let mut s = AiSettings::load(&db);
 		assert_eq!(s.stt_language, "en-US");
 		s.stt_language = "de-DE".into();
@@ -976,8 +981,8 @@ mod tests {
 
 	#[test]
 	fn save_reports_database_failures() {
-		let path =
-			std::env::temp_dir().join(format!("brainstory-save-fail-{}.db", uuid::Uuid::new_v4()));
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("save-fail.db");
 		let db = Db::open(&path).expect("open");
 		{
 			// break the settings table behind Db's back so the write
@@ -992,12 +997,11 @@ mod tests {
 			err.contains("failed to save setting"),
 			"unexpected error: {err}"
 		);
-		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
 	fn effective_engine_matches_availability() {
-		let db = temp_db("effective");
+		let (db, _dir) = temp_db("effective");
 		let mut s = AiSettings::load(&db);
 		s.stt_engine = super::SpeechEngine::Apple;
 		assert_eq!(s.effective_stt_engine(), super::SpeechEngine::Apple);
@@ -1036,7 +1040,7 @@ mod tests {
 
 	#[test]
 	fn unknown_llm_mode_degrades_to_local_everywhere() {
-		let db = temp_db("mode");
+		let (db, _dir) = temp_db("mode");
 		// a garbage stored mode (legacy/hand-edited row) must not split the
 		// callers: generation and the model loader agree on local
 		db.set_setting("ai_llm_mode", "banana").expect("set");
@@ -1051,7 +1055,7 @@ mod tests {
 
 	#[test]
 	fn apply_updates_validates_and_applies_atomically() {
-		let db = temp_db("apply");
+		let (db, _dir) = temp_db("apply");
 		let mut s = AiSettings::load(&db);
 		s.apply_updates(&serde_json::json!({
 			"llmMode": "external",
@@ -1119,11 +1123,9 @@ mod tests {
 		response
 	}
 
-	fn temp_dest(name: &str) -> std::path::PathBuf {
-		std::env::temp_dir().join(format!(
-			"brainstory-dl-test-{name}-{}",
-			uuid::Uuid::new_v4()
-		))
+	fn temp_dest(name: &str) -> (std::path::PathBuf, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(dir.path().join(name), dir)
 	}
 
 	fn sha256_hex(bytes: &[u8]) -> String {
@@ -1138,7 +1140,7 @@ mod tests {
 	async fn downloads_and_verifies_a_clean_file() {
 		let body = vec![7u8; 100_000];
 		let url = serve(http(&body, ""));
-		let dest = temp_dest("ok");
+		let (dest, _dir) = temp_dest("ok");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let mut progress = Vec::new();
 		download_model_file(
@@ -1156,14 +1158,13 @@ mod tests {
 		assert_eq!(std::fs::read(&dest).unwrap(), body);
 		assert!(!progress.is_empty(), "progress was reported");
 		assert_eq!(*progress.last().unwrap(), 100.0);
-		let _ = std::fs::remove_file(&dest);
 	}
 
 	#[tokio::test]
 	async fn rejects_a_hash_mismatch() {
 		let body = vec![7u8; 10_000];
 		let url = serve(http(&body, ""));
-		let dest = temp_dest("hash");
+		let (dest, _dir) = temp_dest("hash");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let err = download_model_file(
 			&url,
@@ -1185,7 +1186,7 @@ mod tests {
 		// Content-Length promises more than the body delivers
 		let body = vec![1u8; 500];
 		let url = serve(http(&body, ""));
-		let dest = temp_dest("trunc");
+		let (dest, _dir) = temp_dest("trunc");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let err = download_model_file(
 			&url,
@@ -1209,7 +1210,7 @@ mod tests {
 	async fn honors_cancellation() {
 		let body = vec![3u8; 10_000];
 		let url = serve(http(&body, ""));
-		let dest = temp_dest("cancel");
+		let (dest, _dir) = temp_dest("cancel");
 		let cancel = Arc::new(AtomicBool::new(false));
 		cancel.store(true, std::sync::atomic::Ordering::Relaxed);
 		let err = download_model_file(
@@ -1231,7 +1232,7 @@ mod tests {
 	async fn rejects_a_size_mismatch() {
 		let body = vec![5u8; 1_000];
 		let url = serve(http(&body, ""));
-		let dest = temp_dest("size");
+		let (dest, _dir) = temp_dest("size");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let err = download_model_file(
 			&url,
@@ -1246,5 +1247,185 @@ mod tests {
 		.expect_err("size mismatch must fail");
 		assert!(err.contains("size mismatch"), "unexpected error: {err}");
 		assert!(!dest.exists());
+	}
+}
+
+#[cfg(test)]
+mod download_tests {
+	use super::{download_model_file, part_path};
+	use sha2::{Digest, Sha256};
+	use std::io::{Read, Write};
+	use std::sync::atomic::AtomicBool;
+	use std::sync::Arc;
+
+	/// Loopback HTTP server that hands the request head to a callback so
+	/// tests can inspect headers, then serves a canned response.
+	fn serve_inspecting(respond: impl FnOnce(&str) -> Vec<u8> + Send + 'static) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				// read just the request head (until \r\n\r\n); never read
+				// to EOF - pooled clients keep the connection open
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let response = respond(&request);
+				let _ = sock.write_all(&response);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	fn sha256_hex(bytes: &[u8]) -> String {
+		Sha256::digest(bytes)
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect()
+	}
+
+	fn dest(tag: &str) -> std::path::PathBuf {
+		part_path(
+			&std::env::temp_dir().join(format!("brainstory-dl-cov-{tag}-{}", uuid::Uuid::new_v4())),
+		)
+		.with_file_name(format!(
+			"brainstory-dl-cov-{tag}-{}.bin",
+			uuid::Uuid::new_v4()
+		))
+	}
+
+	#[tokio::test]
+	async fn download_sends_bearer_token_when_configured() {
+		let body = vec![1u8; 100];
+		let digest = sha256_hex(&body);
+		let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+		let seen_writer = seen.clone();
+		let url = serve_inspecting(move |request| {
+			*seen_writer.lock().unwrap() = request.to_string();
+			format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+				.into_bytes()
+				.into_iter()
+				.chain(body.clone())
+				.collect()
+		});
+		let dest = dest("auth");
+		let cancel = Arc::new(AtomicBool::new(false));
+		download_model_file(
+			&url,
+			&dest,
+			100,
+			&digest,
+			"hf_token_123",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect("download ok");
+		let request = seen.lock().unwrap().clone();
+		assert!(
+			request
+				.to_lowercase()
+				.contains("authorization: bearer hf_token_123"),
+			"bearer token sent: {request}"
+		);
+	}
+
+	#[tokio::test]
+	async fn download_omits_bearer_header_when_empty() {
+		let body = vec![2u8; 50];
+		let digest = sha256_hex(&body);
+		let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+		let seen_writer = seen.clone();
+		let url = serve_inspecting(move |request| {
+			*seen_writer.lock().unwrap() = request.to_string();
+			format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+				.into_bytes()
+				.into_iter()
+				.chain(body.clone())
+				.collect()
+		});
+		let dest = dest("anon");
+		let cancel = Arc::new(AtomicBool::new(false));
+		download_model_file(&url, &dest, 50, &digest, "", &cancel, &mut |_| {})
+			.await
+			.expect("download ok");
+		let request = seen.lock().unwrap().clone();
+		assert!(
+			!request.to_lowercase().contains("authorization:"),
+			"no auth header for anonymous download: {request}"
+		);
+	}
+
+	#[tokio::test]
+	async fn download_reports_indeterminate_progress_without_content_length() {
+		// progress is only reported past ~2 MB, so exceed it; the digest
+		// is computed before the body moves into the server closure
+		let body = vec![3u8; 3_000_000];
+		let digest = sha256_hex(&body);
+		// chunked transfer, no Content-Length
+		let url = serve_inspecting(move |_| {
+			let mut out = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+			for chunk in body.chunks(1_000_000) {
+				out.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+				out.extend_from_slice(chunk);
+				out.extend_from_slice(b"\r\n");
+			}
+			out.extend_from_slice(b"0\r\n\r\n");
+			out
+		});
+		let dest = dest("indeterminate");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let mut progress = Vec::new();
+		download_model_file(&url, &dest, 3_000_000, &digest, "", &cancel, &mut |p| {
+			progress.push(p)
+		})
+		.await
+		.expect("download ok");
+		assert!(
+			progress.iter().any(|p| *p < 0.0),
+			"indeterminate sentinel reported when the total is unknown: {progress:?}"
+		);
+	}
+
+	#[tokio::test]
+	async fn download_fails_fast_when_content_length_differs_from_spec() {
+		let body = vec![4u8; 500];
+		let url = serve_inspecting(move |_| {
+			// server promises 500 bytes but the spec says 1000: the
+			// mismatch must be caught from the headers, not after the body
+			format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+				.into_bytes()
+				.into_iter()
+				.chain(body.clone())
+				.collect()
+		});
+		let dest = dest("failfast");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			1000,
+			&sha256_hex(&[4u8; 500]),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("must fail");
+		assert!(
+			err.contains("server says 500 bytes, expected 1000"),
+			"unexpected error: {err}"
+		);
+		assert!(!dest.exists(), "no file on early rejection");
 	}
 }

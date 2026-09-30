@@ -1082,13 +1082,14 @@ impl Db {
 mod tests {
 	use super::*;
 
-	fn temp_db_path() -> std::path::PathBuf {
-		std::env::temp_dir().join(format!("brainstory-db-test-{}.db", uuid::Uuid::new_v4()))
+	fn temp_db_path() -> (std::path::PathBuf, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(dir.path().join("brainstory-test.db"), dir)
 	}
 
 	#[test]
 	fn survey_does_not_complete_the_daily_intent() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		db.insert_survey("s1", None, &serde_json::json!({ "focused": 3 }))
 			.unwrap();
@@ -1099,23 +1100,21 @@ mod tests {
 		);
 		assert_eq!(status.survey_id.as_deref(), Some("s1"));
 		assert_eq!(status.streak, 1, "the survey still counts as activity");
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn update_idea_reports_missing_ideas() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let err = db
 			.update_idea("ghost", Some("t"), None, None, None)
 			.expect_err("updating a missing idea must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn imported_ideas_do_not_count_toward_activity() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let yesterday = (Utc::now().naive_utc() - chrono::Duration::days(1))
 			.format("%Y-%m-%dT%H:%M:%S")
@@ -1158,12 +1157,11 @@ mod tests {
 		)
 		.expect("insert local");
 		assert!(db.has_activity_today());
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn new_intent_draft_resets_completion() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		// the day is completed by a finished intent...
 		db.create_daily_intent_idea("done", "T", "## Result", &[], &serde_json::json!({}))
@@ -1178,12 +1176,11 @@ mod tests {
 			"a new draft intent resets the completed flag"
 		);
 		assert_eq!(status.intent_idea_id.as_deref(), Some("draft"));
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn generating_the_intent_result_completes_the_day() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		// draft intent: recorded but not completed
 		db.create_daily_intent_idea("i1", "T", "", &[], &serde_json::json!({}))
@@ -1193,12 +1190,11 @@ mod tests {
 		db.create_daily_intent_idea("i2", "T", "## Result", &[], &serde_json::json!({}))
 			.unwrap();
 		assert!(db.get_daily_status().is_completed);
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn open_rejects_newer_schema_version() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		{
 			let conn = Connection::open(&path).unwrap();
 			conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
@@ -1218,12 +1214,11 @@ mod tests {
 			.query_row("PRAGMA user_version", [], |r| r.get(0))
 			.unwrap();
 		assert_eq!(version, SCHEMA_VERSION + 1);
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn migration_backfill_is_idempotent_after_partial_run() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		{
 			// a crash after the ALTER TABLE but before the backfill (and
 			// before the user_version bump): the column exists, rows keep
@@ -1268,12 +1263,11 @@ mod tests {
 		drop(db);
 		let db = Db::open(&path).expect("reopen");
 		assert!(db.get_daily_status().streak >= 1, "backfill stays stable");
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn migrates_v2_database_and_backfills_local_date() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		{
 			// a database exactly as schema version 2 left it: daily has
 			// created_at, activity tables have no local_date
@@ -1309,12 +1303,11 @@ mod tests {
 		// yesterday's idea counts via its frozen local date; today without
 		// activity doesn't break the streak
 		assert!(db.get_daily_status().streak >= 1);
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn delete_idea_removes_the_whole_feedback_subtree() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let empty: Vec<ChatMessage> = vec![];
@@ -1362,12 +1355,11 @@ mod tests {
 		assert!(db.get_idea("child").unwrap().is_none());
 		assert!(db.get_idea("grandchild").unwrap().is_none());
 		assert!(db.list_ideas().unwrap().is_empty());
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn insert_idea_rejects_a_missing_parent() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let err = db
@@ -1389,12 +1381,11 @@ mod tests {
 			.expect_err("missing parent must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
 		assert!(db.get_idea("kid").unwrap().is_none(), "nothing inserted");
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn foreign_keys_are_enforced_at_the_schema_level() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		{
 			let conn = db.lock();
@@ -1425,12 +1416,11 @@ mod tests {
 				.unwrap();
 			assert_eq!(orphans, 0, "cascade must remove the child");
 		}
-		std::fs::remove_file(path).ok();
 	}
 
 	#[test]
 	fn get_idea_title_is_a_lightweight_read() {
-		let path = temp_db_path();
+		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		db.insert_idea(
@@ -1454,6 +1444,166 @@ mod tests {
 			Some("The Title")
 		);
 		assert_eq!(db.get_idea_title("missing").unwrap(), None);
-		std::fs::remove_file(path).ok();
+	}
+}
+
+#[cfg(test)]
+mod coverage_tests {
+	use super::*;
+	use serde_json::json;
+
+	fn db() -> (Db, std::path::PathBuf) {
+		let path =
+			std::env::temp_dir().join(format!("brainstory-db-cov-{}.db", uuid::Uuid::new_v4()));
+		(Db::open(&path).expect("open"), path)
+	}
+
+	fn idea(db: &Db, id: &str, created_at: &str) {
+		db.insert_idea(
+			id,
+			id,
+			"original",
+			"r",
+			None,
+			&[],
+			&json!({}),
+			None,
+			None,
+			None,
+			None,
+			None,
+			Some(created_at),
+		)
+		.expect("insert");
+	}
+
+	#[test]
+	fn streak_counts_consecutive_days_and_stops_at_gap() {
+		let (db, _path) = db();
+		let ts = |offset: i64| {
+			(today_local() - chrono::Duration::days(offset))
+				.and_hms_opt(12, 0, 0)
+				.unwrap()
+				.format("%Y-%m-%dT%H:%M:%S")
+				.to_string()
+		};
+		// today, yesterday, 2 days ago; a hole on day 3; activity on day 4
+		idea(&db, "t", &ts(0));
+		idea(&db, "y", &ts(1));
+		idea(&db, "d2", &ts(2));
+		idea(&db, "d4", &ts(4));
+		assert_eq!(db.get_daily_status().streak, 3, "stops at the gap");
+	}
+
+	#[test]
+	fn list_ideas_groups_children_under_parents_newest_first() {
+		let (db, _path) = db();
+		idea(&db, "old", "2026-01-01T00:00:00");
+		idea(&db, "new", "2026-02-01T00:00:00");
+		db.insert_idea(
+			"c1",
+			"C1",
+			"feedback",
+			"r",
+			None,
+			&[],
+			&json!({}),
+			Some("old"),
+			None,
+			None,
+			None,
+			None,
+			Some("2026-01-02T00:00:00"),
+		)
+		.unwrap();
+		db.insert_idea(
+			"c2",
+			"C2",
+			"feedback",
+			"r",
+			None,
+			&[],
+			&json!({}),
+			Some("old"),
+			None,
+			None,
+			None,
+			None,
+			Some("2026-01-03T00:00:00"),
+		)
+		.unwrap();
+		let ideas = db.list_ideas().unwrap();
+		// top level: newest first, children grouped (not returned as roots)
+		assert_eq!(ideas.len(), 2);
+		assert_eq!(ideas[0].id, "new");
+		assert_eq!(ideas[1].id, "old");
+		let feedback = ideas[1].feedback.as_ref().unwrap();
+		assert_eq!(feedback.len(), 2);
+		assert_eq!(feedback[0].id, "c2", "children newest first");
+	}
+
+	#[test]
+	fn delete_idea_clears_daily_intent_and_survey_links() {
+		let (db, _path) = db();
+		idea(&db, "target", "2026-01-01T00:00:00");
+		db.set_daily_intent("target").unwrap();
+		db.insert_survey("s1", Some("target"), &json!({})).unwrap();
+		let today = today_local().format("%Y-%m-%d").to_string();
+		{
+			let conn = db.lock();
+			let linked: i64 = conn
+				.query_row(
+					"SELECT (SELECT COUNT(*) FROM daily WHERE intent_idea_id = 'target')
+					 + (SELECT COUNT(*) FROM surveys WHERE idea_id = 'target')",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(linked, 2, "links exist before delete");
+			let _ = today;
+		}
+		db.delete_idea("target").unwrap();
+		{
+			let conn = db.lock();
+			let linked: i64 = conn
+				.query_row(
+					"SELECT (SELECT COUNT(*) FROM daily WHERE intent_idea_id = 'target')
+					 + (SELECT COUNT(*) FROM surveys WHERE idea_id = 'target')",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(linked, 0, "no dangling references after delete");
+			let today_row: Option<String> = conn
+				.query_row(
+					"SELECT date FROM daily WHERE date = ?1",
+					params![today],
+					|r| r.get(0),
+				)
+				.optional()
+				.unwrap();
+			assert!(today_row.is_some(), "the daily row itself survives");
+		}
+	}
+
+	#[test]
+	fn result_to_json_keeps_title_slot_and_splits_h1_h2() {
+		let parsed = Db::result_to_json("# Title\n\n## One\nfirst\n\n## Two\nsecond");
+		let sections = parsed.as_array().unwrap();
+		// a document that starts with a heading still gets the empty
+		// title slot at index 0, so 1-based heading ordinals from the
+		// feedback JSON line up with array indices
+		assert_eq!(sections.len(), 4, "{parsed}");
+		assert_eq!(sections[0]["heading"], "", "index 0 is the title slot");
+		assert_eq!(sections[1]["heading"], "# Title");
+		assert_eq!(sections[2]["heading"], "## One");
+		assert_eq!(sections[2]["body"], "first");
+		assert_eq!(sections[3]["heading"], "## Two");
+		// body text before any heading fills the title slot itself
+		let led = Db::result_to_json("intro line\n\n## Only\nbody");
+		let arr = led.as_array().unwrap();
+		assert_eq!(arr.len(), 2);
+		assert_eq!(arr[0]["body"], "intro line");
+		assert_eq!(arr[1]["heading"], "## Only");
 	}
 }
