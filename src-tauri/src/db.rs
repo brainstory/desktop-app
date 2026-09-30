@@ -144,7 +144,7 @@ const SCHEMA_VERSION: i64 = 3;
 
 impl Db {
 	pub fn open(path: &Path) -> Result<Self, OpenError> {
-		let conn = Connection::open(path)?;
+		let mut conn = Connection::open(path)?;
 		conn.pragma_update(None, "journal_mode", "WAL")?;
 		// A second app instance (or a stray backup tool) can hold the write
 		// lock briefly; wait instead of failing instantly with SQLITE_BUSY.
@@ -164,28 +164,38 @@ impl Db {
 				supported: SCHEMA_VERSION,
 			});
 		}
+		// Each step is one transaction committed together with its
+		// user_version bump: execute_batch statements auto-commit
+		// individually, so a crash mid-step used to leave the schema half
+		// migrated with the version stamp making it permanent.
 		if version < 1 {
-			conn.execute_batch(BASELINE_SCHEMA)?;
+			let tx = conn.transaction()?;
+			tx.execute_batch(BASELINE_SCHEMA)?;
 			// Earlier builds stored timestamps with a trailing Z; the
 			// frontend appends the Z itself, so strip stored values once.
-			conn.execute_batch(
+			tx.execute_batch(
 				"UPDATE ideas SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
 				 UPDATE log_entries SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
 				 UPDATE surveys SET created_at = substr(created_at, 1, 19) WHERE created_at LIKE '%Z';
 				 UPDATE settings SET value = substr(value, 1, 19) WHERE key = 'created_at' AND value LIKE '%Z';",
 			)?;
+			tx.pragma_update(None, "user_version", 1)?;
+			tx.commit()?;
 		}
 		if version < 2 {
-			if !Self::table_has_column(&conn, "daily", "created_at")? {
-				conn.execute_batch(
+			let tx = conn.transaction()?;
+			if !Self::table_has_column(&tx, "daily", "created_at")? {
+				tx.execute_batch(
 					"ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';",
 				)?;
 			}
-			conn.execute_batch(
+			tx.execute_batch(
 				"CREATE INDEX IF NOT EXISTS idx_ideas_parent ON ideas(parent_idea_id);
 				 CREATE INDEX IF NOT EXISTS idx_ideas_share ON ideas(share_id);
 				 CREATE INDEX IF NOT EXISTS idx_daily_intent ON daily(intent_idea_id);",
 			)?;
+			tx.pragma_update(None, "user_version", 2)?;
+			tx.commit()?;
 		}
 		if version < 3 {
 			// Activity days used to be re-derived from UTC timestamps at
@@ -194,20 +204,31 @@ impl Db {
 			// local day at write time instead; the backfill freezes
 			// existing rows using the current zone (the best guess
 			// available for historical data).
+			let tx = conn.transaction()?;
 			for table in ["ideas", "log_entries", "surveys"] {
-				if !Self::table_has_column(&conn, table, "local_date")? {
-					conn.execute_batch(&format!(
-						"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';
-						 UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime'));"
+				if !Self::table_has_column(&tx, table, "local_date")? {
+					tx.execute_batch(&format!(
+						"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';"
 					))?;
 				}
+				// The backfill re-runs (not just with the ALTER): the old
+				// code skipped it entirely when the column already existed
+				// from a crash between the two statements.
+				tx.execute_batch(&format!(
+					"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = '';"
+				))?;
 			}
+			tx.pragma_update(None, "user_version", 3)?;
+			tx.commit()?;
 		}
-		// Only touch user_version when a migration actually ran; stamping
-		// it unconditionally would also stomp a future newer version (the
-		// check above already prevents reaching this point in that case).
-		if version != SCHEMA_VERSION {
-			conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+		// Self-healing backfill on every open: any row still carrying an
+		// empty local_date (a crash mid-migration, an interrupted write)
+		// is invisible to the streak and has_activity_today queries until
+		// repaired. No-op once everything is backfilled.
+		for table in ["ideas", "log_entries", "surveys"] {
+			conn.execute_batch(&format!(
+				"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = '';"
+			))?;
 		}
 		Ok(Self {
 			conn: Mutex::new(conn),
@@ -1017,6 +1038,56 @@ mod tests {
 			.query_row("PRAGMA user_version", [], |r| r.get(0))
 			.unwrap();
 		assert_eq!(version, SCHEMA_VERSION + 1);
+		std::fs::remove_file(path).ok();
+	}
+
+	#[test]
+	fn migration_backfill_is_idempotent_after_partial_run() {
+		let path = temp_db_path();
+		{
+			// a crash after the ALTER TABLE but before the backfill (and
+			// before the user_version bump): the column exists, rows keep
+			// local_date = '', user_version still says 2
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(BASELINE_SCHEMA).unwrap();
+			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+				.unwrap();
+			for table in ["ideas", "log_entries", "surveys"] {
+				conn.execute_batch(&format!(
+					"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';"
+				))
+				.unwrap();
+			}
+			conn.execute_batch(
+				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
+			)
+			.unwrap();
+			conn.pragma_update(None, "user_version", 2).unwrap();
+		}
+		let db = Db::open(&path).expect("finish the interrupted migration");
+		{
+			let conn = db.lock();
+			let version: i64 = conn
+				.query_row("PRAGMA user_version", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(version, SCHEMA_VERSION);
+			let local_date: String = conn
+				.query_row("SELECT local_date FROM ideas WHERE id = 'old'", [], |r| {
+					r.get(0)
+				})
+				.unwrap();
+			assert_eq!(
+				local_date.len(),
+				10,
+				"backfilled as YYYY-MM-DD: {local_date}"
+			);
+		}
+		// the row counts toward the streak again, not just after the
+		// healing open but on every later open too
+		assert!(db.get_daily_status().streak >= 1);
+		drop(db);
+		let db = Db::open(&path).expect("reopen");
+		assert!(db.get_daily_status().streak >= 1, "backfill stays stable");
 		std::fs::remove_file(path).ok();
 	}
 
