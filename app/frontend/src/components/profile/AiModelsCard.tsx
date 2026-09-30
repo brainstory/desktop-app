@@ -339,6 +339,11 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 
 	const llmStatus = runtime.llm ?? {};
 	const sttStatus = runtime.stt ?? {};
+	// recommendation straight from the catalog, so copy never drifts
+	const smallestLlm = models.llm.reduce<(typeof models)["llm"][number] | null>(
+		(smallest, m) => (!smallest || m.sizeBytes < smallest.sizeBytes ? m : smallest),
+		null
+	);
 	const needsLlm =
 		llmStatus.state === "missing" && settings.llmMode !== "external" && !settings.extLlmBaseUrl;
 	// mirrors the backend's effective_stt_engine resolution
@@ -387,8 +392,8 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					<p className="font-semibold mb-1">No language model is set up yet</p>
 					<p>
 						Brainstorming needs an AI brain: download one of the models below
-						(recommended: the light Gemma 4), or point at an external endpoint at the
-						bottom of this page.
+						(recommended: {smallestLlm ? smallestLlm.label : "the smallest one"}),
+						or point at an external endpoint at the bottom of this page.
 					</p>
 				</div>
 			)}

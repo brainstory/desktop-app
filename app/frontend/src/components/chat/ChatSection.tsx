@@ -111,7 +111,7 @@ export function ChatSection({
 				setErrorComponent(
 					<ErrorSection
 						title="Shared idea not found"
-						paragraphs={["This idea does not exist or you do not have access"]}
+						paragraphs={["The idea you were giving feedback on no longer exists in this library."]}
 					/>
 				);
 			});
@@ -231,7 +231,7 @@ export function ChatSection({
 						<ErrorSection
 							title="Draft idea not found"
 							paragraphs={[
-								"This draft does not exist or you do not have access",
+								"This draft no longer exists.",
 								"If you did not mean to open a draft, start a new idea instead"
 							]}
 						/>

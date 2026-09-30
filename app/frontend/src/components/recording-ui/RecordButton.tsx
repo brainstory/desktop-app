@@ -5,6 +5,7 @@ import { CONVERSATION_STATE } from "../../const";
 import { ICON } from "./RecordIcons";
 import { transcribeApi } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 
 interface RecordButtonProps {
@@ -173,8 +174,11 @@ function RecordButton({
 
 	function handleError(error: unknown): void {
 		setIsTranscribing(false);
-		console.log(error);
-		setErrorMessage(normalizeApiError(error));
+		console.error("recording/transcription failed", error);
+		const described = describeError(error);
+		setErrorMessage(
+			described.action ? `${described.message} ${described.action}` : described.message
+		);
 		setWarningType("error");
 	}
 
@@ -392,7 +396,7 @@ function RecordButton({
 				</div>
 			)}
 			<ChangeInputTypeButton isTextInput={isTextInput} onToggle={onInterfaceToggle} />
-			{/* show time limit almost up warning if 20 seconds from max  */}
+			{/* show the almost-up warning in the last 30 seconds of the max recording time */}
 			{isRecording && secondsRemaining <= 30 && secondsRemaining > 0 && (
 				<div className="flex justify-center fixed z-50 top-8 left-0 right-0 w-3/4 mx-auto bg-amber-400 text-black py-4 px-4 rounded-lg shadow-lg flex items-center">
 					<p className="text-sm font-semibold">

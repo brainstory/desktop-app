@@ -12,6 +12,7 @@ import { $aiStatus } from "@components/global/aiStatusStore";
 export default function AiSetupNeeded() {
 	const [needsSetup, setNeedsSetup] = useState(false);
 	const [checked, setChecked] = useState(false);
+	const [smallestGb, setSmallestGb] = useState<string | null>(null);
 	// live engine status from the shared store (fed once per app)
 	useStore($aiStatus);
 
@@ -21,6 +22,11 @@ export default function AiSetupNeeded() {
 				const hasLocalModel = models.llm.some((m) => m.downloaded);
 				const hasExternal = !!settings.extLlmBaseUrl;
 				setNeedsSetup(!hasLocalModel && !hasExternal);
+				// copy derives from the catalog instead of hardcoding a size
+				const smallest = models.llm.reduce((min, m) =>
+					m.sizeBytes < min.sizeBytes ? m : min
+				);
+				setSmallestGb((smallest.sizeBytes / 1024 ** 3).toFixed(1));
 				setChecked(true);
 			})
 			.catch(() => setChecked(true));
@@ -37,8 +43,8 @@ export default function AiSetupNeeded() {
 			</p>
 			<p className="text-sm text-stone-600 mb-4 max-w-xl mx-auto">
 				Everything runs on your machine, so Brainstory needs an AI brain to brainstorm with:
-				download a local model (~3.3 GB, once), or point it at an external AI server if you
-				have one. You can change this any time.
+				download a local model{smallestGb ? ` (~${smallestGb} GB, once)` : ""}, or point it
+				at an external AI server if you have one. You can change this any time.
 			</p>
 			<PinkButton href="/profile?tab=aiModels">Set up AI Models</PinkButton>
 		</div>

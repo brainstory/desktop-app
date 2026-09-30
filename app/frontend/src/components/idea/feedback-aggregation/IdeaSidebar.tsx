@@ -24,7 +24,7 @@ export default function IdeaSidebar({
 		if (sortedHeadingIndices.length === 0) {
 			return (
 				<p className="w-[256px] text-sm">
-					No comments found. {canShare && "Share your idea to get feedback!"}
+					No comments found. {canShare && "Export your idea and send it to someone to get their feedback!"}
 				</p>
 			);
 		}
