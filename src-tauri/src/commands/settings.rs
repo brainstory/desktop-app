@@ -236,7 +236,7 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 		} else {
 			&settings.ext_llm_model
 		},
-	);
+	)?;
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let mut got_any = false;
 	let (output, _) = client

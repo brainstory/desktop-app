@@ -501,16 +501,19 @@ impl ExternalLlm {
 	/// speaking SSE (e.g. CRLF-averse parser deadlock or an HTML error page).
 	const MAX_SSE_BUFFER: usize = 1_000_000;
 
-	pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
-		Self {
+	pub fn new(base_url: &str, api_key: &str, model: &str) -> Result<Self, String> {
+		// Client::new() panics when the TLS backend cannot initialize;
+		// surface that as an error instead.
+		let client = reqwest::Client::builder()
+			.connect_timeout(std::time::Duration::from_secs(10))
+			.build()
+			.map_err(|e| format!("failed to build HTTP client: {e}"))?;
+		Ok(Self {
 			base_url: base_url.trim_end_matches('/').to_string(),
 			api_key: api_key.to_string(),
 			model: model.to_string(),
-			client: reqwest::Client::builder()
-				.connect_timeout(std::time::Duration::from_secs(10))
-				.build()
-				.unwrap_or_else(|_| reqwest::Client::new()),
-		}
+			client,
+		})
 	}
 
 	fn completions_url(&self) -> String {
@@ -683,6 +686,14 @@ fn consume_sse_event(
 						output.push_str(delta);
 						on_chunk(delta.to_string());
 					}
+				} else if let Some(content) = value["choices"][0]["message"]["content"].as_str() {
+					// some servers ignore "stream": true and answer with
+					// one plain completion object; treat it as a single
+					// (complete) chunk instead of silently empty output
+					if !content.is_empty() {
+						output.push_str(content);
+						on_chunk(content.to_string());
+					}
 				}
 				if let Some(err) = value["error"]["message"].as_str() {
 					return Err(map_provider_error(0, err));
@@ -807,6 +818,20 @@ mod tests {
 			"the deadline must end the read"
 		);
 		assert_eq!(body, "x", "bytes that arrived before the deadline are kept");
+	}
+
+	#[test]
+	fn consume_sse_event_accepts_non_streaming_completions() {
+		// a server that ignored stream:true replies with one data event
+		// carrying choices[0].message.content
+		let event = "data: {\"choices\":[{\"message\":{\"content\":\"hello there\"}}]}";
+		let mut output = String::new();
+		let mut chunks = Vec::new();
+		let done =
+			super::consume_sse_event(event, &mut output, &mut |c| chunks.push(c)).expect("parse");
+		assert!(!done, "no [DONE] marker yet");
+		assert_eq!(output, "hello there");
+		assert_eq!(chunks, vec!["hello there".to_string()]);
 	}
 
 	fn run(pieces: &[&str]) -> String {

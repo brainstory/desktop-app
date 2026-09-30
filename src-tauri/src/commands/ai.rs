@@ -326,7 +326,7 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("external LLM endpoint is not configured".into());
 	}
-	Ok(ExternalLlm::new(
+	ExternalLlm::new(
 		&settings.ext_llm_base_url,
 		&settings.ext_llm_api_key,
 		if settings.ext_llm_model.is_empty() {
@@ -334,7 +334,7 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 		} else {
 			&settings.ext_llm_model
 		},
-	))
+	)
 }
 
 /// Run one LLM call on the configured backend (local llama.cpp or external
