@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	hasDoneGettingStarted,
-	markGettingStartedDone,
-	setGettingStartedDone
-} from "./storage";
+import { hasDoneGettingStarted, markGettingStartedDone, setGettingStartedDone } from "./storage";
 
 describe("storage flags", () => {
 	afterEach(() => {

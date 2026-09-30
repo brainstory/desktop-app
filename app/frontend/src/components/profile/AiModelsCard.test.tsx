@@ -97,9 +97,7 @@ describe("AiModelsCard", () => {
 		renderCard();
 		const sw = await screen.findByRole("switch", { name: undefined });
 		// the switch sits next to its label text
-		expect(
-			screen.getByText("Use external LLM endpoint").parentElement
-		).toContainElement(sw);
+		expect(screen.getByText("Use external LLM endpoint").parentElement).toContainElement(sw);
 		expect(sw).toHaveAttribute("aria-checked", "false");
 		await user.click(sw);
 		expect(
@@ -107,9 +105,9 @@ describe("AiModelsCard", () => {
 		).toBeInTheDocument();
 		// controlled: the switch did NOT flip
 		expect(sw).toHaveAttribute("aria-checked", "false");
-		expect(
-			vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")
-		).toBe(false);
+		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")).toBe(
+			false
+		);
 	});
 
 	it("saving a secret sends only that field", async () => {
@@ -123,9 +121,7 @@ describe("AiModelsCard", () => {
 		const saveButton = within(fieldRow).getByRole("button", { name: "Save Token" });
 		await user.click(saveButton);
 		await waitFor(() => {
-			const call = vi
-				.mocked(invoke)
-				.mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
 			expect(call, "save_ai_settings was called").toBeTruthy();
 			expect(call![1]).toEqual({ ai: { hfToken: "hf_secret" } });
 		});

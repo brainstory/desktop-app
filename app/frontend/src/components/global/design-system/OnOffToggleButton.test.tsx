@@ -8,9 +8,7 @@ describe("OnOffToggleButton", () => {
 	it("is controlled: it never flips without the parent updating `checked`", async () => {
 		const user = userEvent.setup();
 		const onToggle = vi.fn();
-		const { rerender } = render(
-			<OnOffToggleButton checked={false} onToggle={onToggle} />
-		);
+		const { rerender } = render(<OnOffToggleButton checked={false} onToggle={onToggle} />);
 		const sw = screen.getByRole("switch");
 		expect(sw).toHaveAttribute("aria-checked", "false");
 

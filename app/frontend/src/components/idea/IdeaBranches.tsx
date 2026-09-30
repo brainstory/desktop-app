@@ -8,9 +8,7 @@ interface IdeaBranchesProps {
 
 export default function IdeaBranches({ kids = [] }: IdeaBranchesProps) {
 	if (kids.length === 0) {
-		return (
-			<p className="mx-10 my-8 text-sm text-stone-500">No feedback on this idea yet.</p>
-		);
+		return <p className="mx-10 my-8 text-sm text-stone-500">No feedback on this idea yet.</p>;
 	}
 	return (
 		<div className="mx-10 space-y-12">

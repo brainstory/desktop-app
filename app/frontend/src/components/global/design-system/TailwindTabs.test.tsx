@@ -11,20 +11,26 @@ describe("TailwindComposedTabs", () => {
 	];
 
 	it("renders the active tab's panel", () => {
-		render(<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />);
+		render(
+			<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />
+		);
 		expect(screen.getByRole("tabpanel")).toHaveTextContent("summary body");
 	});
 
 	it("clamps an out-of-range activeTab to the last real panel", () => {
 		// a ?tab=feedback deep link on a page without a feedback tab
-		render(<TailwindComposedTabs data={data} activeTab={2} tabParams={["summary", "transcript"]} />);
+		render(
+			<TailwindComposedTabs data={data} activeTab={2} tabParams={["summary", "transcript"]} />
+		);
 		expect(screen.getByRole("tabpanel")).toHaveTextContent("transcript body");
 		expect(screen.getByRole("tab", { selected: true })).toHaveTextContent("Transcript");
 	});
 
 	it("arrow keys move between tabs", async () => {
 		const user = userEvent.setup();
-		render(<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />);
+		render(
+			<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />
+		);
 		const first = screen.getByRole("tab", { name: "Summary" });
 		first.focus();
 		await user.keyboard("{ArrowRight}");
@@ -35,7 +41,9 @@ describe("TailwindComposedTabs", () => {
 	it("updates the ?tab= query param when a tab is selected", async () => {
 		const user = userEvent.setup();
 		window.history.replaceState(null, "", "/idea?id=x");
-		render(<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />);
+		render(
+			<TailwindComposedTabs data={data} activeTab={0} tabParams={["summary", "transcript"]} />
+		);
 		await user.click(screen.getByRole("tab", { name: "Transcript" }));
 		expect(new URLSearchParams(window.location.search).get("tab")).toBe("transcript");
 	});

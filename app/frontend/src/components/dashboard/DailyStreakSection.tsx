@@ -80,7 +80,7 @@ export default function DailyStreakSection() {
 		return (
 			<section
 				aria-busy="true"
-							className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg animate-pulse"
+				className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg animate-pulse"
 			>
 				<div className="text-start">
 					<div className="h-6 w-16 bg-stone-200 rounded" />

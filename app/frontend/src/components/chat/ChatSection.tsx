@@ -111,7 +111,9 @@ export function ChatSection({
 				setErrorComponent(
 					<ErrorSection
 						title="Shared idea not found"
-						paragraphs={["The idea you were giving feedback on no longer exists in this library."]}
+						paragraphs={[
+							"The idea you were giving feedback on no longer exists in this library."
+						]}
 					/>
 				);
 			});

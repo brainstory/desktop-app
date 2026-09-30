@@ -8,7 +8,18 @@ import DashboardSection from "./DashboardSection";
 
 const emptyStatus = { llm: { state: "ready" }, stt: { state: "ready" } };
 const emptyModels = {
-	llm: [{ id: "m", label: "M", description: "", kind: "llm", sizeBytes: 1, downloaded: true, active: true, downloading: false }],
+	llm: [
+		{
+			id: "m",
+			label: "M",
+			description: "",
+			kind: "llm",
+			sizeBytes: 1,
+			downloaded: true,
+			active: true,
+			downloading: false
+		}
+	],
 	stt: []
 };
 const emptyAiSettings = {
@@ -79,9 +90,7 @@ describe("DashboardSection", () => {
 	it("shows onboarding only for an empty library", async () => {
 		mockBase();
 		render(<DashboardSection />);
-		expect(
-			await screen.findByText("Start your first Brainstory!")
-		).toBeInTheDocument();
+		expect(await screen.findByText("Start your first Brainstory!")).toBeInTheDocument();
 	});
 
 	it("a successful import refreshes the library", async () => {
@@ -90,19 +99,25 @@ describe("DashboardSection", () => {
 		mockBase({
 			import_share: () => {
 				importCount++;
-				return { cancelled: false, kind: "idea", id: "imp2", title: "New import", author: "Ada" };
+				return {
+					cancelled: false,
+					kind: "idea",
+					id: "imp2",
+					title: "New import",
+					author: "Ada"
+				};
 			}
 		});
 		render(<DashboardSection />);
-		await user.click(await screen.findByRole("button", { name: "Import shared idea or feedback" }));
+		await user.click(
+			await screen.findByRole("button", { name: "Import shared idea or feedback" })
+		);
 		expect(await screen.findByText(/Imported "New import" from Ada/)).toBeInTheDocument();
 		await waitFor(() => expect(importCount).toBe(1));
 		// the refresh re-fetched the library after the import
 		await waitFor(() =>
 			expect(
-				vi
-					.mocked(invoke)
-					.mock.calls.filter(([cmd]) => cmd === "get_all_ideas").length
+				vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "get_all_ideas").length
 			).toBeGreaterThanOrEqual(2)
 		);
 	});

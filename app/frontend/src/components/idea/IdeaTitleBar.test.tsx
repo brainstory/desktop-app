@@ -14,9 +14,7 @@ const idea: IdeaDetail = {
 } as IdeaDetail;
 
 function renderBar(overrides: Partial<IdeaDetail> = {}) {
-	return render(
-		<IdeaTitleBar idea={{ ...idea, ...overrides } as IdeaDetail} isOwnIdea={true} />
-	);
+	return render(<IdeaTitleBar idea={{ ...idea, ...overrides } as IdeaDetail} isOwnIdea={true} />);
 }
 
 async function startEditing(user: ReturnType<typeof userEvent.setup>) {
@@ -35,7 +33,13 @@ describe("IdeaTitleBar rename", () => {
 		expect(screen.getByText("Better title")).toBeInTheDocument();
 		await waitFor(() =>
 			expect(
-				vi.mocked(invoke).mock.calls.some(([cmd, args]) => cmd === "update_idea" && (args as { title?: string }).title === "Better title")
+				vi
+					.mocked(invoke)
+					.mock.calls.some(
+						([cmd, args]) =>
+							cmd === "update_idea" &&
+							(args as { title?: string }).title === "Better title"
+					)
 			).toBe(true)
 		);
 	});
@@ -78,9 +82,11 @@ describe("IdeaTitleBar rename", () => {
 		await user.type(input, "Discarded{Escape}");
 		expect(screen.getByText("Original title")).toBeInTheDocument();
 		expect(
-			vi.mocked((await import("@tauri-apps/api/core")).invoke).mock.calls.every(
-				([cmd, args]) => !(cmd === "update_idea" && (args as { title?: string }).title)
-			)
+			vi
+				.mocked((await import("@tauri-apps/api/core")).invoke)
+				.mock.calls.every(
+					([cmd, args]) => !(cmd === "update_idea" && (args as { title?: string }).title)
+				)
 		).toBe(true);
 	});
 });

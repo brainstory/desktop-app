@@ -274,10 +274,10 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								}
 							>
 								{isConfirmingDelete
-								? model.active
-									? "Really delete the ACTIVE model?"
-									: "Really delete?"
-								: "Delete"}
+									? model.active
+										? "Really delete the ACTIVE model?"
+										: "Really delete?"
+									: "Delete"}
 							</BorderedButton>
 						)}
 						{!model.downloaded && !isDownloading && (
@@ -396,8 +396,8 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					<p className="font-semibold mb-1">No language model is set up yet</p>
 					<p>
 						Brainstorming needs an AI brain: download one of the models below
-						(recommended: {smallestLlm ? smallestLlm.label : "the smallest one"}),
-						or point at an external endpoint at the bottom of this page.
+						(recommended: {smallestLlm ? smallestLlm.label : "the smallest one"}), or
+						point at an external endpoint at the bottom of this page.
 					</p>
 				</div>
 			)}

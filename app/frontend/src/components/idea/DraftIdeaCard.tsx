@@ -62,11 +62,11 @@ export default function DraftIdeaCard({
 						: "text-stone-500 hover:text-red-500 hover:bg-stone-50"
 				}`}
 			>
-			{confirmingDelete ? (
-				<span aria-live="polite">Really delete? ({secondsLeft ?? 0}s)</span>
-			) : (
-				<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
-			)}
+				{confirmingDelete ? (
+					<span aria-live="polite">Really delete? ({secondsLeft ?? 0}s)</span>
+				) : (
+					<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
+				)}
 			</button>
 		</div>
 	);

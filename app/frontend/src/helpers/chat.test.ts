@@ -236,7 +236,11 @@ describe("handleStreamResult", () => {
 	it("concatenates chunk events and lets cumulative replace", async () => {
 		const { start, emit, resolve } = makeStream();
 		const updates: string[] = [];
-		const done = handleStreamResult(start, (m) => updates.push(m), async () => {});
+		const done = handleStreamResult(
+			start,
+			(m) => updates.push(m),
+			async () => {}
+		);
 		emit({ type: "chunk", content: "hel" });
 		emit({ type: "chunk", content: "lo" });
 		emit({ type: "cumulative", content: "hello there" });
@@ -266,9 +270,13 @@ describe("handleStreamResult", () => {
 	it("passes structured_result to the success callback", async () => {
 		const { start, resolve } = makeStream();
 		const structured: unknown[] = [];
-		const done = handleStreamResult(start, () => {}, async (_m, s) => {
-			structured.push(s);
-		});
+		const done = handleStreamResult(
+			start,
+			() => {},
+			async (_m, s) => {
+				structured.push(s);
+			}
+		);
 		resolve({ response: "x", structured_result: { items: 1 } });
 		await done;
 		expect(structured).toEqual([{ items: 1 }]);

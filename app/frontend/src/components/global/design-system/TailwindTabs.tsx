@@ -68,11 +68,11 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 	return (
 		<TabsContext.Provider
 			value={{
-			activeIndex,
-			setActiveIndex,
-			tabCount: Children.count(children),
-			idPrefix
-		}}
+				activeIndex,
+				setActiveIndex,
+				tabCount: Children.count(children),
+				idPrefix
+			}}
 		>
 			<div className="h-full">{children}</div>
 		</TabsContext.Provider>
@@ -191,13 +191,7 @@ function TailwindTabPanel({ children }: { children: ReactNode }) {
 
 /** Panel wrapper that derives its id/aria wiring from the shared tab
  * context, so a second tab set on the page can never collide. */
-function TailwindTabPanelShell({
-	index,
-	children
-}: {
-	index: number;
-	children: ReactNode;
-}) {
+function TailwindTabPanelShell({ index, children }: { index: number; children: ReactNode }) {
 	const idPrefix = useContext(TabsContext)?.idPrefix ?? "tw";
 	return (
 		<div

@@ -123,17 +123,17 @@ function FeedbackStack({ feedback = [] }: FeedbackStackProps) {
 						2: `rotate-2 group-hover:top-1 group-hover:bg-stone-50 ${sharedCardPart} group-hover:shadow`
 					};
 
-				return (
-					// decorative layer (the explicit feedback link is the
-					// action); never focusable or clickable on its own
-					<div
-						key={`${index}-feedback-card`}
-						aria-hidden="true"
-						className={`pointer-events-none ${classNameBasedOnIndex[index]}`}
-					>
-						<div className="rounded-lg"></div>
-					</div>
-				);
+					return (
+						// decorative layer (the explicit feedback link is the
+						// action); never focusable or clickable on its own
+						<div
+							key={`${index}-feedback-card`}
+							aria-hidden="true"
+							className={`pointer-events-none ${classNameBasedOnIndex[index]}`}
+						>
+							<div className="rounded-lg"></div>
+						</div>
+					);
 				})}
 		</>
 	);
