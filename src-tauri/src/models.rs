@@ -616,7 +616,11 @@ impl AppState {
 					// while loading; don't resurrect a deleted model.
 					log::warn!("{} was deleted while loading; not activating it", spec.id);
 				}
-				if let Some(prev) = prev_spec.filter(|prev| prev.id != spec.id) {
+				// Attempt the rollback even when the failed model is the
+				// previously loaded one: the engine was already dropped
+				// above, and a transient read failure deserves a second
+				// chance rather than leaving nothing loaded.
+				if let Some(prev) = prev_spec {
 					match self.reload_llm(&prev) {
 						Ok(()) => {
 							log::warn!(
