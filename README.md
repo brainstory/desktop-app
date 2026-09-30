@@ -62,6 +62,80 @@ menu). The app keeps running in the system tray when the window is closed and se
 a system notification once per day at the configured time. Quit fully from the tray
 menu.
 
+## Install
+
+Grab the latest build for your OS from the [Releases page](https://github.com/brainstory/desktop-app/releases):
+
+- **macOS** — download the `.dmg` (Apple Silicon only; there is no Intel build). Drag
+  Brainstory to Applications and launch it from there.
+- **Windows** — run the `Brainstory_*_x64-setup.exe` installer (NSIS).
+- **Linux** — install the `.deb`, `.rpm`, or run the `.AppImage`.
+
+**The builds are not code-signed.** On macOS the first launch shows "Brainstory can't
+be opened because it is from an unidentified developer" — right-click (or Control-click)
+the app and choose **Open**, then **Open** again in the dialog; from then on it launches
+normally. On Windows SmartScreen shows "Windows protected your PC" — click
+**More info**, then **Run anyway**. There are no developer accounts for signing
+certificates, so this warning is expected on every first launch.
+
+## Updates
+
+Brainstory checks for updates on startup (at most once every 6 hours) against the
+GitHub releases of this repository and installs them through Tauri's updater — the
+download is verified against the release's signing key before anything is applied.
+To opt out entirely, simply don't grant it network access with your firewall; the app
+works fully offline after the models are downloaded. Update artifacts and their
+checksums are attached to every release (`latest.json` + `SHA256SUMS.txt`).
+
+## Where your data lives
+
+Everything is local:
+
+| What | Where |
+| --- | --- |
+| Ideas, drafts, daily logs | SQLite database at `~/Library/Application Support/ai.brainstory.desktop/brainstory.db` (macOS; `~/.local/share/...` on Linux, `%APPDATA%\...` on Windows) |
+| Downloaded models | `.../ai.brainstory.desktop/models/` (multi-GB files) |
+| HuggingFace token, external API keys | the macOS Keychain / system keyring (never in the database; a plaintext fallback row exists only where no keychain service is available) |
+| Logs | rotating `brainstory.log` under the OS log dir |
+
+To wipe everything, quit the app and delete the `ai.brainstory.desktop` folder (and
+the keychain entries, via Keychain Access). A corrupted database is not deleted: on
+next launch it is quarantined as `brainstory.db.corrupt-<timestamp>` next to the fresh
+one, so your data is never silently discarded.
+
+## Network access
+
+The app is local-first, but it is not network-free. It contacts exactly:
+
+- `huggingface.co` — model downloads (and only when you click Download).
+- `github.com` — update checks on startup.
+- Any **external AI endpoint you configure** yourself (Settings → AI Models).
+
+Nothing else. There are no accounts, analytics, or telemetry servers — but "no
+servers" here means *no Brainstory servers*, not "no network".
+
+**Dark mode:** the window is pinned to a light theme (`"theme": "Light"` in
+`tauri.conf.json`). This is deliberate for now — the accent palette is tuned for
+light surfaces — and will change if/when dark variants of the tokens are designed.
+
+## Manual model tests
+
+Two integration tests need real model files and never run in CI's unit-test job (the
+nightly workflow runs the engine smoke test with tiny downloaded models):
+
+```sh
+# whisper + llama coexisting in one process, with a tiny (~1 MB) test llama:
+WHISPER_MODEL_PATH=/path/to/ggml-tiny.en.bin \
+LLM_MODEL_PATH=/path/to/tiny.gguf \
+cargo test --test engine_smoke
+
+# prompt quality against a real model:
+LLM_MODEL_PATH=/path/to/model.gguf cargo test --test model_prompts
+
+# Apple Speech smoke test (macOS 26 host, terminal needs speech permission):
+APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke
+```
+
 ## Development
 
 ```sh

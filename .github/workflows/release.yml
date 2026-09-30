@@ -171,6 +171,8 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Download built packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -197,9 +199,17 @@ jobs:
           node -e '
             const fs = require("fs");
             const [version, baseUrl, macTar, macSig, winExe, winSig, linuxImg, linuxSig, pubDate] = process.argv.slice(1);
+            // release notes: the matching section of CHANGELOG.md if present
+            let notes = "";
+            try {
+              const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
+              const section = changelog.split(/^## /m).find((s) => s.startsWith(`[${version}]`));
+              notes = section ? section.split(/\n## /)[0].replace(/^\[[^\]]+\]\S*\n?/, "").trim() : "";
+            } catch {}
             const feed = {
               version,
               pub_date: pubDate,
+              notes,
               platforms: {
                 "darwin-aarch64": { signature: macSig, url: `${baseUrl}/${macTar}` },
                 "windows-x86_64": { signature: winSig, url: `${baseUrl}/${winExe}` },
