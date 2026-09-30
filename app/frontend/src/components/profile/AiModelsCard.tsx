@@ -5,6 +5,7 @@ import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useTimeout } from "@src/hooks/useTimeout";
 import { useState } from "react";
+import { normalizeApiError } from "@helpers/helpers";
 import { useEffect } from "react";
 
 import {
@@ -162,7 +163,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			// starting a download that's already running is harmless - the
 			// progress bar is already driven by backend events
 			if (!String(e).includes("already downloading")) {
-				openSnackbar(false, e);
+				openSnackbar(false, normalizeApiError(e));
 			}
 			refresh();
 		});
@@ -177,7 +178,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				setSavedSettings(next);
 				refresh();
 			})
-			.catch((e) => openSnackbar(false, e));
+			.catch((e) => openSnackbar(false, normalizeApiError(e)));
 	};
 
 	// Secrets: value "" is the backend's clear signal; anything else sets.
@@ -197,7 +198,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					.catch((e) => console.error("failed to reload ai settings", e));
 				openSnackbar(true, value === "" ? "Removed" : "Saved");
 			})
-			.catch((e) => openSnackbar(false, e));
+			.catch((e) => openSnackbar(false, normalizeApiError(e)));
 	};
 
 	const updateField =
@@ -223,7 +224,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			setConfirmingDeleteId(null);
 			deleteModelApi(model.id)
 				.then(refresh)
-				.catch((e) => openSnackbar(false, e));
+				.catch((e) => openSnackbar(false, normalizeApiError(e)));
 		};
 		return (
 			<div
@@ -244,7 +245,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					</div>
 					<div className="flex gap-2 items-center shrink-0">
 						{model.downloaded && !model.active && (
-							<BorderedButton onClick={() => activateModelApi(model.id).then(refresh).catch((e) => openSnackbar(false, e))}>
+							<BorderedButton onClick={() => activateModelApi(model.id).then(refresh).catch((e) => openSnackbar(false, normalizeApiError(e)))}>
 								Use
 							</BorderedButton>
 						)}
@@ -268,7 +269,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							<BorderedButton
 								onClick={() =>
 									cancelDownloadApi(model.id)
-										.catch((e) => openSnackbar(false, e))
+										.catch((e) => openSnackbar(false, normalizeApiError(e)))
 								}
 							>
 								Cancel
@@ -560,7 +561,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							openSnackbar(true, "Settings saved");
 						})
 						.catch((e) => {
-							openSnackbar(false, e);
+							openSnackbar(false, normalizeApiError(e));
 							throw e;
 						});
 
@@ -568,7 +569,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					const runTest = () =>
 						testFn()
 							.then((msg) => openSnackbar(true, msg))
-							.catch((e) => openSnackbar(false, e));
+							.catch((e) => openSnackbar(false, normalizeApiError(e)));
 					if (endpointDirty) {
 						saveEndpoints()
 							.then(runTest)

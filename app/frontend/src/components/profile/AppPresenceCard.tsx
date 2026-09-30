@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { normalizeApiError } from "@helpers/helpers";
 
 import { Card } from "./ProfileCards";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
@@ -24,7 +25,7 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 			.catch((e) => {
 				setDock(prev.dock);
 				setTray(prev.tray);
-				openSnackbar(false, e);
+				openSnackbar(false, normalizeApiError(e));
 			});
 	};
 

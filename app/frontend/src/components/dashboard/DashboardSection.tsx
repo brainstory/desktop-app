@@ -2,6 +2,7 @@ import type { IdeaListItem } from "@src/types";
 import { useState, useEffect } from "react";
 import { getAllIdeasApi } from "@helpers/api/user";
 import { importShareApi } from "@helpers/api/share";
+import { normalizeApiError } from "@helpers/helpers";
 import { setGettingStartedDone } from "@helpers/storage";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
@@ -81,7 +82,7 @@ export default function DashboardSection() {
 			})
 			.catch((err) => {
 				setSnackbarErrorOpen(true);
-				setSnackbarErrorMessage(err);
+				setSnackbarErrorMessage(normalizeApiError(err));
 			});
 	};
 
