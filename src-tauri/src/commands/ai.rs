@@ -164,7 +164,7 @@ pub async fn generate_response(
 	// If a structured result was requested, try to extract the JSON document.
 	let mut structured = None;
 	if request.summarize && request.structured_feedback {
-		structured = extract_json(&output);
+		structured = extract_feedback_json(&output);
 	}
 
 	Ok(serde_json::json!({
@@ -242,7 +242,7 @@ pub async fn generate_streaming_response(
 	// produce the structured JSON feedback document.
 	let mut structured = None;
 	if request.summarize && request.structured_feedback {
-		structured = extract_json(&output);
+		structured = extract_feedback_json(&output);
 	} else if request.summarize && request.chat_type == ChatType::Feedback {
 		let json_system = crate::prompts::FEEDBACK_JSON_RESULT_SYSTEM.to_string();
 		let json_output = run_generation(
@@ -255,8 +255,11 @@ pub async fn generate_streaming_response(
 			|_| {},
 		)
 		.await;
-		if let Ok((json_output, _)) = json_output {
-			structured = extract_json(&json_output);
+		match json_output {
+			Ok((json_output, _)) => structured = extract_feedback_json(&json_output),
+			// log instead of swallowing: a silently missing structured
+			// document is invisible in support logs
+			Err(e) => log::error!("structured feedback pass failed: {e}"),
 		}
 	}
 
@@ -386,6 +389,25 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 	serde_json::from_str(&text[start..=end]).ok()
 }
 
+/// extract_json plus the feedback-document contract: the value must be an
+/// object whose feedback_items (when present) is an array. Anything else
+/// is treated as absent rather than stored broken.
+fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
+	let value = extract_json(text)?;
+	let items = value.get("feedback_items");
+	match items {
+		None => {
+			log::warn!("structured feedback JSON has no feedback_items key");
+			None
+		}
+		Some(items) if items.is_array() => Some(value),
+		Some(_) => {
+			log::warn!("structured feedback JSON has a non-array feedback_items");
+			None
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::extract_json;
@@ -425,5 +447,29 @@ mod tests {
 		// first '{' to last '}' spans two objects: the slice is not valid
 		// JSON, so the contract is a clean None, never a panic
 		assert!(extract_json("a {\"x\": 1} b {\"y\": 2}").is_none());
+	}
+}
+
+#[cfg(test)]
+mod feedback_json_tests {
+	use super::extract_feedback_json;
+
+	#[test]
+	fn accepts_wellformed_feedback_documents() {
+		let v = extract_feedback_json(r#"{"feedback_items": [{"oid_heading_text": "1## A"}]}"#)
+			.expect("valid");
+		assert!(v["feedback_items"].is_array());
+	}
+
+	#[test]
+	fn empty_feedback_items_is_valid() {
+		assert!(extract_feedback_json(r#"{"feedback_items": []}"#).is_some());
+	}
+
+	#[test]
+	fn rejects_missing_or_non_array_feedback_items() {
+		assert!(extract_feedback_json(r#"{"something": "else"}"#).is_none());
+		assert!(extract_feedback_json(r#"{"feedback_items": "nope"}"#).is_none());
+		assert!(extract_feedback_json("no json at all").is_none());
 	}
 }

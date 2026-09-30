@@ -50,8 +50,8 @@ comment cards in the UI.
 
 `feedback_result_reflection_system_message`
 
-Reflection evaluation from a transcript and feedback. (Kept from the original set; currently
-unused by the app.)
+Reflection evaluation from a transcript and feedback. Unused by the app - moved to
+[unused/](unused/) to keep this directory equal to the embedded prompt set.
 
 ## License
 

@@ -12,7 +12,7 @@ pub const FEEDBACK_RESULT_SYSTEM: &str =
 pub const FEEDBACK_JSON_RESULT_SYSTEM: &str =
 	include_str!("../../prompts/feedback_json_result_system_message.txt");
 
-/// Chat type communicated by the frontend (mirrors CHAT_TYPE in src/const.js).
+/// Chat type communicated by the frontend (mirrors CHAT_TYPE in src/const.ts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatType {
 	Original,
