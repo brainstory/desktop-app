@@ -773,6 +773,15 @@ pub fn model_url(spec: &ModelSpec) -> String {
 	)
 }
 
+/// The `.part` staging path for a download destination: `<file>.part`
+/// appended to the full name (with_extension would collapse `x.bin` and
+/// `x.gguf` to the same `x.part`).
+fn part_path(dest: &Path) -> PathBuf {
+	let mut name = dest.as_os_str().to_os_string();
+	name.push(".part");
+	PathBuf::from(name)
+}
+
 /// Stream a model file to disk, reporting progress through `on_progress`
 /// (percentage 0-100). Verifies the download completed fully and matches
 /// the pinned sha256 before moving it into place; the `.part` file is
@@ -788,7 +797,7 @@ pub async fn download_model_file(
 ) -> Result<(), String> {
 	use sha2::{Digest, Sha256};
 
-	let tmp = dest.with_extension("part");
+	let tmp = part_path(dest);
 	if tmp.exists() {
 		tokio::fs::remove_file(&tmp)
 			.await
@@ -996,6 +1005,16 @@ mod tests {
 			super::SpeechEngine::Whisper
 		};
 		assert_eq!(s.effective_stt_engine(), expected);
+	}
+
+	#[test]
+	fn part_paths_do_not_collide_across_extensions() {
+		use std::path::Path;
+		let bin = super::part_path(Path::new("/m/x.bin"));
+		let gguf = super::part_path(Path::new("/m/x.gguf"));
+		assert_eq!(bin, Path::new("/m/x.bin.part"));
+		assert_eq!(gguf, Path::new("/m/x.gguf.part"));
+		assert_ne!(bin, gguf, "staging names must be distinct");
 	}
 
 	#[test]
