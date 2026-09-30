@@ -77,6 +77,9 @@ function NavigationInner() {
 				className={`top-0 left-0 z-40 w-64 h-full transition-transform sm:translate-x-0 fixed p-4 sm:pr-0 bg-stone-50 sm:sticky
 					${isSidebarOpen ? "" : "-translate-x-full"} `}
 				aria-label="Sidebar"
+				// inert when closed: the off-screen drawer's links must not
+				// be focusable or clickable while hidden
+				inert={!isSidebarOpen ? true : undefined}
 			>
 				<a href="/" className="flex justify-center items-center mt-2 mb-6 sm:mb-8">
 					<img src="/logo.svg" className="h-8 mr-3 sm:h-12" alt="Brainstory Logo" />
@@ -116,6 +119,9 @@ function NavigationInner() {
 							);
 						}
 
+						const isActive =
+							typeof window !== "undefined" &&
+							window.location.pathname === button.href;
 						return (
 							<li key={button.id}>
 								<TransparentButton
@@ -124,6 +130,7 @@ function NavigationInner() {
 									href={button.href}
 									left
 									full
+									aria-current={isActive ? "page" : undefined}
 								>
 									{button.text}
 								</TransparentButton>
