@@ -95,18 +95,46 @@ struct DownloadGuard {
 impl Drop for DownloadGuard {
 	fn drop(&mut self) {
 		if let Some(state) = self.app.try_state::<AppState>() {
-			state
-				.download_progress
-				.lock()
-				.unwrap_or_else(|e| e.into_inner())
-				.remove(&self.model_id);
-			state
-				.download_cancels
-				.lock()
-				.unwrap_or_else(|e| e.into_inner())
-				.remove(&self.model_id);
+			unregister_download(&state, &self.model_id);
 		}
 	}
+}
+
+/// Insert a download into both bookkeeping maps under one critical
+/// section, so a concurrent `cancel_download` or `download_model` can
+/// never observe a half-registered download. Err means this model is
+/// already downloading.
+fn register_download(state: &AppState, model_id: &str) -> Result<Arc<AtomicBool>, String> {
+	// Lock ordering (progress, then cancels) must match unregister_download.
+	let mut progress = state
+		.download_progress
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	let mut cancels = state
+		.download_cancels
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	if progress.contains_key(model_id) {
+		return Err("model is already downloading".into());
+	}
+	let cancel = Arc::new(AtomicBool::new(false));
+	progress.insert(model_id.to_string(), 0.0);
+	cancels.insert(model_id.to_string(), cancel.clone());
+	Ok(cancel)
+}
+
+/// Remove a download's bookkeeping entries (inverse of register_download).
+fn unregister_download(state: &AppState, model_id: &str) {
+	state
+		.download_progress
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.remove(model_id);
+	state
+		.download_cancels
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.remove(model_id);
 }
 
 #[tauri::command]
@@ -121,26 +149,20 @@ pub async fn download_model(
 		.ok_or_else(|| format!("unknown model {model_id}"))?
 		.clone();
 
-	{
-		let mut progress = state
-			.download_progress
-			.lock()
-			.unwrap_or_else(|e| e.into_inner());
-		if progress.contains_key(&model_id) {
-			return Err("model is already downloading".into());
-		}
-		progress.insert(model_id.clone(), 0.0);
-	}
+	// All fallible setup happens BEFORE the bookkeeping is registered: a
+	// failure here must not leave the model reported as "downloading"
+	// forever (which would block re-download and delete until restart).
+	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
+
 	// This download gets its own cancel token, fully independent of the
 	// generation token - chatting must never kill a download and vice versa.
-	let cancel = Arc::new(AtomicBool::new(false));
-	state
-		.download_cancels
-		.lock()
-		.unwrap_or_else(|e| e.into_inner())
-		.insert(model_id.clone(), cancel.clone());
-
-	std::fs::create_dir_all(state.models_dir()).map_err(|e| e.to_string())?;
+	let cancel = register_download(&state, &model_id)?;
+	// The guard exists before the spawn, so nothing between registration
+	// and the spawned task can leak the bookkeeping entries.
+	let guard = DownloadGuard {
+		app: app.clone(),
+		model_id: model_id.clone(),
+	};
 
 	let app_handle = app.clone();
 	let dest = state.model_path(&spec);
@@ -148,10 +170,7 @@ pub async fn download_model(
 	let hf_token = AiSettings::load(&state.db).hf_token;
 
 	tauri::async_runtime::spawn(async move {
-		let _guard = DownloadGuard {
-			app: app_handle.clone(),
-			model_id: model_id.clone(),
-		};
+		let _guard = guard;
 		{
 			let state = app_handle.state::<AppState>();
 			let model_id = model_id.clone();
@@ -352,4 +371,63 @@ pub async fn activate_model(
 		}
 	});
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{register_download, unregister_download};
+	use crate::AppState;
+	use std::sync::atomic::Ordering;
+
+	fn temp_state(name: &str) -> AppState {
+		let dir = std::env::temp_dir().join(format!(
+			"brainstory-dl-bookkeeping-{name}-{}",
+			uuid::Uuid::new_v4()
+		));
+		std::fs::create_dir_all(&dir).expect("make temp dir");
+		let db = crate::db::Db::open(&dir.join("test.db")).expect("open test db");
+		AppState::new(db, dir)
+	}
+
+	/// A download that ends (or never really starts) must release its slot,
+	/// or the model is stuck as "downloading" until app restart.
+	#[test]
+	fn registration_is_atomic_and_cleanup_releases_the_slot() {
+		let state = temp_state("slot");
+		let cancel = register_download(&state, "m").expect("first registration wins");
+		cancel.store(true, Ordering::Relaxed);
+
+		// both maps carry the entry, sharing the same cancel token
+		assert!(state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.contains_key("m"));
+		let token = state
+			.download_cancels
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.get("m")
+			.cloned()
+			.expect("cancel token registered alongside progress");
+		assert!(token.load(Ordering::Relaxed));
+
+		// a second registration while the first holds the slot is refused
+		assert!(register_download(&state, "m").is_err());
+
+		// once the guard's cleanup runs, the slot is reusable
+		unregister_download(&state, "m");
+		assert!(!state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.contains_key("m"));
+		assert!(state
+			.download_cancels
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.get("m")
+			.is_none());
+		assert!(register_download(&state, "m").is_ok());
+	}
 }
