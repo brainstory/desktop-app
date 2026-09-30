@@ -424,9 +424,12 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 		if !dock {
 			// Resigning the regular activation policy can bounce focus to
 			// Finder; take it back so the app stays front and center.
-			let mtm =
-				objc2::MainThreadMarker::new().expect("apply_presence must run on the main thread");
-			objc2_app_kit::NSApplication::sharedApplication(mtm).activate();
+			match objc2::MainThreadMarker::new() {
+				Some(mtm) => {
+					objc2_app_kit::NSApplication::sharedApplication(mtm).activate();
+				}
+				None => log::warn!("apply_presence ran off the main thread; not re-activating"),
+			}
 		}
 	}
 	#[cfg(not(target_os = "macos"))]
@@ -442,8 +445,11 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 /// Terminate without running C++ static destructors. whisper.cpp and
 /// llama.cpp each vendor a ggml copy; their atexit teardown aborts
 /// (SIGABRT, the macOS "crashed" dialog). SQLite is WAL-durable, so
-/// skipping finalization is safe.
+/// skipping finalization is safe. The log is flushed first: _exit skips
+/// the Rust runtime teardown that would otherwise drain the buffer, and
+/// the tail of the log file is usually the interesting part.
 pub fn force_exit() -> ! {
+	log::logger().flush();
 	unsafe { libc::_exit(0) }
 }
 
