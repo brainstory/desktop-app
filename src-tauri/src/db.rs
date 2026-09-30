@@ -144,6 +144,38 @@ const BASELINE_SCHEMA: &str = "
 /// make step 1 a no-op for its tables).
 const SCHEMA_VERSION: i64 = 4;
 
+/// Everything needed to insert one idea row. Replaces a 13-parameter
+/// positional signature where every argument was a bare &str/Option.
+#[derive(Default)]
+pub struct NewIdea<'a> {
+	pub id: &'a str,
+	pub title: &'a str,
+	pub idea_type: &'a str,
+	pub result: &'a str,
+	pub structured_result: Option<&'a serde_json::Value>,
+	pub transcript: &'a [ChatMessage],
+	pub metadata: &'a serde_json::Value,
+	pub parent_idea_id: Option<&'a str>,
+	pub log_id: Option<&'a str>,
+	pub creator_name: Option<&'a str>,
+	pub creator_email: Option<&'a str>,
+	pub share_id: Option<&'a str>,
+	/// overrides the timestamp (imports keep their original date)
+	pub created_at: Option<&'a str>,
+	pub imported: bool,
+}
+
+impl<'a> NewIdea<'a> {
+	/// The share-file variant: keeps `created_at`, never counts toward
+	/// the importer's own activity.
+	pub fn imported(idea: NewIdea<'a>) -> Self {
+		Self {
+			imported: true,
+			..idea
+		}
+	}
+}
+
 impl Db {
 	pub fn open(path: &Path) -> Result<Self, OpenError> {
 		let mut conn = Connection::open(path)?;
@@ -408,32 +440,16 @@ impl Db {
 	const IDEA_COLS: &'static str =
 		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";
 
-	#[allow(clippy::too_many_arguments)]
-	fn insert_idea_tx(
-		conn: &Connection,
-		id: &str,
-		title: &str,
-		idea_type: &str,
-		result: &str,
-		structured_result: Option<&serde_json::Value>,
-		transcript: &[ChatMessage],
-		metadata: &serde_json::Value,
-		parent_idea_id: Option<&str>,
-		log_id: Option<&str>,
-		creator_name: Option<&str>,
-		creator_email: Option<&str>,
-		share_id: Option<&str>,
-		created_at: Option<&str>,
-		imported: bool,
-	) -> Result<(), String> {
-		let transcript_json = serde_json::to_string(transcript).unwrap_or_else(|_| "[]".into());
-		let structured_json = structured_result.map(|v| v.to_string());
+	fn insert_idea_tx(conn: &Connection, idea: NewIdea<'_>) -> Result<(), String> {
+		let transcript_json =
+			serde_json::to_string(idea.transcript).unwrap_or_else(|_| "[]".into());
+		let structured_json = idea.structured_result.map(|v| v.to_string());
 		let now = now_iso();
-		let created_at = created_at.unwrap_or(&now);
+		let created_at = idea.created_at.unwrap_or(&now);
 		// Imported rows keep their original timestamp but never count as
 		// the importer's own activity: an empty local_date excludes them
 		// from the streak and has_activity_today queries.
-		let local_date = if imported {
+		let local_date = if idea.imported {
 			String::new()
 		} else {
 			local_date_for(created_at)
@@ -442,18 +458,18 @@ impl Db {
 			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at, local_date)
 			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14)",
 			params![
-				id,
-				title,
-				idea_type,
-				result,
+				idea.id,
+				idea.title,
+				idea.idea_type,
+				idea.result,
 				structured_json,
 				transcript_json,
-				metadata.to_string(),
-				parent_idea_id,
-				log_id,
-				creator_name,
-				creator_email,
-				share_id,
+				idea.metadata.to_string(),
+				idea.parent_idea_id,
+				idea.log_id,
+				idea.creator_name,
+				idea.creator_email,
+				idea.share_id,
 				created_at,
 				local_date,
 			],
@@ -462,104 +478,15 @@ impl Db {
 		Ok(())
 	}
 
-	/// Insert an idea. `created_at` overrides the timestamp (used when
-	/// importing shared ideas so they keep their original date). A
-	/// `parent_idea_id` is verified inside the same transaction, so a
-	/// concurrent delete can't slip an orphan through.
-	#[allow(clippy::too_many_arguments)]
-	pub fn insert_idea(
-		&self,
-		id: &str,
-		title: &str,
-		idea_type: &str,
-		result: &str,
-		structured_result: Option<&serde_json::Value>,
-		transcript: &[ChatMessage],
-		metadata: &serde_json::Value,
-		parent_idea_id: Option<&str>,
-		log_id: Option<&str>,
-		creator_name: Option<&str>,
-		creator_email: Option<&str>,
-		share_id: Option<&str>,
-		created_at: Option<&str>,
-	) -> Result<(), String> {
-		self.insert_idea_internal(
-			id,
-			title,
-			idea_type,
-			result,
-			structured_result,
-			transcript,
-			metadata,
-			parent_idea_id,
-			log_id,
-			creator_name,
-			creator_email,
-			share_id,
-			created_at,
-			false,
-		)
-	}
-
-	/// Insert an idea imported from a share file: like insert_idea, but
-	/// the row never counts toward the importer's own activity (its
-	/// local_date stays empty, excluding it from streak/has_activity
-	/// queries) because the activity happened on the author's machine.
-	#[allow(clippy::too_many_arguments)]
-	pub fn insert_imported_idea(
-		&self,
-		id: &str,
-		title: &str,
-		idea_type: &str,
-		result: &str,
-		structured_result: Option<&serde_json::Value>,
-		transcript: &[ChatMessage],
-		metadata: &serde_json::Value,
-		parent_idea_id: Option<&str>,
-		log_id: Option<&str>,
-		creator_name: Option<&str>,
-		creator_email: Option<&str>,
-		share_id: Option<&str>,
-		created_at: Option<&str>,
-	) -> Result<(), String> {
-		self.insert_idea_internal(
-			id,
-			title,
-			idea_type,
-			result,
-			structured_result,
-			transcript,
-			metadata,
-			parent_idea_id,
-			log_id,
-			creator_name,
-			creator_email,
-			share_id,
-			created_at,
-			true,
-		)
-	}
-
-	#[allow(clippy::too_many_arguments)]
-	fn insert_idea_internal(
-		&self,
-		id: &str,
-		title: &str,
-		idea_type: &str,
-		result: &str,
-		structured_result: Option<&serde_json::Value>,
-		transcript: &[ChatMessage],
-		metadata: &serde_json::Value,
-		parent_idea_id: Option<&str>,
-		log_id: Option<&str>,
-		creator_name: Option<&str>,
-		creator_email: Option<&str>,
-		share_id: Option<&str>,
-		created_at: Option<&str>,
-		imported: bool,
-	) -> Result<(), String> {
+	/// Insert an idea. A `parent_idea_id` is verified inside the same
+	/// transaction, so a concurrent delete can't slip an orphan through.
+	/// `NewIdea::imported()` builds the share-file variant, whose row
+	/// never counts toward the importer's own activity (its local_date
+	/// stays empty, excluding it from streak/has_activity queries)
+	/// because the activity happened on the author's machine.
+	pub fn insert_idea(&self, idea: NewIdea<'_>) -> Result<(), String> {
 		self.with_tx(|conn| {
-			if let Some(parent_id) = parent_idea_id {
+			if let Some(parent_id) = idea.parent_idea_id {
 				let exists: i64 = conn
 					.query_row(
 						"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
@@ -571,23 +498,7 @@ impl Db {
 					return Err(format!("parent idea {parent_id} not found"));
 				}
 			}
-			Self::insert_idea_tx(
-				conn,
-				id,
-				title,
-				idea_type,
-				result,
-				structured_result,
-				transcript,
-				metadata,
-				parent_idea_id,
-				log_id,
-				creator_name,
-				creator_email,
-				share_id,
-				created_at,
-				imported,
-			)
+			Self::insert_idea_tx(conn, idea)
 		})
 	}
 
@@ -607,20 +518,15 @@ impl Db {
 		self.with_tx(|conn| {
 			Self::insert_idea_tx(
 				conn,
-				id,
-				title,
-				"daily_intent",
-				result,
-				None,
-				transcript,
-				metadata,
-				None,
-				None,
-				None,
-				None,
-				None,
-				None,
-				false,
+				NewIdea {
+					id,
+					title,
+					idea_type: "daily_intent",
+					result,
+					transcript,
+					metadata,
+					..Default::default()
+				},
 			)?;
 			conn.execute(
 				// A new intent for the day replaces the old one as a fresh
@@ -1135,40 +1041,28 @@ mod tests {
 			.to_string();
 		// an imported idea dated yesterday must not feed the streak: the
 		// activity happened on the author's machine, not here
-		db.insert_imported_idea(
-			"imp",
-			"Imported",
-			"original",
-			"r",
-			None,
-			&[],
-			&serde_json::json!({ "imported": true }),
-			None,
-			None,
-			Some("Ada"),
-			None,
-			None,
-			Some(&yesterday),
-		)
+		db.insert_idea(NewIdea::imported(NewIdea {
+			id: "imp",
+			title: "Imported",
+			idea_type: "original",
+			result: "r",
+			metadata: &serde_json::json!({ "imported": true }),
+			creator_name: Some("Ada"),
+			created_at: Some(&yesterday),
+			..Default::default()
+		}))
 		.expect("insert imported");
 		assert_eq!(db.get_daily_status().streak, 0, "import must not count");
 		assert!(!db.has_activity_today());
 		// a local idea dated today still counts normally
-		db.insert_idea(
-			"mine",
-			"Mine",
-			"original",
-			"r",
-			None,
-			&[],
-			&serde_json::json!({}),
-			None,
-			None,
-			None,
-			None,
-			None,
-			None,
-		)
+		db.insert_idea(NewIdea {
+			id: "mine",
+			title: "Mine",
+			idea_type: "original",
+			result: "r",
+			metadata: &serde_json::json!({}),
+			..Default::default()
+		})
 		.expect("insert local");
 		assert!(db.has_activity_today());
 	}
@@ -1325,43 +1219,39 @@ mod tests {
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let empty: Vec<ChatMessage> = vec![];
-		db.insert_idea(
-			"parent", "P", "original", "r", None, &empty, &meta, None, None, None, None, None, None,
-		)
+		db.insert_idea(NewIdea {
+			id: "parent",
+			title: "P",
+			idea_type: "original",
+			result: "r",
+			transcript: &empty,
+			metadata: &meta,
+			..Default::default()
+		})
 		.unwrap();
-		db.insert_idea(
-			"child",
-			"C",
-			"feedback",
-			"r",
-			None,
-			&empty,
-			&meta,
-			Some("parent"),
-			None,
-			None,
-			None,
-			None,
-			None,
-		)
+		db.insert_idea(NewIdea {
+			id: "child",
+			title: "C",
+			idea_type: "feedback",
+			result: "r",
+			transcript: &empty,
+			metadata: &meta,
+			parent_idea_id: Some("parent"),
+			..Default::default()
+		})
 		.unwrap();
 		// a child of the child: the old delete-children-only logic left
 		// this row orphaned in the library
-		db.insert_idea(
-			"grandchild",
-			"G",
-			"feedback",
-			"r",
-			None,
-			&empty,
-			&meta,
-			Some("child"),
-			None,
-			None,
-			None,
-			None,
-			None,
-		)
+		db.insert_idea(NewIdea {
+			id: "grandchild",
+			title: "G",
+			idea_type: "feedback",
+			result: "r",
+			transcript: &empty,
+			metadata: &meta,
+			parent_idea_id: Some("child"),
+			..Default::default()
+		})
 		.unwrap();
 		let deleted = db.delete_idea("parent").unwrap();
 		assert!(deleted);
@@ -1377,21 +1267,15 @@ mod tests {
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
 		let err = db
-			.insert_idea(
-				"kid",
-				"K",
-				"feedback",
-				"r",
-				None,
-				&[],
-				&meta,
-				Some("ghost"),
-				None,
-				None,
-				None,
-				None,
-				None,
-			)
+			.insert_idea(NewIdea {
+				id: "kid",
+				title: "K",
+				idea_type: "feedback",
+				result: "r",
+				metadata: &meta,
+				parent_idea_id: Some("ghost"),
+				..Default::default()
+			})
 			.expect_err("missing parent must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
 		assert!(db.get_idea("kid").unwrap().is_none(), "nothing inserted");
@@ -1437,21 +1321,14 @@ mod tests {
 		let (path, _dir) = temp_db_path();
 		let db = Db::open(&path).expect("open");
 		let meta = serde_json::json!({});
-		db.insert_idea(
-			"t1",
-			"The Title",
-			"original",
-			"r",
-			None,
-			&[],
-			&meta,
-			None,
-			None,
-			None,
-			None,
-			None,
-			None,
-		)
+		db.insert_idea(NewIdea {
+			id: "t1",
+			title: "The Title",
+			idea_type: "original",
+			result: "r",
+			metadata: &meta,
+			..Default::default()
+		})
 		.unwrap();
 		assert_eq!(
 			db.get_idea_title("t1").unwrap().as_deref(),
@@ -1473,21 +1350,15 @@ mod coverage_tests {
 	}
 
 	fn idea(db: &Db, id: &str, created_at: &str) {
-		db.insert_idea(
+		db.insert_idea(NewIdea {
 			id,
-			id,
-			"original",
-			"r",
-			None,
-			&[],
-			&json!({}),
-			None,
-			None,
-			None,
-			None,
-			None,
-			Some(created_at),
-		)
+			title: id,
+			idea_type: "original",
+			result: "r",
+			metadata: &json!({}),
+			created_at: Some(created_at),
+			..Default::default()
+		})
 		.expect("insert");
 	}
 
@@ -1514,37 +1385,27 @@ mod coverage_tests {
 		let (db, _path) = db();
 		idea(&db, "old", "2026-01-01T00:00:00");
 		idea(&db, "new", "2026-02-01T00:00:00");
-		db.insert_idea(
-			"c1",
-			"C1",
-			"feedback",
-			"r",
-			None,
-			&[],
-			&json!({}),
-			Some("old"),
-			None,
-			None,
-			None,
-			None,
-			Some("2026-01-02T00:00:00"),
-		)
+		db.insert_idea(NewIdea {
+			id: "c1",
+			title: "C1",
+			idea_type: "feedback",
+			result: "r",
+			metadata: &json!({}),
+			parent_idea_id: Some("old"),
+			created_at: Some("2026-01-02T00:00:00"),
+			..Default::default()
+		})
 		.unwrap();
-		db.insert_idea(
-			"c2",
-			"C2",
-			"feedback",
-			"r",
-			None,
-			&[],
-			&json!({}),
-			Some("old"),
-			None,
-			None,
-			None,
-			None,
-			Some("2026-01-03T00:00:00"),
-		)
+		db.insert_idea(NewIdea {
+			id: "c2",
+			title: "C2",
+			idea_type: "feedback",
+			result: "r",
+			metadata: &json!({}),
+			parent_idea_id: Some("old"),
+			created_at: Some("2026-01-03T00:00:00"),
+			..Default::default()
+		})
 		.unwrap();
 		let ideas = db.list_ideas().unwrap();
 		// top level: newest first, children grouped (not returned as roots)

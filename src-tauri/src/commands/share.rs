@@ -382,23 +382,19 @@ fn import_parsed(
 			} else {
 				share_id
 			};
-			// insert_imported_idea keeps the original timestamp but does
-			// not count the row as the importer's own activity.
-			db.insert_imported_idea(
-				&id,
-				&title,
-				&idea_type,
-				&result,
-				None,
-				&[],
-				&json!({ "imported": true }),
-				None,
-				None,
-				Some(&author),
-				None,
-				Some(&share_id),
-				created_at.as_deref(),
-			)?;
+			// imported: keeps the original timestamp but does not count
+			// the row as the importer's own activity
+			db.insert_idea(crate::db::NewIdea::imported(crate::db::NewIdea {
+				id: &id,
+				title: &title,
+				idea_type: &idea_type,
+				result: &result,
+				metadata: &json!({ "imported": true }),
+				creator_name: Some(&author),
+				share_id: Some(&share_id),
+				created_at: created_at.as_deref(),
+				..Default::default()
+			}))?;
 			Ok(json!({
 				"cancelled": false,
 				"kind": "idea",
@@ -471,21 +467,18 @@ fn import_parsed(
 				}
 			}
 			let id = uuid::Uuid::new_v4().to_string();
-			db.insert_imported_idea(
-				&id,
-				&title,
-				"feedback",
-				&result,
-				structured_result.as_ref(),
-				&[],
-				&json!({ "imported": true }),
-				Some(&parent.id),
-				None,
-				Some(&author),
-				None,
-				None,
-				created_at.as_deref(),
-			)?;
+			db.insert_idea(crate::db::NewIdea::imported(crate::db::NewIdea {
+				id: &id,
+				title: &title,
+				idea_type: "feedback",
+				result: &result,
+				structured_result: structured_result.as_ref(),
+				metadata: &json!({ "imported": true }),
+				parent_idea_id: Some(&parent.id),
+				creator_name: Some(&author),
+				created_at: created_at.as_deref(),
+				..Default::default()
+			}))?;
 			// Imported feedback arrives unread so it surfaces in the UI.
 			db.set_idea_unread(&id, true)?;
 			Ok(json!({
@@ -541,21 +534,15 @@ mod tests {
 	}
 
 	fn local_idea(db: &Db, id: &str, title: &str, share_id: Option<&str>) {
-		db.insert_idea(
+		db.insert_idea(crate::db::NewIdea {
 			id,
 			title,
-			"original",
-			"r",
-			None,
-			&[],
-			&serde_json::json!({}),
-			None,
-			None,
-			None,
-			None,
+			idea_type: "original",
+			result: "r",
+			metadata: &serde_json::json!({}),
 			share_id,
-			None,
-		)
+			..Default::default()
+		})
 		.expect("seed local idea");
 	}
 

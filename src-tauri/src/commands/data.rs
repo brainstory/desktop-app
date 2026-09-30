@@ -88,21 +88,18 @@ pub async fn create_idea(
 			&idea_metadata.unwrap_or_else(|| serde_json::json!({})),
 		)?;
 	} else {
-		state.db.insert_idea(
-			&id,
-			&title,
-			&idea_type,
-			&result,
-			None,
-			&transcript,
-			&idea_metadata.unwrap_or_else(|| serde_json::json!({})),
-			parent_idea_id.as_deref(),
-			log_id.as_deref(),
-			None,
-			None,
-			None,
-			None,
-		)?;
+		state.db.insert_idea(crate::db::NewIdea {
+			id: &id,
+			title: &title,
+			idea_type: &idea_type,
+			result: &result,
+			structured_result: None,
+			transcript: &transcript,
+			metadata: &idea_metadata.unwrap_or_else(|| serde_json::json!({})),
+			parent_idea_id: parent_idea_id.as_deref(),
+			log_id: log_id.as_deref(),
+			..Default::default()
+		})?;
 	}
 
 	Ok(serde_json::json!({ "id": id }))
