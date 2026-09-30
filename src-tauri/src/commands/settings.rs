@@ -85,12 +85,16 @@ pub async fn save_user_settings(
 	enabled_log_question_ids: Option<Vec<i64>>,
 	notifications: Option<Vec<serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
+	// Validate everything first and collect the writes, so the settings
+	// land in ONE transaction (a failure can no longer persist half the
+	// form) and side effects only run once persisted.
+	let mut kv: Vec<(&str, String)> = Vec::new();
 	if let Some(user) = &user {
 		if let Some(name) = user["name"].as_str() {
-			state.db.set_setting("user_name", name)?;
+			kv.push(("user_name", name.to_string()));
 		}
 		if let Some(timezone) = user["timezone"].as_str() {
-			state.db.set_setting("user_timezone", timezone)?;
+			kv.push(("user_timezone", timezone.to_string()));
 		}
 	}
 
@@ -105,12 +109,13 @@ pub async fn save_user_settings(
 		if ids.is_empty() {
 			return Err("at least one log question must be enabled".into());
 		}
-		state.db.set_setting(
+		kv.push((
 			"enabled_log_question_ids",
-			&serde_json::to_string(&ids).expect("serializing Vec<i64> cannot fail"),
-		)?;
+			serde_json::to_string(&ids).expect("serializing Vec<i64> cannot fail"),
+		));
 	}
 
+	let mut reminder_enabled_after: Option<bool> = None;
 	if let Some(notifications) = &notifications {
 		for notification in notifications {
 			let title = notification["title"].as_str().unwrap_or("");
@@ -119,17 +124,29 @@ pub async fn save_user_settings(
 					if !valid_reminder_time(value) {
 						return Err(format!("invalid reminder time '{value}' (expected HH:MM)"));
 					}
-					state.db.set_setting("reminder_time", value)?;
+					kv.push(("reminder_time", value.to_string()));
 				}
 				if let Some(enabled) = notification["enabled"].as_bool() {
-					state
-						.db
-						.set_setting("reminder_enabled", if enabled { "true" } else { "false" })?;
-					// keep the tray menu checkmark in sync with the setting
-					crate::sync_tray_reminder_check(enabled);
+					kv.push((
+						"reminder_enabled",
+						if enabled {
+							"true".into()
+						} else {
+							"false".into()
+						},
+					));
+					reminder_enabled_after = Some(enabled);
 				}
 			}
 		}
+	}
+
+	if !kv.is_empty() {
+		state.db.set_settings(&kv)?;
+	}
+	if let Some(enabled) = reminder_enabled_after {
+		// keep the tray menu checkmark in sync with the persisted setting
+		crate::sync_tray_reminder_check(enabled);
 	}
 
 	Ok(serde_json::json!({ "id": "settings" }))
