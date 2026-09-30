@@ -23,11 +23,23 @@ export default function UpdaterBanner() {
 
 	useEffect(() => {
 		if (!isTauri) return;
-		const last = Number(localStorage.getItem(THROTTLE_KEY) ?? 0);
+		let last = 0;
+		try {
+			last = Number(localStorage.getItem(THROTTLE_KEY) ?? 0);
+		} catch {
+			// storage unavailable: fall through and check unthrottled
+		}
 		if (Date.now() - last < THROTTLE_MS) return;
-		localStorage.setItem(THROTTLE_KEY, String(Date.now()));
 		check()
 			.then((u) => {
+				// Throttle only after a check completed: writing the key
+				// before check() meant an offline failure suppressed update
+				// checks for the next 6 hours.
+				try {
+					localStorage.setItem(THROTTLE_KEY, String(Date.now()));
+				} catch {
+					// ignore
+				}
 				if (u) {
 					setUpdate(u);
 					// entering the "available" phase is what makes the banner
@@ -35,7 +47,7 @@ export default function UpdaterBanner() {
 					setPhase("available");
 				}
 			})
-			.catch((err) => console.log("update check failed", err));
+			.catch((err) => console.error("update check failed", err));
 	}, []);
 
 	if (!isTauri || !update || phase === null) return null;
