@@ -1,4 +1,4 @@
-import { useState, useId } from "react";
+import { useRef, useState, useId } from "react";
 import { normalizeApiError } from "@helpers/helpers";
 
 import { Card } from "./ProfileCards";
@@ -17,17 +17,32 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 	// optimistic flip instead of leaving the UI disagreeing with reality.
 	const [dock, setDock] = useState(presence.dock);
 	const [tray, setTray] = useState(presence.tray);
+	// Quick toggles overlap: the UI stays optimistic while any save is in
+	// flight, then settles on the newest save the backend accepted. A late
+	// failure of an older save must not undo a newer one that landed.
+	const seqRef = useRef(0);
+	const pendingRef = useRef(0);
+	const confirmedRef = useRef({ seq: 0, dock: presence.dock, tray: presence.tray });
 
 	const save = (nextDock: boolean, nextTray: boolean) => {
-		const prev = { dock, tray };
+		const seq = ++seqRef.current;
+		pendingRef.current += 1;
 		setDock(nextDock);
 		setTray(nextTray);
 		setAppPresenceApi(nextDock, nextTray)
-			.then(() => openSnackbar(true, "Saved"))
-			.catch((e) => {
-				setDock(prev.dock);
-				setTray(prev.tray);
-				openSnackbar(false, normalizeApiError(e));
+			.then(() => {
+				if (seq > confirmedRef.current.seq) {
+					confirmedRef.current = { seq, dock: nextDock, tray: nextTray };
+				}
+				openSnackbar(true, "Saved");
+			})
+			.catch((e) => openSnackbar(false, normalizeApiError(e)))
+			.finally(() => {
+				pendingRef.current -= 1;
+				if (pendingRef.current === 0) {
+					setDock(confirmedRef.current.dock);
+					setTray(confirmedRef.current.tray);
+				}
 			});
 	};
 
