@@ -4,7 +4,7 @@
  * Extracted from ChatSection.
  */
 
-import { useCallback, useReducer } from "react";
+import { useCallback, useReducer, useRef } from "react";
 import type { ChatMessage } from "@src/types";
 import type { ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
@@ -70,6 +70,9 @@ export interface ChatSessionState {
 	readyToSave: boolean;
 	/** the summary stream finished: the result text is final */
 	resultComplete: boolean;
+	/** saving the finished summary failed (the summary is kept so the
+	 * save can be retried) */
+	resultSaveError: string | null;
 }
 
 /** The events that move the session between CONVERSATION_STATE values. */
@@ -85,7 +88,8 @@ export type ChatSessionEvent =
 	| { type: "resultRequested" }
 	| { type: "resultStreamed" }
 	| { type: "resultSaved" }
-	| { type: "resultSaveFailed" }
+	| { type: "resultSaveFailed"; message?: string }
+	| { type: "resultSaveRetried" }
 	| { type: "resultFailed" };
 
 export const initialChatSessionState: ChatSessionState = {
@@ -93,7 +97,8 @@ export const initialChatSessionState: ChatSessionState = {
 	isUserResendRequired: false,
 	inappropriateUserTranscript: null,
 	readyToSave: false,
-	resultComplete: false
+	resultComplete: false,
+	resultSaveError: null
 };
 
 export function chatSessionReducer(
@@ -137,14 +142,21 @@ export function chatSessionReducer(
 			return {
 				...state,
 				conversationState: CONVERSATION_STATE.FinishWithResult,
-				resultComplete: false
+				resultComplete: false,
+				resultSaveError: null
 			};
 		case "resultStreamed":
 			return { ...state, resultComplete: true };
 		case "resultSaved":
-			return { ...state, readyToSave: true };
+			return { ...state, readyToSave: true, resultSaveError: null };
 		case "resultSaveFailed":
-			return { ...state, conversationState: CONVERSATION_STATE.Idle };
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.Idle,
+				resultSaveError: event.message ?? "Could not save your summary."
+			};
+		case "resultSaveRetried":
+			return { ...state, resultSaveError: null };
 		case "resultFailed":
 			return { ...state, conversationState: CONVERSATION_STATE.Idle, resultComplete: false };
 	}
@@ -222,6 +234,39 @@ export function useChatSession(
 		}
 	}, [currConversation, setCurrConversation, parentIdea, chatType, onError, unmountSignal]);
 
+	/** the generated summary whose save failed, kept for a retry */
+	const unsavedResultRef = useRef<{
+		ideaId: string;
+		conversation: ChatMessage[];
+		result: string;
+		structuredResult: unknown;
+	} | null>(null);
+
+	const persistResult = async (job: NonNullable<typeof unsavedResultRef.current>) => {
+		unsavedResultRef.current = job;
+		try {
+			await saveResult(job.ideaId, job.conversation, job.result, job.structuredResult);
+		} catch (e) {
+			// the finished-result view replaces the chat (and its error
+			// banner), so the failure is shown there, with a retry
+			dispatch({ type: "resultSaveFailed", message: normalizeApiError(e) });
+			return;
+		}
+		unsavedResultRef.current = null;
+		dispatch({ type: "resultSaved" });
+		if (fromGuideParam) {
+			markGettingStartedDone();
+		}
+	};
+
+	/** Retry saving a generated summary after a failed save. */
+	const retrySaveResult = () => {
+		const job = unsavedResultRef.current;
+		if (!job) return;
+		dispatch({ type: "resultSaveRetried" });
+		void persistResult(job);
+	};
+
 	/** Generate idea summary result */
 	const handleGetResult = () => {
 		if (!ideaId) {
@@ -235,17 +280,12 @@ export function useChatSession(
 			structuredResult: unknown
 		): Promise<void> => {
 			dispatch({ type: "resultStreamed" });
-			try {
-				await saveResult(ideaId, currConversation, result, structuredResult);
-				dispatch({ type: "resultSaved" });
-			} catch (e) {
-				onError(`Could not save your summary: ${normalizeApiError(e)}`);
-				dispatch({ type: "resultSaveFailed" });
-				return;
-			}
-			if (fromGuideParam) {
-				markGettingStartedDone();
-			}
+			await persistResult({
+				ideaId,
+				conversation: currConversation,
+				result,
+				structuredResult
+			});
 		};
 		handleStreamResult(
 			() =>
@@ -285,6 +325,7 @@ export function useChatSession(
 		dispatch,
 		handleGetResponse,
 		handleGetResult,
+		retrySaveResult,
 		askADifferentQuestion
 	};
 }

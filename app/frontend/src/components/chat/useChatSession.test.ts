@@ -174,6 +174,37 @@ describe("useChatSession", () => {
 			expect(result.current.resultComplete).toBe(true);
 			expect(result.current.readyToSave).toBe(true);
 		});
+
+		it("keeps the summary after a failed save and lets the user retry it", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			const saveResult = vi
+				.fn<ChatSessionOptions["saveResult"]>()
+				.mockRejectedValueOnce("disk full")
+				.mockResolvedValueOnce(undefined);
+			const { result, opts } = renderSession([q1, a1], { saveResult });
+			act(() => result.current.handleGetResult());
+			await act(async () => {
+				finish({ response: "# Summary", structured_result: null });
+				await Promise.resolve();
+			});
+			expect(result.current.resultSaveError).toBe("disk full");
+			expect(result.current.readyToSave).toBe(false);
+			// the summary stays set: the result view shows the error there
+			expect(opts.setResult).toHaveBeenLastCalledWith("# Summary");
+			expect(opts.setResult).not.toHaveBeenCalledWith("");
+
+			await act(async () => {
+				result.current.retrySaveResult();
+				await Promise.resolve();
+			});
+			expect(saveResult).toHaveBeenCalledTimes(2);
+			expect(saveResult).toHaveBeenLastCalledWith("idea-1", [q1, a1], "# Summary", null);
+			expect(result.current.resultSaveError).toBeNull();
+			expect(result.current.readyToSave).toBe(true);
+		});
 	});
 
 	describe("cancelling the final summary", () => {

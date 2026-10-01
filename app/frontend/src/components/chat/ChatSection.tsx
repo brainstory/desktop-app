@@ -129,6 +129,8 @@ export function ChatSection({
 				result={result}
 				readyForFinish={session.readyToSave}
 				isComplete={session.resultComplete}
+				saveError={session.resultSaveError}
+				onRetrySave={session.retrySaveResult}
 			/>
 		);
 	} else if (fatalError === "draft-not-found") {

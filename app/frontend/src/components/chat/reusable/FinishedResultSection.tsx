@@ -7,13 +7,18 @@ interface FinishedResultSectionProps {
 	/** the summary stream finished (render it as markdown) */
 	isComplete: boolean;
 	ideaId: string | undefined;
+	/** saving the summary failed: show the error and a retry */
+	saveError?: string | null;
+	onRetrySave?: () => void;
 }
 
 export default function FinishedResultSection({
 	result,
 	readyForFinish,
 	isComplete,
-	ideaId
+	ideaId,
+	saveError,
+	onRetrySave
 }: FinishedResultSectionProps) {
 	return (
 		<section>
@@ -22,7 +27,12 @@ export default function FinishedResultSection({
 					<GeneratingResult summary={result} isComplete={isComplete} />
 				</div>
 			</div>
-			<StickyLoadingSection isFinishedGenerating={readyForFinish} ideaId={ideaId} />
+			<StickyLoadingSection
+				isFinishedGenerating={readyForFinish}
+				ideaId={ideaId}
+				saveError={saveError}
+				onRetrySave={onRetrySave}
+			/>
 		</section>
 	);
 }

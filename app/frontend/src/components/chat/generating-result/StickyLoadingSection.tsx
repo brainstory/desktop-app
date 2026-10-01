@@ -7,15 +7,30 @@ const headingStyle = "mb-4 lg:mb-5 font-bold text-stone-900 text-center text-xl 
 interface StickyLoadingSectionProps {
 	isFinishedGenerating: boolean;
 	ideaId: string | undefined;
+	/** saving the generated summary failed */
+	saveError?: string | null;
+	onRetrySave?: () => void;
 }
 
 export default function StickyLoadingSection({
 	isFinishedGenerating,
-	ideaId
+	ideaId,
+	saveError = null,
+	onRetrySave
 }: StickyLoadingSectionProps) {
 	return (
 		<div className="sticky bottom-0 bg-white border-t px-7 py-9">
-			{isFinishedGenerating ? (
+			{saveError !== null ? (
+				<div role="alert" className="text-center">
+					<h1 className={headingStyle}>Couldn&rsquo;t save your summary</h1>
+					<p className="text-stone-700 mb-4">
+						{saveError} Your summary is still here &mdash; try saving it again.
+					</p>
+					<div className="flex justify-center">
+						<BorderedButton onClick={onRetrySave}>Try saving again</BorderedButton>
+					</div>
+				</div>
+			) : isFinishedGenerating ? (
 				<>
 					<h1 className={headingStyle}>
 						<ion-icon
