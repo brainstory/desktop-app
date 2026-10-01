@@ -16,7 +16,7 @@ interface EmojiItemProps {
 export default function EmojiItem({
 	labels = [],
 	creatorEmail,
-	onReactionClick = () => null,
+	onReactionClick,
 	isBlue = true,
 	labelsHasBorder = false,
 	creatorName = null,
@@ -24,10 +24,17 @@ export default function EmojiItem({
 }: EmojiItemProps) {
 	const avatarLetter = creatorName ? creatorName.charAt(0) : (creatorEmail || "?").charAt(0);
 
+	// Interactive only when there is something to do: inside an already
+	// clickable parent (the sidebar's feedback card button) it must be
+	// plain content - a button inside a button is invalid.
+	const Wrapper = onReactionClick ? "button" : "div";
+
 	return (
-		<button
+		<Wrapper
+			{...(onReactionClick
+				? { type: "button" as const, onClick: () => onReactionClick() }
+				: {})}
 			className={"flex flex-col items-center relative " + style}
-			onClick={() => onReactionClick()}
 		>
 			<div
 				className={`flex items-center ${cn(!labelsHasBorder && "p-1")} ${
@@ -54,6 +61,6 @@ export default function EmojiItem({
 					))}
 				</div>
 			</div>
-		</button>
+		</Wrapper>
 	);
 }
