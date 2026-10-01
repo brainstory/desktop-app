@@ -49,6 +49,11 @@ tokio = { version = "1", features = ["rt", "fs", "io-util", "sync", "time", "mac
 # whisper.cpp / ggml C++, and the binary's force_exit() workaround depends
 # on that C++'s teardown behavior. Let a deliberate upgrade change it.
 llama-cpp-2 = "=0.1.156"
+# The C++ actually lives in the -sys crate, which llama-cpp-2 only asks
+# for as ^0.1.x - pin it too, or a lockfile-only update can swap the
+# vendored llama.cpp/ggml underneath the pin above. Keep it equal to
+# llama-cpp-2's version.
+llama-cpp-sys-2 = "=0.1.156"
 hound = "3"
 
 encoding_rs = "0.8"
@@ -63,6 +68,9 @@ num_cpus = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "=0.16.0", features = ["metal"] }
+# whisper.cpp's C++ lives here; whisper-rs only asks for ^0.15 (see the
+# llama-cpp-sys-2 note above)
+whisper-rs-sys = "=0.15.0"
 objc2-app-kit = "0.3"
 objc2 = "0.6"
 # Pinned exactly: the crate ships a Swift bridge compiled by its build.rs;
@@ -73,6 +81,7 @@ speech = "=0.9.0"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = "=0.16.0"
+whisper-rs-sys = "=0.15.0"
 
 [profile.release]
 opt-level = 3

@@ -437,6 +437,7 @@ dependencies = [
  "keyring",
  "libc",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "log",
  "num_cpus",
  "objc2",
@@ -459,6 +460,7 @@ dependencies = [
  "tokio",
  "uuid",
  "whisper-rs",
+ "whisper-rs-sys",
 ]
 
 [[package]]
