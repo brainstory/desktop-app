@@ -626,6 +626,8 @@ pub struct ExternalLlm {
 impl ExternalLlm {
 	/// If no bytes arrive for this long, the endpoint is treated as stalled.
 	const CHUNK_IDLE_TIMEOUT_SECS: u64 = 90;
+	/// Overall budget for reading a (display-only) error body.
+	const ERROR_BODY_TIMEOUT_SECS: u64 = 30;
 	/// SSE events are tiny; a bigger buffer means the endpoint isn't
 	/// speaking SSE (e.g. CRLF-averse parser deadlock or an HTML error page).
 	const MAX_SSE_BUFFER: usize = 1_000_000;
@@ -700,7 +702,13 @@ impl ExternalLlm {
 		.map_err(|e| format!("request failed: {e}"))?;
 		if !response.status().is_success() {
 			let status = response.status();
-			let body = read_body_capped(response, 64 * 1024, Self::CHUNK_IDLE_TIMEOUT_SECS).await;
+			let body = read_body_capped(
+				response,
+				64 * 1024,
+				Self::CHUNK_IDLE_TIMEOUT_SECS,
+				Self::ERROR_BODY_TIMEOUT_SECS,
+			)
+			.await;
 			return Err(map_provider_error(status.as_u16(), &body));
 		}
 		let content_type = response
@@ -710,7 +718,13 @@ impl ExternalLlm {
 			.unwrap_or("")
 			.to_ascii_lowercase();
 		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
-			let body = read_body_capped(response, 64 * 1024, Self::CHUNK_IDLE_TIMEOUT_SECS).await;
+			let body = read_body_capped(
+				response,
+				64 * 1024,
+				Self::CHUNK_IDLE_TIMEOUT_SECS,
+				Self::ERROR_BODY_TIMEOUT_SECS,
+			)
+			.await;
 			return Err(format!(
 				"endpoint did not return an SSE stream (content-type {content_type}): {}",
 				truncate_body(&body)
@@ -768,23 +782,27 @@ impl ExternalLlm {
 	}
 }
 
-/// Read a response body with both a per-chunk idle deadline and a size
-/// cap, so a broken or hostile endpoint can neither hang the caller nor
-/// exhaust memory. Returns whatever arrived (lossy-decoded) until the
-/// cap, the stream end, or the stall; display-only bodies should use a
-/// small cap.
+/// Read a response body with a per-chunk idle deadline, an overall
+/// deadline and a size cap, so a broken or hostile endpoint can neither
+/// hang the caller (not even by trickling a byte just inside the idle
+/// window forever) nor exhaust memory. Returns whatever arrived
+/// (lossy-decoded) until the cap, the stream end, or a deadline;
+/// display-only bodies should use a small cap.
 pub(crate) async fn read_body_capped(
 	response: reqwest::Response,
 	cap: usize,
 	idle_timeout_secs: u64,
+	total_timeout_secs: u64,
 ) -> String {
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
 	let mut body: Vec<u8> = Vec::new();
 	let idle = std::time::Duration::from_secs(idle_timeout_secs);
+	let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(total_timeout_secs);
 	while body.len() < cap {
-		let chunk = match tokio::time::timeout(idle, stream.next()).await {
-			Err(_) => break, // stalled: keep what arrived so far
+		let wait_until = deadline.min(tokio::time::Instant::now() + idle);
+		let chunk = match tokio::time::timeout_at(wait_until, stream.next()).await {
+			Err(_) => break, // stalled or overdue: keep what arrived so far
 			Ok(Some(Ok(c))) => c,
 			Ok(Some(Err(_))) => break, // transport error: same
 			Ok(None) => break,         // stream end
@@ -930,7 +948,7 @@ mod tests {
 		}
 		let url = serve_raw(raw);
 		let response = reqwest::Client::new().get(&url).send().await.expect("send");
-		let body = read_body_capped(response, 64 * 1024, 10).await;
+		let body = read_body_capped(response, 64 * 1024, 10, 10).await;
 		assert_eq!(body.len(), 64 * 1024, "reading stops exactly at the cap");
 	}
 
@@ -941,12 +959,49 @@ mod tests {
 			serve_raw(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n".to_vec());
 		let response = reqwest::Client::new().get(&url).send().await.expect("send");
 		let started = std::time::Instant::now();
-		let body = read_body_capped(response, 64 * 1024, 1).await;
+		let body = read_body_capped(response, 64 * 1024, 1, 10).await;
 		assert!(
 			started.elapsed() < std::time::Duration::from_secs(5),
 			"the deadline must end the read"
 		);
 		assert_eq!(body, "x", "bytes that arrived before the deadline are kept");
+	}
+
+	#[tokio::test]
+	async fn read_body_capped_enforces_an_overall_deadline() {
+		// a byte every 100 ms: never idle long enough for the idle
+		// timeout, and it would keep going for ~20 s
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf);
+				let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+				for _ in 0..200 {
+					if sock.write_all(b"1\r\nx\r\n").is_err() {
+						break;
+					}
+					let _ = sock.flush();
+					std::thread::sleep(std::time::Duration::from_millis(100));
+				}
+			}
+		});
+		let response = reqwest::Client::new()
+			.get(format!("http://{addr}/"))
+			.send()
+			.await
+			.expect("send");
+		let started = std::time::Instant::now();
+		let body = read_body_capped(response, 64 * 1024, 5, 1).await;
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(4),
+			"the overall deadline must end a trickling read, took {:?}",
+			started.elapsed()
+		);
+		assert!(!body.is_empty(), "what arrived before the deadline is kept");
+		assert!(body.chars().all(|c| c == 'x'));
 	}
 
 	#[test]
@@ -1299,7 +1354,7 @@ mod external_stream_tests {
 			.send()
 			.await
 			.expect("send");
-		let body = read_body_capped(response, 64 * 1024, 5).await;
+		let body = read_body_capped(response, 64 * 1024, 5, 5).await;
 		assert_eq!(body, "nope");
 	}
 }
