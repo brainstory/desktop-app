@@ -81,20 +81,25 @@ pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSetting
 /// and the reminder loop parses with it, so the two can never disagree
 /// on what counts as a valid time.
 pub(crate) fn parse_hhmm(value: &str) -> Option<(u32, u32)> {
+	// exactly two ASCII digits: u32::from_str alone would also take "+9"
+	let two_digits = |field: &str, max: u32| -> Option<u32> {
+		if field.len() != 2 || !field.bytes().all(|b| b.is_ascii_digit()) {
+			return None;
+		}
+		field.parse::<u32>().ok().filter(|v| *v <= max)
+	};
 	let mut parts = value.split(':');
 	let (Some(hours), Some(minutes)) = (parts.next(), parts.next()) else {
 		return None;
 	};
 	match (parts.next(), parts.next()) {
 		(None, _) => {}
-		(Some(seconds), None)
-			if seconds.len() == 2 && seconds.parse::<u32>().is_ok_and(|s| s <= 59) => {}
+		(Some(seconds), None) => {
+			two_digits(seconds, 59)?;
+		}
 		_ => return None,
 	}
-	match (hours.parse::<u32>(), minutes.parse::<u32>()) {
-		(Ok(h), Ok(m)) if h <= 23 && m <= 59 && minutes.len() == 2 => Some((h, m)),
-		_ => None,
-	}
+	Some((two_digits(hours, 23)?, two_digits(minutes, 59)?))
 }
 
 /// The canonical stored form of a valid reminder time ("HH:MM").
@@ -523,6 +528,21 @@ mod tests {
 		assert_eq!(super::parse_hhmm("13:00:00"), Some((13, 0)));
 		assert_eq!(super::parse_hhmm("13:00:60"), None);
 		assert_eq!(super::parse_hhmm("13:00:00:00"), None);
+	}
+
+	#[test]
+	fn reminder_times_need_two_plain_digits_per_field() {
+		use super::parse_hhmm;
+		for valid in ["00:00", "09:05", "23:59", "12:00:00"] {
+			assert!(parse_hhmm(valid).is_some(), "{valid:?} must parse");
+		}
+		// u32::from_str accepts a leading '+', and the hour had no length
+		// check: none of these is what the time picker ever produces
+		for invalid in [
+			"9:00", "+9:00", "+09:00", "12:+5", "09:00:+1", "009:00", "09:0", " 9:00", "",
+		] {
+			assert_eq!(parse_hhmm(invalid), None, "{invalid:?} must be rejected");
+		}
 	}
 
 	#[test]
