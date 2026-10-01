@@ -289,10 +289,14 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 						checked={settings.llmMode === "external"}
 						onToggle={() => {
 							const nextMode = settings.llmMode === "external" ? "local" : "external";
-							if (nextMode === "external" && !settings.extLlmBaseUrl) {
+							// the toggle saves only llmMode, so the URL must already
+							// be persisted - a typed-but-unsaved one doesn't count
+							if (nextMode === "external" && !savedSettings?.extLlmBaseUrl) {
 								openSnackbar(
 									false,
-									"Set an external endpoint URL first, then enable this"
+									settings.extLlmBaseUrl
+										? "Save the external endpoint URL first, then enable this"
+										: "Set an external endpoint URL first, then enable this"
 								);
 								return;
 							}

@@ -166,6 +166,68 @@ describe("AiModelsCard", () => {
 		});
 	});
 
+	it("a toggle sends only its own key and reverts with a message when the save fails", async () => {
+		const user = userEvent.setup();
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, extLlmBaseUrl: "http://localhost:11434" }),
+			save_ai_settings: () => {
+				throw new Error("disk full");
+			}
+		});
+		renderCard();
+		const sw = await screen.findByRole("switch", { name: "Use external LLM endpoint" });
+		// a half-typed endpoint field must not ride along with the toggle
+		await user.type(screen.getByLabelText("STT base URL"), "localh");
+		await user.click(sw);
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call, "save_ai_settings was called").toBeTruthy();
+			expect(call![1]).toEqual({ ai: { llmMode: "external" } });
+		});
+		expect(await screen.findByText("disk full")).toBeInTheDocument();
+		// the optimistic flip is undone, the typed field is kept
+		expect(sw).toHaveAttribute("aria-checked", "false");
+		expect(screen.getByLabelText("STT base URL")).toHaveValue("localh");
+	});
+
+	it("a stale stored value does not block unrelated saves", async () => {
+		const user = userEvent.setup();
+		mockCard({
+			// stored before URL validation existed; the backend now rejects it
+			get_ai_settings: () => ({ ...aiSettings, extLlmBaseUrl: "localhost:1234" }),
+			save_ai_settings: (args) => {
+				const ai = (args as { ai: Record<string, unknown> }).ai;
+				if ("extLlmBaseUrl" in ai) {
+					throw new Error("invalid extLlmBaseUrl 'localhost:1234'");
+				}
+				return undefined;
+			}
+		});
+		renderCard();
+		await user.click(await screen.findByRole("button", { name: "Auto" }));
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call![1]).toEqual({ ai: { sttEngine: "auto" } });
+		});
+		expect(screen.queryByText(/invalid extLlmBaseUrl/)).not.toBeInTheDocument();
+	});
+
+	it("enabling the external LLM needs a saved URL, not just a typed one", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const sw = await screen.findByRole("switch", { name: "Use external LLM endpoint" });
+		await user.type(screen.getByLabelText("LLM base URL"), "http://localhost:11434");
+		await user.click(sw);
+		expect(
+			await screen.findByText("Save the external endpoint URL first, then enable this")
+		).toBeInTheDocument();
+		expect(sw).toHaveAttribute("aria-checked", "false");
+		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")).toBe(
+			false
+		);
+	});
+
 	it("a progress event updates the download bar; an unknown size is indeterminate", async () => {
 		const handlers = captureListeners();
 		mockCard();

@@ -135,16 +135,29 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		});
 	};
 
+	/**
+	 * Immediate single-action save (toggles, engine chips, language).
+	 * Sends ONLY the changed keys: the backend validates every key it
+	 * receives, so spreading the whole form persisted half-typed endpoint
+	 * fields and let one stale stored value fail every save. A failure
+	 * reverts just these keys to their previous values.
+	 */
 	const save = (updates: Partial<AiSettingsResponse>): void => {
 		if (!settings) return;
-		const next = { ...settings, ...updates };
-		setSettings(next);
-		saveAiSettingsApi(next as Record<string, unknown>)
+		const keys = Object.keys(updates) as (keyof AiSettingsResponse)[];
+		const previous = Object.fromEntries(
+			keys.map((key) => [key, settings[key]])
+		) as Partial<AiSettingsResponse>;
+		setSettings((prev) => (prev ? { ...prev, ...updates } : prev));
+		saveAiSettingsApi(updates)
 			.then(() => {
-				setSavedSettings(next);
+				setSavedSettings((prev) => (prev ? { ...prev, ...updates } : prev));
 				refresh();
 			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
+			.catch((e) => {
+				setSettings((prev) => (prev ? { ...prev, ...previous } : prev));
+				openSnackbar(false, normalizeApiError(e));
+			});
 	};
 
 	// Secrets: value "" is the backend's clear signal; anything else sets.
