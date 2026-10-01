@@ -220,6 +220,23 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # upload-artifact keeps the folders below the paths' common parent,
+      # so the Linux packages arrive as artifacts/deb/*.deb and
+      # artifacts/rpm/*.rpm. Every step below globs artifacts/*, which
+      # skipped (v0.3.0 shipped without them) or failed on those folders:
+      # move every file to the top level, refusing a name clash.
+      - name: Flatten downloaded packages
+        shell: bash
+        run: |
+          find artifacts -mindepth 2 -type f -print0 | xargs -0 -r mv -n -t artifacts
+          find artifacts -mindepth 1 -type d -empty -delete
+          if [ -n "$(find artifacts -mindepth 2 -type f)" ]; then
+            echo "::error::two artifacts share a file name:"
+            find artifacts -mindepth 2 -type f
+            exit 1
+          fi
+          ls -la artifacts
+
       - name: Generate updater feed (latest.json)
         shell: bash
         run: |
