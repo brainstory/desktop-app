@@ -109,6 +109,8 @@ function TailwindTab({
 	const tabCount = ctx?.tabCount ?? 1;
 	const idPrefix = ctx?.idPrefix ?? "tw";
 	const isActive = index === activeIndex;
+	const tooltipId = `${idPrefix}-tab-${index}-tooltip`;
+	const hasTooltip = tooltipText !== "";
 
 	const moveFocus = (nextIndex: number) => {
 		// roving tabindex: focus (and select) the sibling tab button by id
@@ -147,6 +149,7 @@ function TailwindTab({
 				aria-selected={isActive}
 				aria-controls={`${idPrefix}-tabpanel-${index}`}
 				tabIndex={isActive ? 0 : -1}
+				aria-describedby={hasTooltip ? tooltipId : undefined}
 				disabled={isDisabled}
 				className={`cursor-pointer text-sm font-medium bg-white p-3 border-b-4 focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 ${
 					isDisabled
@@ -161,8 +164,9 @@ function TailwindTab({
 			>
 				{children}
 			</button>
-			{tooltipText !== "" && !isDisabled && (
+			{hasTooltip && !isDisabled && (
 				<div
+					id={tooltipId}
 					role="tooltip"
 					className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-2 bg-stone-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-300"
 				>
@@ -171,8 +175,11 @@ function TailwindTab({
 			)}
 			{/* a disabled tab's explanation must never hide behind a hover
 			    tooltip: keyboard users cannot hover */}
-			{tooltipText !== "" && isDisabled && (
-				<div className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-1 text-stone-500 text-xs whitespace-nowrap">
+			{hasTooltip && isDisabled && (
+				<div
+					id={tooltipId}
+					className="w-full text-center pointer-events-none absolute top-full left-1/2 transform -translate-x-1/2 p-1 text-stone-500 text-xs whitespace-nowrap"
+				>
 					{tooltipText}
 				</div>
 			)}
