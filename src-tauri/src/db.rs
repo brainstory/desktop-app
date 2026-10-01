@@ -891,18 +891,6 @@ impl Db {
 		})
 	}
 
-	pub fn set_daily_intent(&self, idea_id: &str) -> Result<(), String> {
-		let today = today_local().format("%Y-%m-%d").to_string();
-		self.lock()
-			.execute(
-				"INSERT INTO daily (date, intent_idea_id, is_completed) VALUES (?1, ?2, 0)
-				 ON CONFLICT(date) DO UPDATE SET intent_idea_id = ?2",
-				params![today, idea_id],
-			)
-			.map_err(|e| format!("failed to save daily intent: {e}"))?;
-		Ok(())
-	}
-
 	pub fn mark_daily_completed(&self, idea_id: &str) -> Result<(), String> {
 		let today = today_local().format("%Y-%m-%d").to_string();
 		self.lock()
@@ -1515,8 +1503,9 @@ mod coverage_tests {
 	#[test]
 	fn delete_idea_clears_daily_intent_and_survey_links() {
 		let (db, _path) = db();
-		idea(&db, "target", "2026-01-01T00:00:00");
-		db.set_daily_intent("target").unwrap();
+		// the production path that links an idea as today's intent
+		db.create_daily_intent_idea("target", "target", "r", &[], &json!({}))
+			.unwrap();
 		db.insert_survey("s1", Some("target"), &json!({})).unwrap();
 		let today = today_local().format("%Y-%m-%d").to_string();
 		{
