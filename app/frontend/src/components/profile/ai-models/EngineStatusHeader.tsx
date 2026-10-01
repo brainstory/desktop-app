@@ -25,7 +25,7 @@ export function EngineStatusHeader({ title, status }: { title: string; status: E
 								: "bg-stone-100 text-stone-600"
 					)}
 				>
-					{STATUS_LABELS[status.state as keyof typeof STATUS_LABELS] ?? status.state}
+					{STATUS_LABELS[status.state] ?? status.state}
 				</span>
 			</div>
 			{status.error && <p className="text-sm text-red-600">{status.error}</p>}

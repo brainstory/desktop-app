@@ -77,7 +77,7 @@ function renderCard() {
 function captureListeners(): Record<string, EventCallback<unknown>> {
 	const handlers: Record<string, EventCallback<unknown>> = {};
 	vi.mocked(listen).mockImplementation(async (event, handler) => {
-		handlers[event] = handler as EventCallback<unknown>;
+		handlers[event] = handler;
 		return () => {};
 	});
 	return handlers;
@@ -307,7 +307,7 @@ describe("AiModelsCard", () => {
 		expect(apple).toBeDisabled();
 		const hint = screen.getByText(/Apple Speech needs macOS 26 or newer/);
 		expect(hint).toBeVisible();
-		expect(apple).toHaveAccessibleDescription(hint.textContent!);
+		expect(apple).toHaveAccessibleDescription(hint.textContent);
 		expect(screen.getByRole("button", { name: "Whisper" })).toHaveAttribute(
 			"aria-pressed",
 			"true"

@@ -14,7 +14,7 @@ const idea: IdeaDetail = {
 } as IdeaDetail;
 
 function renderBar(overrides: Partial<IdeaDetail> = {}) {
-	return render(<IdeaTitleBar idea={{ ...idea, ...overrides } as IdeaDetail} isOwnIdea={true} />);
+	return render(<IdeaTitleBar idea={{ ...idea, ...overrides }} isOwnIdea={true} />);
 }
 
 async function startEditing(user: ReturnType<typeof userEvent.setup>) {
@@ -174,11 +174,15 @@ describe("IdeaTitleBar delete", () => {
 			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
 			expect(armed).not.toContainElement(status);
 
-			act(() => vi.advanceTimersByTime(2000));
+			act(() => {
+				vi.advanceTimersByTime(2000);
+			});
 			expect(armed).toHaveTextContent("Really delete? (3s)");
 			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
 
-			act(() => vi.advanceTimersByTime(3000));
+			act(() => {
+				vi.advanceTimersByTime(3000);
+			});
 			expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
 			expect(status).toBeEmptyDOMElement();
 		} finally {

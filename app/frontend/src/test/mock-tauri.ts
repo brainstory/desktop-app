@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
  */
 export function mockInvoke(handlers: Record<string, (args: unknown) => unknown>): void {
 	const mocked = vi.mocked(invoke);
-	mocked.mockImplementation(((command: string, args?: unknown) => {
+	mocked.mockImplementation((command: string, args?: unknown) => {
 		const handler = handlers[command];
 		if (!handler) {
 			return Promise.reject(new Error(`unexpected invoke("${command}") in test`));
@@ -22,7 +22,7 @@ export function mockInvoke(handlers: Record<string, (args: unknown) => unknown>)
 		} catch (e) {
 			return Promise.reject(e);
 		}
-	}) as unknown as typeof mocked);
+	});
 }
 
 beforeEach(() => {

@@ -82,7 +82,8 @@ export function ExternalEndpointsForm({
 				.then(runTest)
 				.catch(() => {});
 		} else {
-			runTest();
+			// runTest reports its own failure
+			void runTest();
 		}
 	};
 
@@ -133,7 +134,7 @@ export function ExternalEndpointsForm({
 				<Button
 					variant="pink"
 					disabled={!endpointDirty}
-					onClick={() => saveEndpoints().catch(() => {})}
+					onClick={() => void saveEndpoints().catch(() => {})}
 				>
 					{endpointDirty ? "Save Endpoints" : "All changes saved"}
 				</Button>

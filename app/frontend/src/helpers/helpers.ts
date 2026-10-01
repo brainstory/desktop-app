@@ -70,6 +70,12 @@ export function isModerationError(message: unknown): boolean {
 	return normalizeApiError(message).startsWith(MODERATION_ERROR_PREFIX);
 }
 
+/** AbortSignal.reason is typed `any`: it is whatever abort() was given
+ * (a DOMException "AbortError" by default). */
+function abortReason(signal: AbortSignal | undefined): unknown {
+	return signal?.reason;
+}
+
 /**
  * Run `apiCall`, retrying a failed attempt after 500 ms.
  *
@@ -88,7 +94,7 @@ export async function callApiWithRetry<T>(
 ): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		if (signal?.aborted) {
-			reject(signal.reason);
+			reject(abortReason(signal));
 			return;
 		}
 		apiCall()
@@ -107,7 +113,7 @@ export async function callApiWithRetry<T>(
 				}
 				const onAbort = () => {
 					clearTimeout(timer);
-					reject(signal?.reason);
+					reject(abortReason(signal));
 				};
 				const timer = setTimeout(() => {
 					signal?.removeEventListener("abort", onAbort);

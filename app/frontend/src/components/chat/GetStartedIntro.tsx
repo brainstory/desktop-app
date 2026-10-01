@@ -70,7 +70,7 @@ export default function GetStartedIntro() {
 				{!isTextLoading &&
 					TOPICS.map((topic, index) => (
 						<a
-							key={`topic-${topic}-${index}`}
+							key={topic.topic}
 							className="p-6 font-semibold flex flex-col gap-3 justify-center items-center animate-appear block w-72 bg-white border border-stone-200 text-center cursor-pointer rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform min-h-[144px]"
 							href={`/chat?topic=${index}`}
 						>

@@ -63,13 +63,8 @@ export default function IdeaResultContent() {
 					fetchIdeaChildrenData(id, res.resultJson?.length ?? 0)
 						.then(([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
 							if (!isCurrent) return;
-							setIdeaChildren(updateIdeaChildren as IdeaFeedbackItem[]);
-							setHeadingIdxToComments(
-								updateOidHeadingToFeedbackComments as Record<
-									number,
-									FeedbackComment[]
-								>
-							);
+							setIdeaChildren(updateIdeaChildren);
+							setHeadingIdxToComments(updateOidHeadingToFeedbackComments);
 						})
 						.catch((err) => {
 							// feedback children are auxiliary: the page still
@@ -210,41 +205,44 @@ async function fetchIdeaChildrenData(
 	ideaId: string,
 	headingCount: number
 ): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
-	const result = await getIdeaChildrenApi(ideaId).then((res) => {
-		const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
-		const ideaChildren = res.map((idea) => {
-			(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
-				const headingIdx = parseHeadingIndex(comment.oidHeadingText, headingCount);
-				if (headingIdx === null) {
-					// a comment whose heading reference is empty, not a
-					// positive integer, or past the last heading can never be
-					// attached to a section; keep it out loudly instead of
-					// filing it under heading 0 / a NaN key
-					console.warn(
-						"feedback comment with an invalid heading reference:",
-						comment.oidHeadingText
-					);
-					return;
-				}
-				const currMap: FeedbackComment[] = oidHeadingToFeedbackComments[headingIdx] || [];
-				currMap.push({
-					commentId: `${idea.id}:${headingIdx}:${currMap.length}`,
-					ideaId: idea.id,
-					creatorEmail: idea.creatorEmail,
-					creatorName: idea.creatorName,
-					createdAt: idea.createdAt,
-					matchedSpans: comment.matchedSpans,
-					feedbackText: comment.feedbackText,
-					labels: comment.labels
+	const result = await getIdeaChildrenApi(ideaId).then(
+		(res): [IdeaFeedbackItem[], Record<number, FeedbackComment[]>] => {
+			const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
+			const ideaChildren = res.map((idea) => {
+				(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
+					const headingIdx = parseHeadingIndex(comment.oidHeadingText, headingCount);
+					if (headingIdx === null) {
+						// a comment whose heading reference is empty, not a
+						// positive integer, or past the last heading can never be
+						// attached to a section; keep it out loudly instead of
+						// filing it under heading 0 / a NaN key
+						console.warn(
+							"feedback comment with an invalid heading reference:",
+							comment.oidHeadingText
+						);
+						return;
+					}
+					const currMap: FeedbackComment[] =
+						oidHeadingToFeedbackComments[headingIdx] || [];
+					currMap.push({
+						commentId: `${idea.id}:${headingIdx}:${currMap.length}`,
+						ideaId: idea.id,
+						creatorEmail: idea.creatorEmail,
+						creatorName: idea.creatorName,
+						createdAt: idea.createdAt,
+						matchedSpans: comment.matchedSpans,
+						feedbackText: comment.feedbackText,
+						labels: comment.labels
+					});
+					oidHeadingToFeedbackComments[headingIdx] = currMap;
 				});
-				oidHeadingToFeedbackComments[headingIdx] = currMap;
+				return { ...idea, isFeedback: true };
 			});
-			return { ...idea, isFeedback: true };
-		});
-		return [ideaChildren as IdeaFeedbackItem[], oidHeadingToFeedbackComments] as const;
-	});
+			return [ideaChildren, oidHeadingToFeedbackComments];
+		}
+	);
 
-	return result as [IdeaFeedbackItem[], Record<number, FeedbackComment[]>];
+	return result;
 }
 
 function useMarkReadApi(id: string | undefined, isUnread: boolean): void {

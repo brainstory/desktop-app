@@ -1,4 +1,4 @@
-import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { COMMANDS, type CommandMap } from "./commands";
 
 export type CommandKey = keyof CommandMap;
@@ -23,5 +23,5 @@ export function invokeCommand<K extends CommandKey>(
 	// no-arg commands are invoked without an args parameter at all
 	return args.length === 0
 		? invoke<CommandResult<K>>(command)
-		: invoke<CommandResult<K>>(command, args[0] as InvokeArgs);
+		: invoke<CommandResult<K>>(command, args[0]);
 }

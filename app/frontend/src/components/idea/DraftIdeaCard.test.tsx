@@ -28,11 +28,15 @@ describe("DraftIdeaCard delete", () => {
 		// the live region is not inside the button (whose aria-label would
 		// override it) and does not change on every countdown tick
 		expect(deleteButton()).not.toContainElement(status);
-		act(() => vi.advanceTimersByTime(1000));
+		act(() => {
+			vi.advanceTimersByTime(1000);
+		});
 		expect(deleteButton()).toHaveTextContent("Really delete? (4s)");
 		expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
 
-		act(() => vi.advanceTimersByTime(4000));
+		act(() => {
+			vi.advanceTimersByTime(4000);
+		});
 		expect(deleteButton()).toHaveAccessibleName("Delete draft");
 		expect(status).toBeEmptyDOMElement();
 	});

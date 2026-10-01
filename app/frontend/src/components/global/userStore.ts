@@ -32,13 +32,14 @@ getUserApi()
 
 		if (!userRes?.timezone) {
 			const userBrowserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-			import("@helpers/api/settings").then(({ saveUserSettingsApi }) => {
-				saveUserSettingsApi({ timezone: userBrowserTimezone })
-					.then(() => {
-						$userState.setKey("timezone", userBrowserTimezone);
-					})
-					.catch((err) => console.error("unsuccessful at setting timezone", err));
-			});
+			import("@helpers/api/settings")
+				.then(({ saveUserSettingsApi }) =>
+					saveUserSettingsApi({ timezone: userBrowserTimezone })
+				)
+				.then(() => {
+					$userState.setKey("timezone", userBrowserTimezone);
+				})
+				.catch((err) => console.error("unsuccessful at setting timezone", err));
 		}
 	})
 	.catch((err) => {

@@ -109,7 +109,7 @@ export default function UpdaterBanner() {
 			{phase === "available" && (
 				<button
 					className="bg-accent-600 hover:bg-accent-700 text-white font-medium rounded-md px-3 py-1.5 shrink-0"
-					onClick={install}
+					onClick={() => void install()}
 				>
 					Restart to update
 				</button>

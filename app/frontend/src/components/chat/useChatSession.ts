@@ -294,7 +294,9 @@ export function useChatSession(
 				structuredResult
 			});
 		};
-		handleStreamResult(
+		// handleStreamResult never rejects: failures go to the onError
+		// callback below
+		void handleStreamResult(
 			() =>
 				generateResponseStreamApi({
 					messages: currConversation,
@@ -316,7 +318,7 @@ export function useChatSession(
 		);
 	};
 
-	const askADifferentQuestion = async () => {
+	const askADifferentQuestion = (): void => {
 		const isUser = true;
 		addConversationMessage(
 			ASK_A_DIFFERENT_QUESTION,

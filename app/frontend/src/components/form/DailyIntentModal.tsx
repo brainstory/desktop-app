@@ -113,7 +113,6 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 			<div
 				ref={modalRef}
 				className="flex flex-col max-w-[600px] w-[90vw] max-h-[95vh] bg-white mx-auto rounded-lg relative shadow-md p-5 md:p-7"
-				onClick={(e) => e.stopPropagation()}
 			>
 				<ModalTitleBar title="Daily Intent Log" onClose={onClose} classes="mb-2" />
 				{isLogLoading ? (

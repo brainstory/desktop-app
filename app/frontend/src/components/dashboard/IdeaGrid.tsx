@@ -18,7 +18,7 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 	if (userIdeas === null) {
 		return (
 			<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-				{[...Array(4)].map((_, i) => (
+				{Array.from({ length: 4 }, (_, i) => (
 					<IdeaPlaceholder key={`placeholder-grid-${i}`} />
 				))}
 			</div>
