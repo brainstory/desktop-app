@@ -32,13 +32,7 @@ impl SttEngine {
 			primary_subtag(language)
 		};
 		params.set_language(Some(&language));
-		// Roughly physical cores: available_parallelism counts
-		// hyperthreads, and whisper's compute is memory-bound enough that
-		// oversubscribing them hurts more than it helps.
-		let logical = std::thread::available_parallelism()
-			.map(|n| n.get())
-			.unwrap_or(4);
-		params.set_n_threads((logical / 2).max(1) as i32);
+		params.set_n_threads(whisper_threads());
 		params.set_translate(false);
 		params.set_print_progress(false);
 		params.set_print_special(false);
@@ -60,6 +54,13 @@ impl SttEngine {
 		}
 		Ok(transcript.trim().to_string())
 	}
+}
+
+/// Whisper's CPU thread count: one per physical core. Hyperthreads don't
+/// help its memory-bound compute, but halving the logical count (the old
+/// heuristic) also halved it on CPUs without SMT, such as Apple Silicon.
+fn whisper_threads() -> i32 {
+	num_cpus::get_physical().clamp(1, i32::MAX as usize) as i32
 }
 
 /// The whisper language id for a BCP-47 tag: the primary subtag
