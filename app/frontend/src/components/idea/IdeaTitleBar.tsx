@@ -2,7 +2,7 @@ import type { IdeaDetail } from "@src/types";
 import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
 import { exportIdeaApi } from "@helpers/api/share";
-import { useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
+import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
 import { Snackbar } from "@ds/Snackbar";
@@ -24,7 +24,11 @@ export default function IdeaTitleBar({
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState("Error: Title field is empty");
 	const [exportState, setExportState] = useState<string | null>(null);
-	const { isConfirming: confirmingDelete, confirm: confirmDelete } = useConfirmClick();
+	const {
+		isConfirming: confirmingDelete,
+		secondsLeft,
+		confirm: confirmDelete
+	} = useConfirmClick();
 	const [scheduleExportReset] = useTimeout();
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedTitle, setEditedTitle] = useState(idea.title ?? "");
@@ -179,8 +183,13 @@ export default function IdeaTitleBar({
 				onClick={handleDelete}
 				classes={confirmingDelete ? "border-red-400 text-red-600" : ""}
 			>
-				{confirmingDelete ? "Really delete?" : "Delete"}
-			</BorderedButton>
+				{confirmingDelete ? `Really delete? (${secondsLeft ?? 0}s)` : "Delete"}
+			</BorderedButton>,
+			// Announced once when armed, outside the button and not on
+			// every countdown tick
+			<span key="delete-status" role="status" className="sr-only">
+				{confirmingDelete ? CONFIRM_DELETE_ANNOUNCEMENT : ""}
+			</span>
 		);
 		return buttons;
 	};

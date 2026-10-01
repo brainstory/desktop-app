@@ -158,3 +158,50 @@ describe("IdeaTitleBar edit session finishes exactly once", () => {
 		await waitFor(() => expect(updateIdeaTitles()).toEqual(["Second try"]));
 	});
 });
+
+describe("IdeaTitleBar delete", () => {
+	it("shows a countdown and announces the armed state once", () => {
+		vi.useFakeTimers();
+		try {
+			mockInvoke({});
+			renderBar();
+			const status = screen.getByRole("status");
+			expect(status).toBeEmptyDOMElement();
+
+			fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+			const armed = screen.getByRole("button", { name: /Really delete\?/ });
+			expect(armed).toHaveTextContent("Really delete? (5s)");
+			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
+			expect(armed).not.toContainElement(status);
+
+			act(() => vi.advanceTimersByTime(2000));
+			expect(armed).toHaveTextContent("Really delete? (3s)");
+			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
+
+			act(() => vi.advanceTimersByTime(3000));
+			expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+			expect(status).toBeEmptyDOMElement();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("deletes on the second click", async () => {
+		mockInvoke({ delete_idea: () => null });
+		const assign = vi.fn();
+		vi.stubGlobal("location", {
+			...window.location,
+			set href(v: string) {
+				assign(v);
+			}
+		});
+		try {
+			renderBar();
+			fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+			fireEvent.click(screen.getByRole("button", { name: /Really delete\?/ }));
+			await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard"));
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
