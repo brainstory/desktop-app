@@ -146,13 +146,26 @@ fn register_download(state: &AppState, model_id: &str) -> Result<Arc<AtomicBool>
 		.download_cancels
 		.lock()
 		.unwrap_or_else(|e| e.into_inner());
-	if progress.contains_key(model_id) {
+	// a cancel entry without progress is a finished download whose
+	// auto-load still holds the slot
+	if progress.contains_key(model_id) || cancels.contains_key(model_id) {
 		return Err("model is already downloading".into());
 	}
 	let cancel = Arc::new(AtomicBool::new(false));
 	progress.insert(model_id.to_string(), 0.0);
 	cancels.insert(model_id.to_string(), cancel.clone());
 	Ok(cancel)
+}
+
+/// The transfer finished: stop reporting the model as downloading, but
+/// keep its cancel entry (which still holds the slot) until the
+/// DownloadGuard drops after the auto-load.
+fn finish_download_progress(state: &AppState, model_id: &str) {
+	state
+		.download_progress
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.remove(model_id);
 }
 
 /// Remove a download's bookkeeping entries (inverse of register_download).
@@ -252,11 +265,12 @@ pub async fn download_model(
 						"model-download",
 						json!({ "modelId": model_id, "kind": "done" }),
 					);
-					// The download itself is finished: release the
-					// bookkeeping before the auto-load below, so the
-					// model stops reporting "downloading" while its
-					// engine spins up.
-					drop(_guard);
+					// The download itself is finished: the model stops
+					// reporting "downloading" while its engine spins up,
+					// but the guard (and its cancel entry) lives until the
+					// auto-load below is done, so delete_model can't slip
+					// in and remove the file the load is about to open.
+					finish_download_progress(&app_handle.state::<AppState>(), &model_id);
 					// If this model is the active one, load it right away.
 					let state = app_handle.state::<AppState>();
 					let settings = state.ai_settings();
@@ -310,8 +324,9 @@ pub async fn download_model(
 }
 
 /// Why `spec` cannot be deleted right now, if anything: its download is
-/// still running, or a load of its engine kind is (that load would
-/// re-install the engine right after the deletion).
+/// still running or just finished and about to auto-load, or a load of
+/// its engine kind is running (that load would re-install the engine
+/// right after the deletion).
 fn delete_blocked(state: &AppState, spec: &crate::models::ModelSpec) -> Option<&'static str> {
 	if state
 		.download_progress
@@ -320,6 +335,14 @@ fn delete_blocked(state: &AppState, spec: &crate::models::ModelSpec) -> Option<&
 		.contains_key(spec.id)
 	{
 		return Some("model is currently downloading");
+	}
+	if state
+		.download_cancels
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.contains_key(spec.id)
+	{
+		return Some("model is still being set up - try again in a moment");
 	}
 	let loading = match spec.kind {
 		ModelKind::Llm => &state.llm_loading,
@@ -502,6 +525,34 @@ mod tests {
 		// a load of the other engine kind does not block
 		state.stt_loading.store(false, Ordering::SeqCst);
 		state.llm_loading.store(true, Ordering::SeqCst);
+		assert_eq!(super::delete_blocked(&state, spec), None);
+	}
+
+	#[test]
+	fn a_finished_download_stays_undeletable_until_its_auto_load_starts() {
+		let (state, _dir) = temp_state("handoff");
+		let spec = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		register_download(&state, spec.id).expect("register");
+		// the transfer is done: the UI must stop showing "downloading"...
+		super::finish_download_progress(&state, spec.id);
+		assert!(!state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.contains_key(spec.id));
+		// ...but until the auto-load has claimed the engine slot, a delete
+		// would remove the file the load is about to open
+		assert!(
+			super::delete_blocked(&state, spec).is_some(),
+			"delete slipped in between the download and its auto-load"
+		);
+		assert!(
+			register_download(&state, spec.id).is_err(),
+			"a second download must not reuse the slot either"
+		);
+		// the guard's cleanup (after the auto-load) frees everything
+		unregister_download(&state, spec.id);
 		assert_eq!(super::delete_blocked(&state, spec), None);
 	}
 
