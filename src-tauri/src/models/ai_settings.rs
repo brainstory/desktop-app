@@ -108,6 +108,13 @@ pub struct AiSettings {
 	pub ext_stt_model: String,
 }
 
+/// True when `url` starts with an http:// or https:// scheme - the one
+/// check every configurable endpoint URL (external LLM/STT, HF mirror)
+/// goes through, at save time and again before use.
+pub fn has_http_scheme(url: &str) -> bool {
+	url.starts_with("http://") || url.starts_with("https://")
+}
+
 /// Engine default for the first launch after this setting was introduced:
 /// installs that already have AI configuration keep whisper (no behavior
 /// change), brand-new installs get "auto". Pure - no writes; setup
@@ -237,7 +244,7 @@ impl AiSettings {
 			}
 		}
 		let base_url = |field: &str, v: &str| -> Result<(), String> {
-			if v.is_empty() || v.starts_with("http://") || v.starts_with("https://") {
+			if v.is_empty() || has_http_scheme(v) {
 				Ok(())
 			} else {
 				Err(format!(

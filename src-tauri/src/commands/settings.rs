@@ -297,9 +297,7 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("no external LLM endpoint configured".into());
 	}
-	if !settings.ext_llm_base_url.starts_with("http://")
-		&& !settings.ext_llm_base_url.starts_with("https://")
-	{
+	if !crate::models::has_http_scheme(&settings.ext_llm_base_url) {
 		return Err(format!(
 			"invalid endpoint URL '{}' (include http:// or https://)",
 			settings.ext_llm_base_url

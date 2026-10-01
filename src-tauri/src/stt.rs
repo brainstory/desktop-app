@@ -195,7 +195,7 @@ pub async fn transcribe_external(
 	wav: Vec<u8>,
 ) -> Result<String, String> {
 	let base = base_url.trim_end_matches('/');
-	if !base.starts_with("http://") && !base.starts_with("https://") {
+	if !crate::models::has_http_scheme(base) {
 		return Err(format!(
 			"invalid STT endpoint URL '{base}' (include http:// or https://)"
 		));
