@@ -1,4 +1,8 @@
+# Exact stable release, so local builds, CI and releases compile with the
+# same rustc/clippy/rustfmt (a floating "stable" let a new release's lints
+# break CI without any commit). Bump deliberately; keep the `toolchain:`
+# inputs of the dtolnay/rust-toolchain steps in .github/workflows in sync.
 [toolchain]
-channel = "stable"
+channel = "1.98.1"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
