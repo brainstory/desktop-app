@@ -478,102 +478,237 @@ pub fn spawn_migration_and_model_loader(app: AppHandle, settings: AiSettings) {
 	});
 }
 
-fn run_model_loader(app: AppHandle, settings: AiSettings) {
-	{
-		// the original thread body, unchanged below
-		let Some(state) = app.try_state::<AppState>() else {
-			return;
-		};
+/// What the model loader does with the whisper slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhisperPlan {
+	/// load this (downloaded) catalog model
+	Load(&'static str),
+	/// unknown or not-downloaded model: unload whatever is resident and
+	/// report "missing", so the runtime matches the reported status
+	Missing,
+	/// whisper is not needed at all: free its memory, status untouched
+	Unload,
+}
 
-		// STT: external endpoint wins; otherwise the engine setting picks
-		// Apple Speech (macOS 26+, zero downloads) or local whisper.
-		if settings.ext_stt_base_url.is_empty() {
-			let load_whisper = |state: &AppState, app: &AppHandle| {
-				match models::find_model(&settings.stt_model, ModelKind::Stt) {
-					Some(spec) if state.is_model_downloaded(spec) => {
-						if let Err(e) = state.load_stt(app, spec) {
-							log::error!("startup STT load failed: {e}");
-						}
-					}
-					_ => {
-						// Unknown or not-downloaded whisper model: unload
-						// whatever engine is still resident so the runtime
-						// matches the reported status, not a stale model.
-						state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
-						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-							models::EngineStatus::new(models::EngineState::Missing, None, None);
-						state.emit_stt_status(app);
-					}
-				}
-			};
-			if settings.stt_engine == models::SpeechEngine::Apple && !apple::speech_available() {
-				// Explicit Apple on an unsupported system: degrade to
-				// whisper but say why, instead of silently ignoring it.
-				load_whisper(&state, &app);
-				*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-					models::EngineStatus::new(
-						models::EngineState::Error,
-						Some("apple-speech"),
-						Some("Apple Speech requires macOS 26+ - using whisper instead"),
-					);
-				state.emit_stt_status(&app);
-			} else {
-				match settings.effective_stt_engine() {
-					models::SpeechEngine::Apple => {
-						if settings.stt_engine == models::SpeechEngine::Auto {
-							// auto: keep a downloaded whisper model hot as
-							// the fallback behind the Apple engine.
-							load_whisper(&state, &app);
-						} else {
-							// explicit apple: whisper is not needed at all;
-							// free its memory.
-							state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
-						}
-						*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-							models::EngineStatus::new(
-								models::EngineState::Ready,
-								Some("apple-speech"),
-								None,
-							);
-						state.emit_stt_status(&app);
-					}
-					// whisper (effective() never reports Auto)
-					_ => load_whisper(&state, &app),
+/// The STT status the loader reports after handling the whisper slot,
+/// when something other than whisper's own load decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SttStatusPlan {
+	/// the external endpoint transcribes
+	External,
+	/// Apple Speech transcribes
+	AppleReady,
+	/// explicit Apple on a system without it: whisper stands in, and the
+	/// status says why
+	AppleUnsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LlmPlan {
+	External,
+	Load(&'static str),
+	Missing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoadPlan {
+	whisper: WhisperPlan,
+	stt_status: Option<SttStatusPlan>,
+	llm: LlmPlan,
+}
+
+/// The loader's whole decision, pure: which engines to load or unload
+/// and which status to report, given the settings, whether Apple Speech
+/// exists here, and which catalog models are downloaded.
+fn plan_model_load(
+	settings: &AiSettings,
+	apple_available: bool,
+	downloaded: impl Fn(&models::ModelSpec) -> bool,
+) -> LoadPlan {
+	use models::SpeechEngine;
+	let whisper_model = match models::find_model(&settings.stt_model, ModelKind::Stt) {
+		Some(spec) if downloaded(spec) => WhisperPlan::Load(spec.id),
+		_ => WhisperPlan::Missing,
+	};
+	// STT: external endpoint wins; otherwise the engine setting picks
+	// Apple Speech (macOS 26+, zero downloads) or local whisper.
+	let (whisper, stt_status) = if !settings.ext_stt_base_url.is_empty() {
+		(WhisperPlan::Unload, Some(SttStatusPlan::External))
+	} else if settings.stt_engine == SpeechEngine::Apple && !apple_available {
+		(whisper_model, Some(SttStatusPlan::AppleUnsupported))
+	} else {
+		match settings.stt_engine.effective_with(apple_available) {
+			// auto: keep a downloaded whisper hot as the fallback behind
+			// the Apple engine; explicit apple: free whisper's memory
+			SpeechEngine::Apple if settings.stt_engine == SpeechEngine::Auto => {
+				(whisper_model, Some(SttStatusPlan::AppleReady))
+			}
+			SpeechEngine::Apple => (WhisperPlan::Unload, Some(SttStatusPlan::AppleReady)),
+			// whisper (effective_with never reports Auto)
+			_ => (whisper_model, None),
+		}
+	};
+	// LLM: load the local model unless external mode is active.
+	let llm = if settings.uses_external_llm() {
+		LlmPlan::External
+	} else {
+		match models::find_model(&settings.llm_model, ModelKind::Llm) {
+			Some(spec) if downloaded(spec) => LlmPlan::Load(spec.id),
+			_ => LlmPlan::Missing,
+		}
+	};
+	LoadPlan {
+		whisper,
+		stt_status,
+		llm,
+	}
+}
+
+fn run_model_loader(app: AppHandle, settings: AiSettings) {
+	let Some(state) = app.try_state::<AppState>() else {
+		return;
+	};
+	let plan = plan_model_load(&settings, apple::speech_available(), |spec| {
+		state.is_model_downloaded(spec)
+	});
+
+	match plan.whisper {
+		WhisperPlan::Load(id) => {
+			if let Some(spec) = models::find_model(id, ModelKind::Stt) {
+				if let Err(e) = state.load_stt(&app, spec) {
+					log::error!("startup STT load failed: {e}");
 				}
 			}
-		} else {
-			// The external endpoint handles transcription: free the local
-			// engine and say "external" where the UI can see it.
+		}
+		WhisperPlan::Missing => {
 			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				models::EngineStatus::new(models::EngineState::External, None, None);
+				models::EngineStatus::missing();
 			state.emit_stt_status(&app);
 		}
-
-		// LLM: load local model unless external mode is active.
-		if settings.uses_external_llm() {
-			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
-			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				models::EngineStatus::new(models::EngineState::External, None, None);
-			state.emit_llm_status(&app);
-			return;
+		WhisperPlan::Unload => {
+			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
 		}
-		match models::find_model(&settings.llm_model, ModelKind::Llm) {
-			Some(spec) if state.is_model_downloaded(spec) => {
+	}
+	if let Some(status) = plan.stt_status {
+		*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) = match status {
+			SttStatusPlan::External => models::EngineStatus::external(),
+			SttStatusPlan::AppleReady => models::EngineStatus::ready(Some("apple-speech")),
+			SttStatusPlan::AppleUnsupported => models::EngineStatus::error(
+				Some("apple-speech"),
+				"Apple Speech requires macOS 26+ - using whisper instead",
+			),
+		};
+		state.emit_stt_status(&app);
+	}
+
+	match plan.llm {
+		LlmPlan::Load(id) => {
+			if let Some(spec) = models::find_model(id, ModelKind::Llm) {
 				if let Err(e) = state.load_llm(&app, spec) {
 					log::error!("startup LLM load failed: {e}");
 				}
 			}
-			_ => {
-				// Unknown or not-downloaded model: keep the runtime and
-				// the status it shows consistent ("missing"), not a stale
-				// engine that no longer matches the settings.
-				state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
-				*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-					models::EngineStatus::new(models::EngineState::Missing, None, None);
-				state.emit_llm_status(&app);
-			}
 		}
+		LlmPlan::External | LlmPlan::Missing => {
+			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
+			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
+				if plan.llm == LlmPlan::External {
+					models::EngineStatus::external()
+				} else {
+					models::EngineStatus::missing()
+				};
+			state.emit_llm_status(&app);
+		}
+	}
+}
+
+#[cfg(test)]
+mod loader_plan_tests {
+	use super::{plan_model_load, LlmPlan, LoadPlan, SttStatusPlan, WhisperPlan};
+	use crate::models::{AiSettings, LlmMode, SpeechEngine};
+
+	fn settings(engine: SpeechEngine) -> (AiSettings, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = crate::db::Db::open(&dir.path().join("t.db")).expect("db");
+		let mut s = AiSettings::load(&db);
+		s.stt_engine = engine;
+		s.stt_model = "whisper-small-en".into();
+		s.llm_model = "gemma-4-E4B".into();
+		s.llm_mode = LlmMode::Local;
+		s.ext_stt_base_url = String::new();
+		(s, dir)
+	}
+
+	const ALL: fn(&crate::models::ModelSpec) -> bool = |_| true;
+	const NONE: fn(&crate::models::ModelSpec) -> bool = |_| false;
+
+	#[test]
+	fn whisper_mode_loads_downloaded_models_and_reports_missing_ones() {
+		let (s, _d) = settings(SpeechEngine::Whisper);
+		assert_eq!(
+			plan_model_load(&s, true, ALL),
+			LoadPlan {
+				whisper: WhisperPlan::Load("whisper-small-en"),
+				stt_status: None,
+				llm: LlmPlan::Load("gemma-4-E4B"),
+			}
+		);
+		let plan = plan_model_load(&s, true, NONE);
+		assert_eq!(plan.whisper, WhisperPlan::Missing);
+		assert_eq!(plan.llm, LlmPlan::Missing);
+		// an unknown (hand-edited) id is missing too, never a stale engine
+		let (mut s, _d) = settings(SpeechEngine::Whisper);
+		s.stt_model = "whisper-gone".into();
+		s.llm_model = "llm-gone".into();
+		let plan = plan_model_load(&s, true, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Missing);
+		assert_eq!(plan.llm, LlmPlan::Missing);
+	}
+
+	#[test]
+	fn external_endpoints_unload_the_local_engines() {
+		let (mut s, _d) = settings(SpeechEngine::Auto);
+		s.ext_stt_base_url = "http://localhost:9000".into();
+		s.llm_mode = LlmMode::External;
+		assert_eq!(
+			plan_model_load(&s, true, ALL),
+			LoadPlan {
+				whisper: WhisperPlan::Unload,
+				stt_status: Some(SttStatusPlan::External),
+				llm: LlmPlan::External,
+			}
+		);
+	}
+
+	#[test]
+	fn apple_speech_keeps_whisper_only_as_the_auto_fallback() {
+		// auto + Apple available: Apple transcribes, whisper stays hot
+		let (s, _d) = settings(SpeechEngine::Auto);
+		let plan = plan_model_load(&s, true, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Load("whisper-small-en"));
+		assert_eq!(plan.stt_status, Some(SttStatusPlan::AppleReady));
+		// explicit apple: whisper is freed, not loaded
+		let (s, _d) = settings(SpeechEngine::Apple);
+		let plan = plan_model_load(&s, true, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Unload);
+		assert_eq!(plan.stt_status, Some(SttStatusPlan::AppleReady));
+		// auto without Apple Speech is plain whisper
+		let (s, _d) = settings(SpeechEngine::Auto);
+		let plan = plan_model_load(&s, false, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Load("whisper-small-en"));
+		assert_eq!(plan.stt_status, None);
+	}
+
+	#[test]
+	fn explicit_apple_without_apple_speech_falls_back_and_says_why() {
+		let (s, _d) = settings(SpeechEngine::Apple);
+		let plan = plan_model_load(&s, false, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Load("whisper-small-en"));
+		assert_eq!(plan.stt_status, Some(SttStatusPlan::AppleUnsupported));
+		let plan = plan_model_load(&s, false, NONE);
+		assert_eq!(plan.whisper, WhisperPlan::Missing);
+		assert_eq!(plan.stt_status, Some(SttStatusPlan::AppleUnsupported));
 	}
 }
 

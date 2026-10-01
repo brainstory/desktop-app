@@ -60,9 +60,14 @@ impl SpeechEngine {
 	/// choice: Apple when explicitly selected or when auto + available,
 	/// whisper otherwise.
 	pub fn effective(self) -> Self {
+		self.effective_with(crate::apple::speech_available())
+	}
+
+	/// [`Self::effective`] for a given Apple Speech availability (pure).
+	pub fn effective_with(self, apple_available: bool) -> Self {
 		match self {
 			Self::Apple => Self::Apple,
-			Self::Auto if crate::apple::speech_available() => Self::Apple,
+			Self::Auto if apple_available => Self::Apple,
 			_ => Self::Whisper,
 		}
 	}
