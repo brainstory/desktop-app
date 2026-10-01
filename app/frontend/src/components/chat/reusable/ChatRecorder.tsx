@@ -2,6 +2,7 @@ import { CONVERSATION_STATE, CHAT_SAVE_STATE } from "@src/const";
 import { addConversationMessage } from "@helpers/chat";
 import AudioRecorder from "@components/recording-ui/AudioRecorder";
 import type { ChatMessage } from "@src/types";
+import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback } from "react";
 
@@ -17,7 +18,7 @@ interface ChatRecorderProps {
 	currConversation: ChatMessage[];
 	setCurrConversation: Dispatch<SetStateAction<ChatMessage[]>>;
 	setSaveState: (state: string) => void;
-	handleGetResponse: () => void | Promise<void>;
+	handleGetResponse: () => Promise<CoachResponseOutcome>;
 	isCompressed?: boolean | string | null;
 }
 
@@ -56,25 +57,25 @@ export default function ChatRecorder({
 	);
 
 	const handleTranscript = useCallback(
-		async (userMessage: string) => {
+		(userMessage: string) => {
 			const isUser = true;
+			// Resending the message that failed or was cancelled (it is
+			// still the unanswered last message) only re-asks the coach
+			// instead of adding a duplicate.
+			const last = currConversation[currConversation.length - 1];
+			const isResend = last?.role === "user" && last.content === userMessage;
 			// only after the user message is actually appended does
 			// sending become safe (the coach must see it); the SAVING
 			// save-state is owned by ChatSection's autosave effect
-			await addConversationMessage(
-				userMessage,
-				isUser,
-				currConversation,
-				setCurrConversation
-			);
+			if (!isResend) {
+				addConversationMessage(userMessage, isUser, currConversation, setCurrConversation);
+			}
 			setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
 		},
 		[currConversation, setCurrConversation, setConversationState]
 	);
 
-	const handleCoachResponse = useCallback(async () => {
-		await handleGetResponse();
-	}, [handleGetResponse]);
+	const handleCoachResponse = useCallback(() => handleGetResponse(), [handleGetResponse]);
 
 	return (
 		<section

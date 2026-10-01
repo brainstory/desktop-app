@@ -178,7 +178,7 @@ export function ChatSection({
 				currConversation={currConversation}
 				setCurrConversation={setCurrConversation}
 				setSaveState={persistence.setSaveState}
-				handleGetResponse={() => Promise.resolve(session.handleGetResponse())}
+				handleGetResponse={session.handleGetResponse}
 			/>
 		];
 

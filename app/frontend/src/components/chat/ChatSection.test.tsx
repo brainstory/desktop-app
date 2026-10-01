@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
@@ -57,5 +58,64 @@ describe("ChatSection", () => {
 		expect(await screen.findByText("q3")).toBeInTheDocument();
 		await act(() => vi.advanceTimersByTimeAsync(1000));
 		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "update_idea")).toHaveLength(0);
+	});
+
+	describe("text composer", () => {
+		async function sendTyped(text: string) {
+			const user = userEvent.setup();
+			await user.click(screen.getByText("Not in a place to talk out-loud?"));
+			const box = screen.getByLabelText("Type your response");
+			await user.type(box, text);
+			await user.keyboard("{Enter}");
+			return box;
+		}
+
+		it("clears the composer once the coach answered", async () => {
+			mockInvoke({
+				generate_response: () => ({ response: "tell me more" })
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			const box = await sendTyped("my idea");
+			expect(await screen.findByText("tell me more")).toBeInTheDocument();
+			await waitFor(() => expect(box).toHaveValue(""));
+		});
+
+		it("keeps the typed text when the message was flagged by moderation", async () => {
+			mockInvoke({
+				generate_response: () => {
+					throw "HttpError 469: Inappropriate input";
+				}
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			const box = await sendTyped("something flagged");
+			expect(await screen.findByText(/flagged as inappropriate/)).toBeInTheDocument();
+			expect(box).toHaveValue("something flagged");
+		});
+
+		it("keeps the text after an AI failure and resends it without duplicating it", async () => {
+			let attempts = 0;
+			mockInvoke({
+				generate_response: () => {
+					attempts++;
+					// the first send fails twice (call + its one retry)
+					if (attempts <= 2) throw "endpoint down";
+					return { response: "got it" };
+				}
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			const box = await sendTyped("my idea");
+			expect(await screen.findByRole("alert")).toHaveTextContent("endpoint down");
+			expect(box).toHaveValue("my idea");
+
+			await userEvent.setup().click(screen.getByRole("button", { name: "Send message" }));
+			expect(await screen.findByText("got it")).toBeInTheDocument();
+			const lastCall = vi
+				.mocked(invoke)
+				.mock.calls.filter(([c]) => c === "generate_response")
+				.at(-1)!;
+			const sent = (lastCall[1] as { messages: { role: string; content: string }[] })
+				.messages;
+			expect(sent.filter((m) => m.content === "my idea")).toHaveLength(1);
+		});
 	});
 });

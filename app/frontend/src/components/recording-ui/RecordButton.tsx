@@ -8,6 +8,7 @@ import ChangeInputTypeButton from "./ChangeInputTypeButton";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { MicButton, MicPermissionDenied } from "./MicButton";
 import { RecordingWarnings, TextComposer, useRecordingWarnings } from "./RecordingWarnings";
+import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 
 interface RecordButtonProps {
 	isRecording: boolean;
@@ -16,7 +17,7 @@ interface RecordButtonProps {
 	setIsRecording: (recording: boolean) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
 	onTranscript: (transcript: string) => void;
-	getCoachResponse: () => Promise<void>;
+	getCoachResponse: () => Promise<CoachResponseOutcome>;
 	time: number;
 	resetTimer: () => void;
 	isCompressed?: boolean | string | null;
@@ -91,11 +92,13 @@ function RecordButton({
 			respondedRef.current = true;
 			resetTimer();
 			getCoachResponse()
-				.then(() => {
-					// the message made it into the conversation - clear the
-					// composer for the next one. On failure the text stays
-					// so the user can edit and resend it.
-					setUserTextInput("");
+				.then((outcome) => {
+					// the coach answered - clear the composer for the next
+					// message. Otherwise (flagged, failed, cancelled) the
+					// text stays so the user can edit and resend it.
+					if (outcome === "sent") {
+						setUserTextInput("");
+					}
 				})
 				.catch((err) => console.error("coach response failed", err));
 		}

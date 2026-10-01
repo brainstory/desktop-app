@@ -17,6 +17,12 @@ import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai"
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 import { markGettingStartedDone } from "@helpers/storage";
 
+/** What became of a sent user message:
+ * - sent: the coach answered
+ * - flagged: moderation removed it from the conversation
+ * - failed / cancelled: it stays in the conversation, unanswered */
+export type CoachResponseOutcome = "sent" | "flagged" | "failed" | "cancelled";
+
 export interface ChatSessionOptions {
 	chatType: string;
 	parentIdea?: {
@@ -63,49 +69,50 @@ export function useChatSession(
 	);
 	const [readyToSave, setReadyToSave] = useState(false);
 
-	/** Generate assistant response. NOT for the final outline result. */
-	const handleGetResponse = () => {
+	/** Generate assistant response. NOT for the final outline result.
+	 * Resolves with what happened to the user's message, so the composer
+	 * only clears once the message was actually answered. */
+	const handleGetResponse = async (): Promise<CoachResponseOutcome> => {
 		setConversationState(CONVERSATION_STATE.WaitingForCoach);
+		const apiCall = () =>
+			generateResponseApi(
+				currConversation,
+				parentIdea?.summary,
+				parentIdea?.creatorName ?? null,
+				parentIdea ? parentIdea?.creatorName == null : false,
+				chatType
+			);
 		try {
-			const apiCall = () =>
-				generateResponseApi(
-					currConversation,
-					parentIdea?.summary,
-					parentIdea?.creatorName ?? null,
-					parentIdea ? parentIdea?.creatorName == null : false,
-					chatType
-				);
 			// a cancel must stay cancelled: retrying would start a fresh
 			// generation with a new cancel token 500 ms later
-			callApiWithRetry(apiCall, 1, (err) => !isGenerationCancelled(err))
-				.then((message) => {
-					const isUser = false;
-					addConversationMessage(message, isUser, currConversation, setCurrConversation);
-					setIsUserResendRequired(false);
-					setInappropriateUserTranscript(null);
-				})
-				.catch((err) => {
-					if (isGenerationCancelled(err)) {
-						// user-initiated: the message stays and the chat
-						// returns to idle, no error banner
-						return;
-					}
-					if (isModerationError(err)) {
-						const removedMessage = removeLastConversationMessage(
-							currConversation,
-							setCurrConversation
-						);
-						setInappropriateUserTranscript(removedMessage);
-						setIsUserResendRequired(true);
-					} else {
-						onError(normalizeApiError(err));
-					}
-				})
-				.finally(() => {
-					setConversationState(CONVERSATION_STATE.Idle);
-				});
-		} catch (error) {
-			console.error(error);
+			const message = await callApiWithRetry(
+				apiCall,
+				1,
+				(err) => !isGenerationCancelled(err)
+			);
+			const isUser = false;
+			addConversationMessage(message, isUser, currConversation, setCurrConversation);
+			setIsUserResendRequired(false);
+			setInappropriateUserTranscript(null);
+			return "sent";
+		} catch (err) {
+			if (isGenerationCancelled(err)) {
+				// user-initiated: the message stays and the chat returns
+				// to idle, no error banner
+				return "cancelled";
+			}
+			if (isModerationError(err)) {
+				const removedMessage = removeLastConversationMessage(
+					currConversation,
+					setCurrConversation
+				);
+				setInappropriateUserTranscript(removedMessage);
+				setIsUserResendRequired(true);
+				return "flagged";
+			}
+			onError(normalizeApiError(err));
+			return "failed";
+		} finally {
 			setConversationState(CONVERSATION_STATE.Idle);
 		}
 	};

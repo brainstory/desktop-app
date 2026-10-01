@@ -2,6 +2,7 @@ import type { ChatMessage } from "@src/types";
 import { useState, useEffect, useCallback } from "react";
 import { CONVERSATION_STATE } from "../../const";
 import RecordButton from "./RecordButton";
+import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 
 import ChatStateNotification from "@components/chat/reusable/ChatStateNotification";
 import type { Dispatch, SetStateAction } from "react";
@@ -28,7 +29,7 @@ interface AudioRecorderProps {
 	isDisabled?: boolean;
 	currConversation?: ChatMessage[];
 	conversationState: string;
-	getCoachResponse: () => Promise<void>;
+	getCoachResponse: () => Promise<CoachResponseOutcome>;
 	onTranscript: (transcript: string) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
 	isCompressed?: boolean | string | null;
