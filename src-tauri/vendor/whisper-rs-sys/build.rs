@@ -101,20 +101,27 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=wrapper.h");
+    // Brainstory: the sources are vendored and do change (upstream, a crate
+    // version's sources never do), so rebuild when they change and always
+    // refresh the copy in OUT_DIR - otherwise a stale copy is built.
+    println!("cargo:rerun-if-changed=whisper.cpp");
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let whisper_root = out.join("whisper.cpp");
 
-    if !whisper_root.exists() {
-        std::fs::create_dir_all(&whisper_root).unwrap();
-        fs_extra::dir::copy("./whisper.cpp", &out, &Default::default()).unwrap_or_else(|e| {
-            panic!(
-                "Failed to copy whisper sources into {}: {}",
-                whisper_root.display(),
-                e
-            )
+    if whisper_root.exists() {
+        std::fs::remove_dir_all(&whisper_root).unwrap_or_else(|e| {
+            panic!("Failed to clear stale {}: {}", whisper_root.display(), e)
         });
     }
+    std::fs::create_dir_all(&whisper_root).unwrap();
+    fs_extra::dir::copy("./whisper.cpp", &out, &Default::default()).unwrap_or_else(|e| {
+        panic!(
+            "Failed to copy whisper sources into {}: {}",
+            whisper_root.display(),
+            e
+        )
+    });
 
     // Brainstory: whisper.cpp is built against llama-cpp-sys-2's ggml, so the
     // program contains exactly one ggml. llama-cpp-sys-2 (0.1.157+) installs
