@@ -55,6 +55,8 @@ you like (email, AirDrop, USB stick...):
   sender and marked unread.
 - Give feedback on any idea with **Give Feedback** (the normal feedback interview),
   then export the feedback and send it back.
+- A feedback file also carries your emoji reactions on the idea's sections; they show
+  on the original idea attributed to you. Reactions on feedback comments stay local.
 
 The author name shown to others is your profile name (Settings → General).
 

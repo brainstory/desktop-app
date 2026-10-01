@@ -2,6 +2,7 @@ use serde_json::json;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::reactions::{is_valid_reaction, SharedSectionReaction};
 use crate::types::IdeaType;
 use crate::AppState;
 
@@ -22,6 +23,9 @@ const MAX_STRUCTURED_BYTES: usize = 1024 * 1024;
 const MAX_TITLE_CHARS: usize = 200;
 /// Longest result document accepted from a share file.
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
+/// Most section reactions a feedback file may carry: every one of the 8
+/// emojis on ~60 sections. More means a hostile file, not a keen reader.
+const MAX_IMPORTED_REACTIONS: usize = 500;
 
 pub const SHARE_FORMAT: &str = "brainstory-share";
 pub const SHARE_VERSION: i64 = 1;
@@ -46,6 +50,9 @@ pub enum SharePayload {
 		result: String,
 		structured_result: Option<serde_json::Value>,
 		created_at: Option<String>,
+		/// the feedback author's own reactions on the target idea's
+		/// sections (optional in the file; older files have none)
+		reactions: Vec<SharedSectionReaction>,
 	},
 }
 
@@ -97,6 +104,7 @@ pub fn build_export_payload(author: &str, payload: &SharePayload) -> serde_json:
 			result,
 			structured_result,
 			created_at,
+			reactions,
 		} => {
 			root["kind"] = json!("feedback");
 			root["feedback"] = json!({
@@ -106,6 +114,7 @@ pub fn build_export_payload(author: &str, payload: &SharePayload) -> serde_json:
 				"result": result,
 				"structured_result": structured_result,
 				"created_at": created_at,
+				"reactions": reactions,
 			});
 		}
 	}
@@ -194,11 +203,47 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 					.as_object()
 					.map(|_| feedback["structured_result"].clone()),
 				created_at: parse_created_at(feedback["created_at"].as_str()),
+				reactions: parse_reactions(&feedback["reactions"])?,
 			}
 		}
 		other => return Err(format!("unknown share kind: {other}")),
 	};
 	Ok(ParsedShare { author, payload })
+}
+
+/// The optional section reactions of a feedback file. Like the other
+/// optional fields, a missing or wrongly-typed `reactions` falls back to
+/// none, and an entry that is not a whitelisted emoji on a non-negative
+/// integer section index is skipped rather than failing the whole file
+/// (so a newer build's extra emojis cost only those reactions, never the
+/// feedback itself). An oversized list is a hostile file and refused,
+/// like an oversized title.
+fn parse_reactions(value: &serde_json::Value) -> Result<Vec<SharedSectionReaction>, String> {
+	let Some(entries) = value.as_array() else {
+		return Ok(Vec::new());
+	};
+	if entries.len() > MAX_IMPORTED_REACTIONS {
+		return Err(format!(
+			"share file carries too many reactions (limit {MAX_IMPORTED_REACTIONS})"
+		));
+	}
+	let mut reactions: Vec<SharedSectionReaction> = Vec::new();
+	for entry in entries {
+		let section_index = entry["section_index"].as_i64().filter(|i| *i >= 0);
+		let emoji = entry["emoji"].as_str().filter(|e| is_valid_reaction(e));
+		let (Some(section_index), Some(emoji)) = (section_index, emoji) else {
+			log::warn!("skipping an invalid reaction in a share file");
+			continue;
+		};
+		let reaction = SharedSectionReaction {
+			section_index,
+			emoji: emoji.to_string(),
+		};
+		if !reactions.contains(&reaction) {
+			reactions.push(reaction);
+		}
+	}
+	Ok(reactions)
 }
 
 /// Titles and results from untrusted files are bounded independently of
@@ -237,13 +282,16 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 		.unwrap_or_else(|| "Anonymous".into());
 
 	let payload = if is_feedback {
-		let (target_share_id, target_title) = match &idea.parent_idea {
+		let (target_share_id, target_title, reactions) = match &idea.parent_idea {
 			Some(parent) => (
 				db.get_share_id(&parent.id)
 					.unwrap_or_else(|| parent.id.clone()),
 				parent.title.clone(),
+				// my own reactions on the idea this feedback is about
+				// (never ones other people's imported feedback carried)
+				db.my_section_reactions(&parent.id)?,
 			),
-			None => (String::new(), String::new()),
+			None => (String::new(), String::new(), Vec::new()),
 		};
 		SharePayload::Feedback {
 			target_share_id,
@@ -252,6 +300,7 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 			result: idea.result.clone().unwrap_or_default(),
 			structured_result: idea.structured_result.clone(),
 			created_at: Some(idea.created_at.clone()),
+			reactions,
 		}
 	} else {
 		let share_id = db.get_share_id(&idea.id).unwrap_or_else(|| idea.id.clone());
@@ -422,6 +471,7 @@ fn import_parsed(
 			result,
 			structured_result,
 			created_at,
+			reactions,
 		} => {
 			let parent = db
 				.get_idea_by_share_id(&target_share_id)
@@ -457,7 +507,8 @@ fn import_parsed(
 			} else {
 				title
 			};
-			// Same feedback file twice = no-op.
+			// Same feedback file twice = no-op (its reactions included:
+			// they were stored with the first import).
 			let duplicate = db.get_idea_children(&parent.id)?.iter().any(|child| {
 				child.result.as_deref() == Some(result.as_str())
 					&& child.creator_name.as_deref() == Some(author.as_str())
@@ -488,6 +539,9 @@ fn import_parsed(
 				parent_idea_id: Some(&parent.id),
 				creator_name: Some(&author),
 				created_at: created_at.as_deref(),
+				// stored on the parent's sections, attributed to this
+				// feedback (deleting it deletes them)
+				parent_section_reactions: &reactions,
 				..Default::default()
 			}))?;
 			// Imported feedback arrives unread so it surfaces in the UI.
@@ -510,6 +564,7 @@ mod tests {
 		build_export_payload, import_parsed, parse_share_payload, ParsedShare, SharePayload,
 	};
 	use crate::db::Db;
+	use crate::reactions::SharedSectionReaction;
 	use crate::types::IdeaType;
 
 	fn temp_db(name: &str) -> (Db, tempfile::TempDir) {
@@ -541,6 +596,7 @@ mod tests {
 				result: "notes".into(),
 				structured_result: None,
 				created_at: None,
+				reactions: vec![],
 			},
 		}
 	}
@@ -718,6 +774,16 @@ mod tests {
 				result: "notes".into(),
 				structured_result: Some(structured.clone()),
 				created_at: None,
+				reactions: vec![
+					SharedSectionReaction {
+						section_index: 1,
+						emoji: "⚠️".into(),
+					},
+					SharedSectionReaction {
+						section_index: 3,
+						emoji: "🚀".into(),
+					},
+				],
 			},
 			"Grace",
 		);
@@ -727,11 +793,17 @@ mod tests {
 				target_share_id,
 				structured_result,
 				created_at,
+				reactions,
 				..
 			} => {
 				assert_eq!(target_share_id, "target-1");
 				assert_eq!(structured_result.as_ref(), Some(&structured));
 				assert_eq!(created_at, None);
+				let emojis: Vec<(i64, &str)> = reactions
+					.iter()
+					.map(|r| (r.section_index, r.emoji.as_str()))
+					.collect();
+				assert_eq!(emojis, vec![(1, "⚠️"), (3, "🚀")]);
 			}
 			_ => panic!("wrong payload kind"),
 		}
@@ -787,5 +859,219 @@ mod tests {
 			SharePayload::Idea { created_at, .. } => assert_eq!(created_at, None),
 			_ => panic!("wrong payload kind"),
 		}
+	}
+
+	fn reaction(section_index: i64, emoji: &str) -> SharedSectionReaction {
+		SharedSectionReaction {
+			section_index,
+			emoji: emoji.into(),
+		}
+	}
+
+	fn feedback_file(reactions: serde_json::Value) -> String {
+		json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "feedback", "author": "Grace",
+			"feedback": {
+				"target_share_id": "share-1", "title": "F", "result": "notes",
+				"reactions": reactions,
+			}
+		}))
+	}
+
+	fn parsed_reactions(raw: &str) -> Vec<SharedSectionReaction> {
+		match parse_share_payload(raw).expect("parses").payload {
+			SharePayload::Feedback { reactions, .. } => reactions,
+			_ => panic!("wrong payload kind"),
+		}
+	}
+
+	/// Ada shares an idea, Grace reacts to its sections and sends feedback
+	/// back: Ada sees Grace's reactions on her own idea.
+	#[test]
+	fn feedback_carries_my_section_reactions_back_to_the_author() {
+		let (ada, _a) = temp_db("ada");
+		ada.set_setting(crate::keys::setting::USER_NAME, "Ada")
+			.unwrap();
+		ada.insert_idea(crate::db::NewIdea {
+			id: "idea",
+			title: "Plan",
+			idea_type: IdeaType::Original,
+			result: "## One\na\n\n## Two\nb",
+			metadata: &serde_json::json!({}),
+			..Default::default()
+		})
+		.unwrap();
+		// Ada's own reaction on her idea never travels with an idea export
+		ada.toggle_section_reaction("idea", 2, "🚀").unwrap();
+		let (author, payload) = super::export_share(&ada, "idea").expect("export idea");
+		let envelope = build_export_payload(&author, &payload);
+		assert!(envelope["idea"].get("reactions").is_none(), "{envelope}");
+		assert!(envelope.get("reactions").is_none(), "{envelope}");
+
+		let (grace, _g) = temp_db("grace");
+		grace
+			.set_setting(crate::keys::setting::USER_NAME, "Grace")
+			.unwrap();
+		let raw = serde_json::to_string(&envelope).unwrap();
+		let imported = import_parsed(&grace, parse_share_payload(&raw).unwrap()).unwrap();
+		let idea_copy = imported["id"].as_str().unwrap().to_string();
+		grace.toggle_section_reaction(&idea_copy, 1, "👍").unwrap();
+		grace.toggle_section_reaction(&idea_copy, 2, "⚠️").unwrap();
+		grace.toggle_section_reaction(&idea_copy, 2, "❓").unwrap();
+		grace.toggle_section_reaction(&idea_copy, 2, "❓").unwrap(); // off again
+		grace
+			.insert_idea(crate::db::NewIdea {
+				id: "grace-fb",
+				title: "Feedback: Plan",
+				idea_type: IdeaType::Feedback,
+				result: "looks good",
+				metadata: &serde_json::json!({}),
+				parent_idea_id: Some(&idea_copy),
+				..Default::default()
+			})
+			.unwrap();
+		let (author, payload) = super::export_share(&grace, "grace-fb").expect("export feedback");
+		assert_eq!(author, "Grace");
+		let envelope = build_export_payload(&author, &payload);
+		assert_eq!(
+			envelope["feedback"]["reactions"],
+			serde_json::json!([
+				{ "section_index": 1, "emoji": "👍" },
+				{ "section_index": 2, "emoji": "⚠️" },
+			]),
+			"exactly my current reactions on the parent idea"
+		);
+
+		let raw = serde_json::to_string_pretty(&envelope).unwrap();
+		let result = import_parsed(&ada, parse_share_payload(&raw).unwrap()).expect("import");
+		assert_eq!(result["parent_id"], "idea");
+		let feedback_id = result["id"].as_str().unwrap().to_string();
+		let theirs = |section_index: i64, emoji: &str| crate::reactions::SectionReaction {
+			section_index,
+			emoji: emoji.into(),
+			mine: false,
+			from: Some("Grace".into()),
+		};
+		let mine = crate::reactions::SectionReaction {
+			section_index: 2,
+			emoji: "🚀".into(),
+			mine: true,
+			from: None,
+		};
+		assert_eq!(
+			ada.get_reactions("idea").unwrap().sections,
+			vec![theirs(1, "👍"), mine.clone(), theirs(2, "⚠️")]
+		);
+
+		// importing the same file again is a duplicate: no second copy
+		let again = import_parsed(&ada, parse_share_payload(&raw).unwrap()).unwrap();
+		assert_eq!(again["duplicate"], true);
+		assert_eq!(ada.get_reactions("idea").unwrap().sections.len(), 3);
+
+		// Ada's feedback export to someone else carries only her own
+		// reactions, never the ones Grace's file brought in
+		assert_eq!(
+			ada.my_section_reactions("idea").unwrap(),
+			vec![reaction(2, "🚀")]
+		);
+
+		// deleting Grace's feedback takes her reactions with it
+		assert!(ada.delete_idea(&feedback_id).unwrap());
+		assert_eq!(ada.get_reactions("idea").unwrap().sections, vec![mine]);
+	}
+
+	#[test]
+	fn feedback_without_reactions_exports_an_empty_list() {
+		let (db, _dir) = temp_db("plain");
+		local_idea(&db, "idea", "Plan", Some("share-1"));
+		db.insert_idea(crate::db::NewIdea {
+			id: "fb",
+			title: "F",
+			idea_type: IdeaType::Feedback,
+			result: "notes",
+			metadata: &serde_json::json!({}),
+			parent_idea_id: Some("idea"),
+			..Default::default()
+		})
+		.unwrap();
+		let (author, payload) = super::export_share(&db, "fb").unwrap();
+		let envelope = build_export_payload(&author, &payload);
+		assert_eq!(envelope["feedback"]["reactions"], serde_json::json!([]));
+		assert_eq!(
+			envelope["version"], 1,
+			"the share format version is unchanged"
+		);
+	}
+
+	#[test]
+	fn older_feedback_files_without_reactions_import_as_before() {
+		let raw = json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "feedback", "author": "Grace",
+			"feedback": { "target_share_id": "share-1", "title": "F", "result": "notes" }
+		}));
+		assert!(parsed_reactions(&raw).is_empty());
+		let (db, _dir) = temp_db("old");
+		local_idea(&db, "idea", "Plan", Some("share-1"));
+		let result = import_parsed(&db, parse_share_payload(&raw).unwrap()).expect("imports");
+		assert_eq!(result["parent_id"], "idea");
+		assert_eq!(db.get_idea_children("idea").unwrap().len(), 1);
+		assert!(db.get_reactions("idea").unwrap().sections.is_empty());
+		// a null or wrongly-typed field falls back to none, like other
+		// optional fields
+		for value in [
+			serde_json::Value::Null,
+			serde_json::json!("👍"),
+			serde_json::json!({}),
+		] {
+			assert!(parsed_reactions(&feedback_file(value)).is_empty());
+		}
+	}
+
+	#[test]
+	fn invalid_reactions_are_skipped_not_fatal() {
+		let raw = feedback_file(serde_json::json!([
+			{ "section_index": 1, "emoji": "👍" },
+			{ "section_index": 1, "emoji": "❤️" },
+			{ "section_index": 1, "emoji": "\u{26A0}" },
+			{ "section_index": -1, "emoji": "👍" },
+			{ "section_index": 1.5, "emoji": "👍" },
+			{ "section_index": "2", "emoji": "👍" },
+			{ "emoji": "👍" },
+			{ "section_index": 2 },
+			"👍",
+			{ "section_index": 2, "emoji": "📚" },
+			{ "section_index": 1, "emoji": "👍" },
+		]));
+		assert_eq!(
+			parsed_reactions(&raw),
+			vec![reaction(1, "👍"), reaction(2, "📚")],
+			"valid entries kept once, everything else dropped"
+		);
+		let (db, _dir) = temp_db("invalid");
+		local_idea(&db, "idea", "Plan", Some("share-1"));
+		import_parsed(&db, parse_share_payload(&raw).unwrap()).expect("still imports");
+		let stored: Vec<(i64, String)> = db
+			.get_reactions("idea")
+			.unwrap()
+			.sections
+			.into_iter()
+			.map(|r| (r.section_index, r.emoji))
+			.collect();
+		assert_eq!(stored, vec![(1, "👍".to_string()), (2, "📚".to_string())]);
+	}
+
+	#[test]
+	fn too_many_reactions_reject_the_file() {
+		let cap = super::MAX_IMPORTED_REACTIONS;
+		let entries = |n: usize| {
+			serde_json::Value::Array(
+				(0..n)
+					.map(|i| serde_json::json!({ "section_index": i, "emoji": "👍" }))
+					.collect(),
+			)
+		};
+		assert_eq!(parsed_reactions(&feedback_file(entries(cap))).len(), cap);
+		let err = parse_share_payload(&feedback_file(entries(cap + 1))).expect_err("over the cap");
+		assert!(err.contains("too many reactions"), "unexpected: {err}");
 	}
 }
