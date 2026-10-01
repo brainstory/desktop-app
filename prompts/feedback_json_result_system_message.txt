@@ -38,7 +38,6 @@ indented) with this structure:
             "Exact sentence or phrase from the OID that this feedback addresses."
           ],
           "feedback_text": "H's feedback in their own words, written in first person.",
-          "labels": [{"name": "agree", "emoji": "👍"}],
           "confidence": "high",
           "priority": "medium",
           "relationships": []
@@ -62,17 +61,6 @@ empty rather than paraphrasing. Spans must be from the same section as "oid_head
 the section generally, this can be empty.
 
 **"feedback_text"**: The feedback itself, written in first person using H's words. Concise but complete.
-
-**"labels"**: A list of one or two labels (rarely more) describing the feedback, in this format:
-`[{"name": "agree", "emoji": "👍"}]` drawn from this set:
-    Agreement: "agree" - 👍
-    Opposition: "disagree" - 👎
-    Request for clarification: "question" - ❓
-    Suggestion for improvement: "suggestion" - 💡
-    Expression of confusion: "confused" - 😕
-    Highlight of an error or mistake: "error" - ⚠️
-    Information offering: "info" - 📚
-    Request for further action: "action" - 🚀
 
 **"confidence"**: How strongly H expressed this feedback: "low", "medium", or "high". Infer from their language.
 Hedging ("maybe", "I'm not sure") is low, direct statements are high.

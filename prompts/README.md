@@ -12,7 +12,8 @@ These are adapted from three sources:
 - The original [brainstory/prompts](https://github.com/brainstory/prompts) system messages
   (interview flow, `<t>` / `<oid>` / `<idea>` tag input formats, and the feedback JSON schema
   consumed by the frontend: `oid_heading_text` with `<index>##<heading>` format, `matched_spans`,
-  `labels` as `[{name, emoji}]`).
+  `feedback_text`). The original schema's LLM-chosen `labels` (emoji per item) were dropped: emoji
+  reactions are now chosen by people in the app, never guessed by the model.
 - The improved rewrites from the Claude Code plugin (`../claude-code-brainstory`): explicit
   no-information/no-affirmation rules, questioning strategies, conversation modes, thinking
   frameworks, thread tracking, and the extended synthesis sections in result documents.
