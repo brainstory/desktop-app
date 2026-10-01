@@ -1,5 +1,6 @@
 import { useId, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "@helpers/cn";
+import OnOffToggleButton from "@ds/OnOffToggleButton";
 import type {
 	AiSettingsResponse,
 	AppleSttStatus,
@@ -92,9 +93,30 @@ export function SttEngineSection({
 }: SttEngineSectionProps) {
 	const headingId = useId();
 	const appleHintId = useId();
-	// the backend transcribes externally whenever a URL is saved
-	const usingExternal = !!savedSettings?.extSttBaseUrl;
-	const [endpointOpen, setEndpointOpen] = useState(usingExternal);
+	const externalLabelId = useId();
+	// mirrors the backend's uses_external_stt: switched on AND a URL saved
+	const switchedOn = settings.sttMode === "external";
+	const usingExternal = switchedOn && !!savedSettings?.extSttBaseUrl;
+	// start the endpoint open whenever it is (or is about to be) relevant
+	const [endpointOpen, setEndpointOpen] = useState(switchedOn || !!savedSettings?.extSttBaseUrl);
+
+	const toggleExternal = () => {
+		const next = switchedOn ? "local" : "external";
+		// the switch saves only sttMode, so the URL must already be
+		// persisted - a typed-but-unsaved one doesn't count
+		if (next === "external" && !savedSettings?.extSttBaseUrl) {
+			setEndpointOpen(true);
+			openSnackbar(
+				false,
+				settings.extSttBaseUrl
+					? "Save the external STT endpoint URL first, then enable this"
+					: "Set an external STT endpoint URL first, then enable this"
+			);
+			return;
+		}
+		if (next === "external") setEndpointOpen(true);
+		save({ sttMode: next });
+	};
 
 	// The language reaches Apple Speech and multilingual whisper models
 	// (directly, or as Apple's fallback); English-only builds ignore it.
@@ -130,10 +152,20 @@ export function SttEngineSection({
 				status={status}
 				headingId={headingId}
 			/>
+			<div className="flex gap-2 items-center">
+				<span className="text-sm text-stone-600" id={externalLabelId}>
+					Use external STT endpoint
+				</span>
+				<OnOffToggleButton
+					aria-labelledby={externalLabelId}
+					checked={switchedOn}
+					onToggle={toggleExternal}
+				/>
+			</div>
 			{usingExternal && (
 				<p className="text-sm bg-stone-100 border border-stone-200 rounded-lg p-3">
-					Transcription uses the external STT endpoint below. Clear its URL to transcribe
-					on this computer with the engine chosen here.
+					Transcription uses the external STT endpoint below. Turn the switch off to
+					transcribe on this computer with the engine chosen here.
 				</p>
 			)}
 			<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
@@ -224,8 +256,9 @@ export function SttEngineSection({
 			>
 				<summary className="font-semibold cursor-pointer">External STT endpoint</summary>
 				<p className="text-stone-500 mt-2 mb-4">
-					Any OpenAI-compatible transcription server (e.g. a whisper.cpp server). When a
-					URL is saved, it is used instead of transcribing on this computer.
+					Any OpenAI-compatible transcription server (e.g. a whisper.cpp server). Save the
+					URL, then turn on the switch above to use it instead of transcribing on this
+					computer.
 				</p>
 				<ExternalEndpointFields
 					kind="stt"

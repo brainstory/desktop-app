@@ -63,10 +63,11 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	// mirrors the backend's effective_stt_engine resolution
 	const appleActive =
 		settings.sttEngine === "apple" || (settings.sttEngine === "auto" && !!appleStt?.available);
-	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl && !appleActive;
+	// mirrors the backend's uses_external_stt: switched on AND a URL saved
+	const usingExternalStt = settings.sttMode === "external" && !!settings.extSttBaseUrl;
+	const needsStt = sttStatus.state === "missing" && !usingExternalStt && !appleActive;
 
 	const usingExternalLlm = settings.llmMode === "external";
-	const usingExternalStt = !!settings.extSttBaseUrl;
 	const activeLlmLabel = usingExternalLlm
 		? `External endpoint ${settings.extLlmBaseUrl} (${settings.extLlmModel || "default model"})`
 		: (() => {

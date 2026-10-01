@@ -49,9 +49,9 @@ pub async fn transcribe(
 	}
 
 	let settings = state.ai_settings();
-	// STT offload rule: if an external STT endpoint is configured, use it;
+	// STT offload rule: the external endpoint when switched on (sttMode);
 	// otherwise the engine setting picks Apple Speech or local whisper.
-	if !settings.ext_stt_base_url.is_empty() {
+	if settings.uses_external_stt() {
 		let transcript = stt::transcribe_external(
 			&settings.ext_stt_base_url,
 			&settings.ext_stt_api_key,

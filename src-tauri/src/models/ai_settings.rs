@@ -35,6 +35,38 @@ impl std::str::FromStr for LlmMode {
 	}
 }
 
+/// Where transcription runs. Mirrors [`LlmMode`]: an external endpoint can
+/// be saved (and tested) without being used until this says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SttMode {
+	/// on this computer (Apple Speech or whisper, per `stt_engine`)
+	Local,
+	/// the user-configured OpenAI-compatible transcription endpoint
+	External,
+}
+
+impl SttMode {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Local => "local",
+			Self::External => "external",
+		}
+	}
+}
+
+impl std::str::FromStr for SttMode {
+	type Err = String;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			"local" => Ok(Self::Local),
+			"external" => Ok(Self::External),
+			_ => Err(format!(
+				"invalid sttMode '{s}' (expected local or external)"
+			)),
+		}
+	}
+}
+
 /// Local speech-to-text engine selection. (Named `SpeechEngine` because
 /// `SttEngine` is the loaded whisper engine itself.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +125,8 @@ pub struct AiSettings {
 	pub llm_mode: LlmMode,
 	pub llm_model: String,
 	pub stt_model: String,
+	/// Local or external transcription (see [`Self::uses_external_stt`]).
+	pub stt_mode: SttMode,
 	/// Speech-to-text engine selection.
 	pub stt_engine: SpeechEngine,
 	/// BCP-47 locale for the Apple Speech engine (e.g. "en-US").
@@ -169,6 +203,19 @@ impl AiSettings {
 					m
 				}
 			},
+			stt_mode: {
+				// Before this setting existed a saved STT URL alone meant
+				// "external", so an install without an explicit choice keeps
+				// that behaviour; an unknown stored value is treated the same.
+				let legacy = if get(setting::EXT_STT_BASE_URL).is_empty() {
+					SttMode::Local
+				} else {
+					SttMode::External
+				};
+				get(setting::AI_STT_MODE)
+					.parse::<SttMode>()
+					.unwrap_or(legacy)
+			},
 			stt_engine: match db.get_setting(setting::AI_STT_ENGINE) {
 				Some(v) => v
 					.parse::<SpeechEngine>()
@@ -208,6 +255,14 @@ impl AiSettings {
 		self.llm_mode == LlmMode::External
 	}
 
+	/// True when transcription should go to the external endpoint: the
+	/// mode says so and a URL is saved. Without a URL there is nothing to
+	/// call, so it falls back to local rather than failing every recording.
+	/// Single source of truth for the routing decision.
+	pub fn uses_external_stt(&self) -> bool {
+		self.stt_mode == SttMode::External && !self.ext_stt_base_url.is_empty()
+	}
+
 	/// Validate and apply a partial update from the settings form
 	/// (absent/null fields keep their value). Err rejects the whole
 	/// update; nothing is applied on failure.
@@ -228,6 +283,9 @@ impl AiSettings {
 				return Err(format!("unknown sttModel '{v}'"));
 			}
 			self.stt_model = v;
+		}
+		if let Some(v) = get_str("sttMode") {
+			self.stt_mode = v.parse::<SttMode>()?;
 		}
 		if let Some(v) = get_str("sttEngine") {
 			self.stt_engine = v.parse::<SpeechEngine>()?;
@@ -300,6 +358,7 @@ impl AiSettings {
 			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
 			(setting::AI_LLM_MODEL, self.llm_model.clone()),
 			(setting::AI_STT_MODEL, self.stt_model.clone()),
+			(setting::AI_STT_MODE, self.stt_mode.as_str().to_string()),
 			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),
 			(setting::AI_STT_LANGUAGE, self.stt_language.clone()),
 			(setting::HF_ENDPOINT, self.hf_endpoint.clone()),
@@ -546,5 +605,62 @@ mod tests {
 		// an empty base URL is fine (the endpoint is simply unused)
 		bad.apply_updates(&serde_json::json!({ "extLlmBaseUrl": "" }))
 			.expect("empty base url allowed");
+	}
+
+	#[test]
+	fn stt_mode_defaults_keep_existing_external_stt_users_external() {
+		// fresh install: local
+		let (db, _dir) = temp_db("stt-mode-fresh");
+		assert_eq!(AiSettings::load(&db).stt_mode, super::SttMode::Local);
+
+		// before stt_mode existed, a saved URL alone meant "external" -
+		// such installs must keep transcribing externally
+		let (db, _dir) = temp_db("stt-mode-legacy");
+		db.set_setting(setting::EXT_STT_BASE_URL, "http://localhost:8080")
+			.unwrap();
+		let s = AiSettings::load(&db);
+		assert_eq!(s.stt_mode, super::SttMode::External);
+		assert!(s.uses_external_stt());
+
+		// an explicit choice wins over the URL
+		db.set_setting(setting::AI_STT_MODE, "local").unwrap();
+		let s = AiSettings::load(&db);
+		assert_eq!(s.stt_mode, super::SttMode::Local);
+		assert!(
+			!s.uses_external_stt(),
+			"a saved URL alone no longer routes STT"
+		);
+	}
+
+	#[test]
+	fn external_stt_needs_both_the_mode_and_a_url() {
+		let (db, _dir) = temp_db("stt-mode-url");
+		let mut s = AiSettings::load(&db);
+		s.stt_mode = super::SttMode::External;
+		s.ext_stt_base_url = String::new();
+		assert!(
+			!s.uses_external_stt(),
+			"no URL: fall back to local, don't error"
+		);
+		s.ext_stt_base_url = "http://localhost:8080".into();
+		assert!(s.uses_external_stt());
+	}
+
+	#[test]
+	fn stt_mode_is_validated_and_persisted() {
+		let (db, _dir) = temp_db("stt-mode-save");
+		let mut s = AiSettings::load(&db);
+		assert!(s
+			.apply_updates(&serde_json::json!({ "sttMode": "cloud" }))
+			.is_err());
+		s.apply_updates(&serde_json::json!({ "sttMode": "external" }))
+			.expect("valid mode");
+		let previous = AiSettings::load(&db);
+		s.save(&db, &previous).expect("save");
+		assert_eq!(
+			db.get_setting(setting::AI_STT_MODE).as_deref(),
+			Some("external")
+		);
+		assert_eq!(AiSettings::load(&db).stt_mode, super::SttMode::External);
 	}
 }

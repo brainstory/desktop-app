@@ -255,6 +255,7 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 			"llmMode": s.llm_mode.as_str(),
 			"llmModel": s.llm_model,
 			"sttModel": s.stt_model,
+			"sttMode": s.stt_mode.as_str(),
 			"sttEngine": s.stt_engine.as_str(),
 			"sttLanguage": s.stt_language,
 			"hfTokenSet": hf_set,
@@ -354,6 +355,12 @@ pub async fn test_stt_endpoint(state: State<'_, AppState>) -> Result<String, Str
 		wav,
 	)
 	.await?;
+	if !settings.uses_external_stt() {
+		return Ok(format!(
+			"endpoint OK ({}) - but transcription still runs on this computer. Turn on 'Use external STT endpoint' to send it here.",
+			settings.ext_stt_base_url
+		));
+	}
 	Ok(format!("endpoint OK ({})", settings.ext_stt_base_url))
 }
 

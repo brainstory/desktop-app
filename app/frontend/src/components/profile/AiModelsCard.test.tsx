@@ -13,6 +13,7 @@ const aiSettings = {
 	llmMode: "local",
 	llmModel: "gemma-4-E2B-qat",
 	sttModel: "whisper-tiny-en",
+	sttMode: "local",
 	sttEngine: "whisper",
 	sttLanguage: "en-US",
 	hfTokenSet: false,
@@ -120,7 +121,7 @@ describe("AiModelsCard", () => {
 		const user = userEvent.setup();
 		mockCard();
 		renderCard();
-		const sw = await screen.findByRole("switch", { name: undefined });
+		const sw = await screen.findByRole("switch", { name: "Use external LLM endpoint" });
 		// the switch sits next to its label text
 		expect(screen.getByText("Use external LLM endpoint").parentElement).toContainElement(sw);
 		expect(sw).toHaveAttribute("aria-checked", "false");
@@ -273,13 +274,65 @@ describe("AiModelsCard", () => {
 
 	it("says when transcription goes to the external STT endpoint", async () => {
 		mockCard({
-			get_ai_settings: () => ({ ...aiSettings, extSttBaseUrl: "http://localhost:8080" })
+			get_ai_settings: () => ({
+				...aiSettings,
+				sttMode: "external",
+				extSttBaseUrl: "http://localhost:8080"
+			})
 		});
 		renderCard();
 		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
 		expect(
 			within(stt).getByText(/Transcription uses the external STT endpoint below/)
 		).toBeInTheDocument();
+	});
+
+	it("a saved STT URL alone keeps transcription on this computer", async () => {
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, extSttBaseUrl: "http://localhost:8080" })
+		});
+		renderCard();
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		expect(
+			within(stt).getByRole("switch", { name: "Use external STT endpoint" })
+		).toHaveAttribute("aria-checked", "false");
+		expect(
+			within(stt).queryByText(/Transcription uses the external STT endpoint/)
+		).not.toBeInTheDocument();
+	});
+
+	it("refuses to switch STT to external without a saved URL and opens its settings", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		const details = within(stt).getByText("External STT endpoint").closest("details")!;
+		const sw = within(stt).getByRole("switch", { name: "Use external STT endpoint" });
+		await user.click(sw);
+		expect(
+			await screen.findByText("Set an external STT endpoint URL first, then enable this")
+		).toBeInTheDocument();
+		expect(sw).toHaveAttribute("aria-checked", "false");
+		expect(details).toHaveAttribute("open");
+		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")).toBe(
+			false
+		);
+	});
+
+	it("the STT switch sends only sttMode once a URL is saved", async () => {
+		const user = userEvent.setup();
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, extSttBaseUrl: "http://localhost:8080" })
+		});
+		renderCard();
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		const sw = within(stt).getByRole("switch", { name: "Use external STT endpoint" });
+		await user.click(sw);
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call![1]).toEqual({ ai: { sttMode: "external" } });
+		});
+		expect(sw).toHaveAttribute("aria-checked", "true");
 	});
 
 	it("opens the LLM endpoint settings when enabling external mode without a URL", async () => {

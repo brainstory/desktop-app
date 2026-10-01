@@ -35,10 +35,13 @@ style hint.
 
 Recording is captured as 16 kHz mono WAV in the webview and transcribed locally.
 
-**External offload**: Settings → AI Models → External endpoints lets you point the LLM
-and/or STT at any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...).
-If an external STT URL is set it takes precedence over the local whisper model and
-Apple Speech; likewise the LLM mode switch toggles local vs external.
+**External offload**: Settings → AI Models lets you point the LLM and/or STT at any
+OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...). Each has its own
+"External … endpoint" section (URL, model, API key, Test) and its own "Use external …
+endpoint" switch: save and test the URL, then turn the switch on. While the STT switch
+is on, transcription goes to the server instead of Apple Speech or the local whisper
+model. (Installs that already had an STT URL saved before the switch existed start with
+it on.)
 
 ## Sharing without accounts
 

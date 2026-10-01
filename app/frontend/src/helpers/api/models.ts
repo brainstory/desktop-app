@@ -31,6 +31,8 @@ export interface AiSettingsResponse {
 	llmMode: string;
 	llmModel: string;
 	sttModel: string;
+	/** "local" or "external": whether transcription uses the external endpoint */
+	sttMode: string;
 	sttEngine: string;
 	sttLanguage: string;
 	hfTokenSet: boolean;

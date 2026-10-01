@@ -530,9 +530,9 @@ fn plan_model_load(
 		Some(spec) if downloaded(spec) => WhisperPlan::Load(spec.id),
 		_ => WhisperPlan::Missing,
 	};
-	// STT: external endpoint wins; otherwise the engine setting picks
+	// STT: the external endpoint when switched on; otherwise the engine setting picks
 	// Apple Speech (macOS 26+, zero downloads) or local whisper.
-	let (whisper, stt_status) = if !settings.ext_stt_base_url.is_empty() {
+	let (whisper, stt_status) = if settings.uses_external_stt() {
 		(WhisperPlan::Unload, Some(SttStatusPlan::External))
 	} else if settings.stt_engine == SpeechEngine::Apple && !apple_available {
 		(whisper_model, Some(SttStatusPlan::AppleUnsupported))
@@ -637,7 +637,7 @@ fn run_model_loader(app: AppHandle, settings: AiSettings) {
 #[cfg(test)]
 mod loader_plan_tests {
 	use super::{plan_model_load, LlmPlan, LoadPlan, SttStatusPlan, WhisperPlan};
-	use crate::models::{AiSettings, LlmMode, SpeechEngine};
+	use crate::models::{AiSettings, LlmMode, SpeechEngine, SttMode};
 
 	fn settings(engine: SpeechEngine) -> (AiSettings, tempfile::TempDir) {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -647,6 +647,7 @@ mod loader_plan_tests {
 		s.stt_model = "whisper-small-en".into();
 		s.llm_model = "gemma-4-E4B".into();
 		s.llm_mode = LlmMode::Local;
+		s.stt_mode = SttMode::Local;
 		s.ext_stt_base_url = String::new();
 		(s, dir)
 	}
@@ -681,6 +682,7 @@ mod loader_plan_tests {
 	fn external_endpoints_unload_the_local_engines() {
 		let (mut s, _d) = settings(SpeechEngine::Auto);
 		s.ext_stt_base_url = "http://localhost:9000".into();
+		s.stt_mode = SttMode::External;
 		s.llm_mode = LlmMode::External;
 		assert_eq!(
 			plan_model_load(&s, true, ALL),
@@ -690,6 +692,16 @@ mod loader_plan_tests {
 				llm: LlmPlan::External,
 			}
 		);
+	}
+
+	#[test]
+	fn a_saved_stt_url_does_not_route_stt_externally_in_local_mode() {
+		let (mut s, _d) = settings(SpeechEngine::Whisper);
+		s.ext_stt_base_url = "http://localhost:9000".into();
+		s.stt_mode = SttMode::Local;
+		let plan = plan_model_load(&s, true, ALL);
+		assert_eq!(plan.whisper, WhisperPlan::Load("whisper-small-en"));
+		assert_eq!(plan.stt_status, None);
 	}
 
 	#[test]

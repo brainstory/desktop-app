@@ -10,7 +10,7 @@ mod state;
 
 pub use ai_settings::{
 	default_stt_engine, has_http_scheme, hf_endpoint, resolve_hf_endpoint, AiSettings, LlmMode,
-	SpeechEngine,
+	SpeechEngine, SttMode,
 };
 pub use catalog::{find_model, ModelKind, ModelSpec, LLM_MODELS, STT_MODELS};
 pub use download::{
