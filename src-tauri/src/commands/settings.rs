@@ -93,18 +93,37 @@ fn valid_reminder_time(value: &str) -> bool {
 	parse_hhmm(value).is_some()
 }
 
-#[tauri::command]
-pub async fn save_user_settings(
-	state: State<'_, AppState>,
-	user: Option<serde_json::Value>,
-	enabled_log_question_ids: Option<Vec<i64>>,
-	notifications: Option<Vec<serde_json::Value>>,
-) -> Result<serde_json::Value, String> {
-	// Validate everything first and collect the writes, so the settings
-	// land in ONE transaction (a failure can no longer persist half the
-	// form) and side effects only run once persisted.
-	let mut kv: Vec<(&str, String)> = Vec::new();
-	if let Some(user) = &user {
+/// The validated writes of one save_user_settings call, plus what changed
+/// for the side effects that run after persisting.
+#[derive(Debug, Default)]
+struct UserSettingsUpdate {
+	kv: Vec<(&'static str, String)>,
+	reminder_enabled_after: Option<bool>,
+	time_changed: bool,
+}
+
+/// Validate the whole form and persist it in ONE transaction: an invalid
+/// field (or a failed write) persists nothing, never half the form.
+fn persist_user_settings(
+	db: &crate::db::Db,
+	user: Option<&serde_json::Value>,
+	enabled_log_question_ids: Option<&[i64]>,
+	notifications: Option<&[serde_json::Value]>,
+) -> Result<UserSettingsUpdate, String> {
+	let update = collect_user_settings(user, enabled_log_question_ids, notifications)?;
+	if !update.kv.is_empty() {
+		db.set_settings(&update.kv)?;
+	}
+	Ok(update)
+}
+
+fn collect_user_settings(
+	user: Option<&serde_json::Value>,
+	enabled_log_question_ids: Option<&[i64]>,
+	notifications: Option<&[serde_json::Value]>,
+) -> Result<UserSettingsUpdate, String> {
+	let mut kv: Vec<(&'static str, String)> = Vec::new();
+	if let Some(user) = user {
 		if let Some(name) = user["name"].as_str() {
 			kv.push((keys::setting::USER_NAME, name.to_string()));
 		}
@@ -113,7 +132,7 @@ pub async fn save_user_settings(
 		}
 	}
 
-	if let Some(ids) = &enabled_log_question_ids {
+	if let Some(ids) = enabled_log_question_ids {
 		let mut ids: Vec<i64> = ids
 			.iter()
 			.copied()
@@ -132,7 +151,7 @@ pub async fn save_user_settings(
 
 	let mut reminder_enabled_after: Option<bool> = None;
 	let mut time_changed = false;
-	if let Some(notifications) = &notifications {
+	if let Some(notifications) = notifications {
 		for notification in notifications {
 			let title = notification["title"].as_str().unwrap_or("");
 			if title == "Daily intention reminder" {
@@ -158,9 +177,31 @@ pub async fn save_user_settings(
 		}
 	}
 
-	if !kv.is_empty() {
-		state.db.set_settings(&kv)?;
-	}
+	Ok(UserSettingsUpdate {
+		kv,
+		reminder_enabled_after,
+		time_changed,
+	})
+}
+
+#[tauri::command]
+pub async fn save_user_settings(
+	state: State<'_, AppState>,
+	user: Option<serde_json::Value>,
+	enabled_log_question_ids: Option<Vec<i64>>,
+	notifications: Option<Vec<serde_json::Value>>,
+) -> Result<serde_json::Value, String> {
+	// Side effects only run once the whole form is persisted.
+	let UserSettingsUpdate {
+		reminder_enabled_after,
+		time_changed,
+		..
+	} = persist_user_settings(
+		&state.db,
+		user.as_ref(),
+		enabled_log_question_ids.as_deref(),
+		notifications.as_deref(),
+	)?;
 	if let Some(enabled) = reminder_enabled_after {
 		// keep the tray menu checkmark in sync with the persisted setting
 		crate::sync_tray_reminder_check(enabled);
@@ -385,5 +426,99 @@ mod updates_tests {
 		assert!(!updates_enabled(&state));
 		store_updates_enabled(&state, true).expect("store true");
 		assert!(updates_enabled(&state));
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::persist_user_settings;
+	use crate::keys::setting;
+	use serde_json::json;
+
+	fn temp_db() -> (crate::db::Db, std::path::PathBuf, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("settings.db");
+		(crate::db::Db::open(&path).expect("open"), path, dir)
+	}
+
+	fn reminder(value: &str) -> Vec<serde_json::Value> {
+		vec![json!({ "title": "Daily intention reminder", "value": value, "enabled": true })]
+	}
+
+	#[test]
+	fn an_invalid_field_persists_nothing_from_the_batch() {
+		let (db, _path, _dir) = temp_db();
+		let err = persist_user_settings(
+			&db,
+			Some(&json!({ "name": "Ada" })),
+			Some(&[1, 2]),
+			Some(&reminder("25:00")),
+		)
+		.expect_err("an invalid reminder time rejects the whole form");
+		assert!(err.contains("invalid reminder time"), "unexpected: {err}");
+		for key in [
+			setting::USER_NAME,
+			setting::ENABLED_LOG_QUESTION_IDS,
+			setting::REMINDER_TIME,
+			setting::REMINDER_ENABLED,
+		] {
+			assert_eq!(
+				db.get_setting(key),
+				None,
+				"{key} leaked from a rejected form"
+			);
+		}
+	}
+
+	#[test]
+	fn a_failed_write_rolls_back_the_whole_batch() {
+		let (db, path, _dir) = temp_db();
+		{
+			// the reminder row's write fails after the name row was written
+			let conn = rusqlite::Connection::open(&path).unwrap();
+			conn.execute_batch(
+				"CREATE TRIGGER fail_reminder BEFORE INSERT ON settings
+				 WHEN NEW.key = 'reminder_time'
+				 BEGIN SELECT RAISE(ABORT, 'disk on fire'); END;",
+			)
+			.unwrap();
+		}
+		let err = persist_user_settings(
+			&db,
+			Some(&json!({ "name": "Ada" })),
+			None,
+			Some(&reminder("08:00")),
+		)
+		.expect_err("the failing write surfaces");
+		assert!(err.contains("disk on fire"), "unexpected: {err}");
+		assert_eq!(
+			db.get_setting(setting::USER_NAME),
+			None,
+			"the name written before the failure is rolled back"
+		);
+	}
+
+	#[test]
+	fn a_valid_form_persists_every_field() {
+		let (db, _path, _dir) = temp_db();
+		let update = persist_user_settings(
+			&db,
+			Some(&json!({ "name": "Ada", "timezone": "Europe/Berlin" })),
+			Some(&[2, 99, 1, 2]),
+			Some(&reminder("08:00")),
+		)
+		.expect("valid form");
+		assert_eq!(update.reminder_enabled_after, Some(true));
+		assert!(update.time_changed);
+		assert_eq!(db.get_setting(setting::USER_NAME).as_deref(), Some("Ada"));
+		assert_eq!(
+			db.get_setting(setting::ENABLED_LOG_QUESTION_IDS).as_deref(),
+			Some("[1,2]"),
+			"unknown ids dropped, sorted, deduped"
+		);
+		assert_eq!(
+			db.get_setting(setting::REMINDER_TIME).as_deref(),
+			Some("08:00")
+		);
 	}
 }
