@@ -52,13 +52,12 @@ export function normalizeApiError(error: unknown): string {
 }
 
 /**
- * The backend's moderation rejection (src-tauri llm.rs
- * map_provider_error): external providers' content-filter errors are
- * mapped onto the original protocol's "HttpError 469" message. This is
- * the only place the frontend knows that string - when the backend
- * switches to a structured error kind, change this one check.
+ * The backend's moderation error kind (src-tauri llm.rs
+ * MODERATION_ERROR): external providers' content-filter rejections
+ * start with this prefix. This is the only place the frontend knows it;
+ * the IPC contract test checks it against the Rust constant.
  */
-const MODERATION_ERROR_PREFIX = "HttpError 469: Inappropriate input";
+export const MODERATION_ERROR_PREFIX = "moderation:";
 
 /**
  * Whether an error is the moderation rejection that asks the user to

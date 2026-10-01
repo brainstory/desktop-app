@@ -926,13 +926,17 @@ fn find_event_end(buffer: &[u8]) -> Option<usize> {
 	}
 }
 
-/// Map provider errors onto the brainstory protocol. HTTP 469 was the
-/// original "inappropriate input" signal that the frontend knows how to
-/// surface as a resend request.
+/// Error kind for a provider's content-filter rejection. The frontend
+/// matches this prefix (helpers.ts isModerationError) and asks the user
+/// to reword their message instead of showing a generic AI error; the
+/// IPC contract test keeps the two sides in sync.
+pub const MODERATION_ERROR: &str = "moderation: the AI provider flagged this message";
+
+/// Map provider errors onto the error kinds the frontend understands.
 fn map_provider_error(status: u16, body: &str) -> String {
 	let lower = body.to_lowercase();
 	if status == 400 && (lower.contains("content_filter") || lower.contains("content_policy")) {
-		return "HttpError 469: Inappropriate input".into();
+		return MODERATION_ERROR.into();
 	}
 	if status == 401 || status == 403 {
 		return format!("external endpoint rejected credentials ({status})");
@@ -1273,10 +1277,14 @@ mod sse_tests {
 	}
 
 	#[test]
-	fn map_provider_error_maps_content_filter_to_469() {
+	fn map_provider_error_maps_content_filter_to_moderation_kind() {
 		assert_eq!(
 			map_provider_error(400, r#"{"error":{"code":"content_filter"}}"#),
-			"HttpError 469: Inappropriate input"
+			super::MODERATION_ERROR
+		);
+		assert_eq!(
+			map_provider_error(400, r#"{"error":{"type":"content_policy_violation"}}"#),
+			super::MODERATION_ERROR
 		);
 		assert!(map_provider_error(401, "bad key").contains("rejected credentials"));
 		assert!(map_provider_error(500, "boom").contains("500"));

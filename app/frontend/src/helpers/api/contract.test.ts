@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { isModerationError, MODERATION_ERROR_PREFIX } from "@helpers/helpers";
 
 /**
  * Contract test: every Tauri command invoked from the frontend must be
@@ -68,5 +69,13 @@ describe("frontend <-> rust IPC contract", () => {
 			missing,
 			`frontend invokes commands the Rust side never registered: ${missing.join(", ")}`
 		).toEqual([]);
+	});
+
+	it("the Rust moderation error is recognised by isModerationError", () => {
+		const llm = readFileSync(resolve(repoRoot, "src-tauri/src/llm.rs"), "utf8");
+		const rustMessage = llm.match(/pub const MODERATION_ERROR: &str = "([^"]*)";/)?.[1];
+		expect(rustMessage, "llm.rs no longer defines MODERATION_ERROR").toBeDefined();
+		expect(rustMessage!.startsWith(MODERATION_ERROR_PREFIX)).toBe(true);
+		expect(isModerationError(rustMessage)).toBe(true);
 	});
 });

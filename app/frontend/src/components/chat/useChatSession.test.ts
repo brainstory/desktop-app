@@ -72,7 +72,7 @@ describe("useChatSession", () => {
 		it("removes the flagged user message on a moderation error", async () => {
 			mockInvoke({
 				generate_response: () => {
-					throw "HttpError 469: Inappropriate input";
+					throw "moderation: the AI provider flagged this message";
 				}
 			});
 			const { result, opts } = renderSession([q1, a1]);

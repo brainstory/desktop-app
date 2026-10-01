@@ -57,7 +57,7 @@ export function ChatSection({
 	const [showTranscript, setShowTranscript] = useState(false);
 	/** fatal load failure: an error section replaces the mic ui */
 	const [fatalError, setFatalError] = useState<ChatFatalError | null>(null);
-	/** an AI error (other than the 469 resend case) or a save error */
+	/** an AI error (other than the moderation resend case) or a save error */
 	const [chatError, setChatError] = useState<{
 		message: string;
 		source: ChatErrorSource;

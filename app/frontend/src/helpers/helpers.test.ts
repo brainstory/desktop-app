@@ -24,21 +24,27 @@ describe("normalizeApiError", () => {
 });
 
 describe("isModerationError", () => {
-	it("matches the exact 469 marker", () => {
-		expect(isModerationError("HttpError 469: Inappropriate input")).toBe(true);
+	it("matches the backend moderation error", () => {
+		expect(isModerationError("moderation: the AI provider flagged this message")).toBe(true);
 	});
 
 	it("matches errors that start with the marker", () => {
-		expect(isModerationError("HttpError 469: Inappropriate input (extra detail)")).toBe(true);
+		expect(
+			isModerationError("moderation: the AI provider flagged this message (extra detail)")
+		).toBe(true);
 	});
 
 	it("matches Error objects carrying the marker", () => {
-		expect(isModerationError(new Error("HttpError 469: Inappropriate input"))).toBe(true);
+		expect(
+			isModerationError(new Error("moderation: the AI provider flagged this message"))
+		).toBe(true);
 	});
 
 	it("does not match errors that merely quote the marker", () => {
 		expect(
-			isModerationError('request failed: "HttpError 469: Inappropriate input" echoed back')
+			isModerationError(
+				'request failed: "moderation: the AI provider flagged this message" echoed back'
+			)
 		).toBe(false);
 	});
 
@@ -114,11 +120,11 @@ describe("callApiWithRetry", () => {
 		let calls = 0;
 		const promise = callApiWithRetry(async () => {
 			calls++;
-			throw new Error("HttpError 469: Inappropriate input");
+			throw new Error("moderation: the AI provider flagged this message");
 		});
 		promise.catch(() => {});
 		await vi.advanceTimersByTimeAsync(5000);
-		await expect(promise).rejects.toThrow("469");
+		await expect(promise).rejects.toThrow("moderation:");
 		expect(calls).toBe(1);
 	});
 

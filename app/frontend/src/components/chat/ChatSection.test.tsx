@@ -112,7 +112,7 @@ describe("ChatSection", () => {
 		it("keeps the typed text when the message was flagged by moderation", async () => {
 			mockChat({
 				generate_response: () => {
-					throw "HttpError 469: Inappropriate input";
+					throw "moderation: the AI provider flagged this message";
 				}
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
