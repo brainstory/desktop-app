@@ -14,7 +14,13 @@ whisper-rs-sys 0.15's ggml 0.9.5, whose op enum is numbered differently.
 | --- | --- | --- |
 | `whisper-rs/` | crates.io `whisper-rs` | 0.16.0 (codeberg.org/tazz4843/whisper-rs @ 7558e1b) |
 | `whisper-rs-sys/` (Rust parts) | crates.io `whisper-rs-sys` | 0.15.0 |
-| `whisper-rs-sys/whisper.cpp/` | github.com/ggml-org/whisper.cpp | a44e078 (2026-09-22), the last commit on ggml 0.24.0 |
+| `whisper-rs-sys/whisper.cpp/` | github.com/ggml-org/whisper.cpp | 6e4ab85 (2026-09-28, master) |
+
+whisper.cpp 6e4ab85 bundles ggml 0.25.1, but its library code is identical
+to a44e078 (2026-09-22, the last commit written for ggml 0.24.0) apart from
+one fix in `src/whisper.cpp` (language auto-detection honours the abort
+callback), which uses no new ggml API - so it builds against llama's ggml
+0.24.
 
 Only the parts of whisper.cpp the library build needs are kept: `CMakeLists.txt`,
 `cmake/`, `include/`, `src/`, `LICENSE`, and `bindings/javascript/package-tmpl.json`
