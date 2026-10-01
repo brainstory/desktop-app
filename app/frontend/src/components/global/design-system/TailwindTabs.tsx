@@ -4,6 +4,7 @@ import {
 	createContext,
 	useContext,
 	Children,
+	isValidElement,
 	type ReactNode,
 	type ComponentProps
 } from "react";
@@ -51,7 +52,7 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 	// that this tab set doesn't have (e.g. "feedback" on a feedback idea,
 	// which has no feedback tab) must land on a real panel, not render
 	// nothing.
-	const tabCount = Children.count(children);
+	const tabCount = countTabs(children);
 	const clamp = (index: number) => Math.max(0, Math.min(index, tabCount - 1));
 	const [activeIndex, setActiveIndexRaw] = useState(() => clamp(activeTab));
 
@@ -71,13 +72,26 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 			value={{
 				activeIndex,
 				setActiveIndex,
-				tabCount: Children.count(children),
+				tabCount,
 				idPrefix
 			}}
 		>
 			<div className="h-full">{children}</div>
 		</TabsContext.Provider>
 	);
+}
+
+/** The number of tabs: the children of the TailwindTabList inside this
+ * tab set. TailwindTabs' own children are the list and the panels, so
+ * counting those capped every tab set at two tabs. */
+function countTabs(children: ReactNode): number {
+	let count = 0;
+	Children.forEach(children, (child) => {
+		if (isValidElement<{ children?: ReactNode }>(child) && child.type === TailwindTabList) {
+			count = Children.count(child.props.children);
+		}
+	});
+	return Math.max(count, 1);
 }
 
 const TabContext = createContext<number>(0);
