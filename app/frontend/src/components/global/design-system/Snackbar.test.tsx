@@ -1,10 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useState } from "react";
 
 import { Snackbar } from "./Snackbar";
 
+// a failing assertion must not leak fake timers into the next test
+afterEach(() => {
+	vi.useRealTimers();
+});
+
 describe("Snackbar", () => {
+	it("a re-render with a NEW onClose identity does not restart the countdown", () => {
+		vi.useFakeTimers();
+		const calls: string[] = [];
+		const { rerender } = render(
+			<Snackbar isSuccess={true} message="Saved" onClose={() => calls.push("first")} />
+		);
+		act(() => {
+			vi.advanceTimersByTime(3000);
+		});
+		// parents pass inline arrows: every render is a new function
+		rerender(
+			<Snackbar isSuccess={true} message="Saved" onClose={() => calls.push("second")} />
+		);
+		act(() => {
+			vi.advanceTimersByTime(2000); // 5s since mount, 2s since the re-render
+		});
+		// fired on the original schedule, through the latest handler
+		expect(calls).toEqual(["second"]);
+	});
+
 	it("auto-dismisses after five seconds", () => {
 		vi.useFakeTimers();
 		const onClose = vi.fn();
