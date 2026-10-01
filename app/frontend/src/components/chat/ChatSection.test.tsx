@@ -223,4 +223,54 @@ describe("ChatSection", () => {
 			expect(await screen.findByText(/failed to load: bad gguf/)).toBeInTheDocument();
 		});
 	});
+
+	describe("feedback on an idea", () => {
+		async function sendFeedback(parent: Record<string, unknown>) {
+			mockChat({
+				get_idea: () => parent,
+				generate_response: () => ({ response: "what stands out?" })
+			});
+			render(
+				<ChatSection
+					chatType="feedback"
+					parentIdParam="parent-1"
+					conversationEndCallbacks={() => {}}
+				/>
+			);
+			// the feedback layout replaces the default one once the parent loads
+			await screen.findByText("Let's take this idea even further!");
+			const user = userEvent.setup();
+			await user.click(screen.getByText("Not in a place to talk out-loud?"));
+			await user.type(screen.getByLabelText("Type your response"), "I like it{Enter}");
+			await screen.findByText("what stands out?");
+			const call = vi.mocked(invoke).mock.calls.find(([c]) => c === "generate_response")!;
+			return call[1] as {
+				reactTo: string | null;
+				reactToAuthor: string | null;
+				reactToIsCurrentUser: boolean;
+			};
+		}
+
+		it("tells the model an imported idea was written by its author, not the user", async () => {
+			const args = await sendFeedback({
+				id: "parent-1",
+				title: "Ada's idea",
+				result: "# Ada's idea",
+				creator_name: "Ada"
+			});
+			expect(args.reactTo).toBe("# Ada's idea");
+			expect(args.reactToAuthor).toBe("Ada");
+			expect(args.reactToIsCurrentUser).toBe(false);
+		});
+
+		it("treats an idea without a creator as the user's own", async () => {
+			const args = await sendFeedback({
+				id: "parent-1",
+				title: "My idea",
+				result: "# My idea"
+			});
+			expect(args.reactToAuthor).toBeNull();
+			expect(args.reactToIsCurrentUser).toBe(true);
+		});
+	});
 });

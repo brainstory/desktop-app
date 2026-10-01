@@ -75,7 +75,14 @@ export function ChatSection({
 		getIdeaApi(parentId)
 			.then((res) => {
 				document.title = `Feedback for "${res.title}"`;
-				setParentIdea({ id: res.id, title: res.title, summary: res.summary });
+				// creatorName is only set on ideas imported from someone else;
+				// without it the model is told the user wrote the idea
+				setParentIdea({
+					id: res.id,
+					title: res.title,
+					summary: res.summary,
+					creatorName: res.creatorName
+				});
 			})
 			.catch((err) => {
 				console.error("Parent Idea not found with ID", parentId, err);
