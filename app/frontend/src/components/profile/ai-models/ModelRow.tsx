@@ -153,7 +153,7 @@ function DeleteModelButton({ isActive, onConfirm }: { isActive: boolean; onConfi
 			onClick={() => {
 				if (confirm()) onConfirm();
 			}}
-			classes={isConfirming ? "border-red-400 text-red-600 whitespace-nowrap" : ""}
+			classes={isConfirming ? "ring-red-400 text-red-600 whitespace-nowrap" : ""}
 		>
 			{isConfirming ? (
 				<span aria-live="polite">

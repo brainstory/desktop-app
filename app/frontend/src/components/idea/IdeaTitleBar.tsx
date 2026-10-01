@@ -143,24 +143,17 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 		}
 		if (isOwnIdea) {
 			buttons.push(
-				<span key="export-wrap" className="flex flex-col items-end">
-					<Button variant="pink" onClick={handleExport}>
-						{exportState === "exporting"
-							? "Exporting..."
-							: exportState === "done"
-								? "Exported!"
-								: exportState === "error"
-									? "Export failed"
-									: parentId
-										? "Export Feedback"
-										: "Export"}
-					</Button>
-					{/* privacy note: previously buried in a title attribute,
-					    invisible to keyboard and touch users */}
-					<p className="text-[10px] leading-tight text-stone-500 mt-1 max-w-[220px] text-right">
-						Exports the summary only — the transcript stays on this device.
-					</p>
-				</span>
+				<Button variant="pink" key="export" onClick={handleExport}>
+					{exportState === "exporting"
+						? "Exporting..."
+						: exportState === "done"
+							? "Exported!"
+							: exportState === "error"
+								? "Export failed"
+								: parentId
+									? "Export Feedback"
+									: "Export"}
+				</Button>
 			);
 		}
 		buttons.push(
@@ -168,7 +161,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 				variant="bordered"
 				key="delete"
 				onClick={handleDelete}
-				classes={confirmingDelete ? "border-red-400 text-red-600" : ""}
+				classes={confirmingDelete ? "ring-red-400 text-red-600" : ""}
 			>
 				{confirmingDelete ? `Really delete? (${secondsLeft ?? 0}s)` : "Delete"}
 			</Button>,
@@ -248,8 +241,19 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 					</div>
 				</div>
 
-				<div className="flex gap-3 rounded-md shadow-sm self-center" role="group">
-					{renderActionButtons()}
+				<div className="flex flex-col items-end gap-1 self-center">
+					{/* items-center: a stretched row made every button as tall as
+					    the tallest item, which used to be Export plus its note */}
+					<div className="flex items-center gap-3" role="group">
+						{renderActionButtons()}
+					</div>
+					{/* privacy note: previously buried in a title attribute,
+					    invisible to keyboard and touch users */}
+					{isOwnIdea && (
+						<p className="text-[10px] leading-tight text-stone-500 max-w-[220px] text-right">
+							Exports the summary only — the transcript stays on this device.
+						</p>
+					)}
 				</div>
 			</div>
 		</div>

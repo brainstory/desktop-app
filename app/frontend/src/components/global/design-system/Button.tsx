@@ -6,8 +6,10 @@ import { cn } from "@helpers/cn";
 const VARIANT_CLASSES = {
 	pink: "bg-accent-600 hover:bg-accent-700 text-white",
 	black: "bg-stone-950 hover:bg-stone-800 text-white",
+	// an inset ring, not a border: a border adds 2px, so a bordered
+	// button sat taller than the filled ones next to it
 	bordered:
-		"bg-white hover:bg-slate-200 border border-black text-black disabled:border-slate-500",
+		"bg-white hover:bg-slate-200 ring-1 ring-inset ring-black text-black disabled:ring-slate-500",
 	transparent: "bg-transparent hover:font-bold hover:bg-stone-400/20 text-black"
 } as const;
 

@@ -209,3 +209,16 @@ describe("IdeaTitleBar delete", () => {
 		}
 	});
 });
+
+describe("IdeaTitleBar actions", () => {
+	it("keeps the export note out of the button row so the buttons share one height", () => {
+		renderBar();
+		const row = screen.getByRole("group");
+		for (const name of ["Give Feedback", "Export", "Delete"]) {
+			// each action is a direct child of the row: wrapping one in a
+			// column with the note made the stretched row double height
+			expect(screen.getByRole("button", { name }).parentElement).toBe(row);
+		}
+		expect(row).not.toContainElement(screen.getByText(/Exports the summary only/));
+	});
+});
