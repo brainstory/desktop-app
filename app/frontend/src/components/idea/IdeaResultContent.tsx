@@ -10,6 +10,7 @@ import IdeaSection from "@components/idea/feedback-aggregation/IdeaSection";
 import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import { getQueryParam } from "@helpers/helpers";
+import { parseHeadingIndex } from "@helpers/ideas";
 import ErrorSection from "../error/ErrorSection";
 
 export default function IdeaResultContent() {
@@ -62,7 +63,7 @@ export default function IdeaResultContent() {
 		getIdeaApi(id)
 			.then((res) => {
 				if (isCurrent) {
-					fetchIdeaChildrenData(id)
+					fetchIdeaChildrenData(id, res.resultJson?.length ?? 0)
 						.then(([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
 							if (!isCurrent) return;
 							setIdeaChildren(updateIdeaChildren as IdeaFeedbackItem[]);
@@ -217,19 +218,21 @@ export default function IdeaResultContent() {
 }
 
 async function fetchIdeaChildrenData(
-	ideaId: string
+	ideaId: string,
+	headingCount: number
 ): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
 	const result = await getIdeaChildrenApi(ideaId).then((res) => {
 		const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
 		const ideaChildren = res.map((idea) => {
 			(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
-				const headingIdx = Number((comment.oidHeadingText ?? "").split("#")[0]);
-				if (!Number.isInteger(headingIdx)) {
-					// a comment whose heading reference can't be parsed can
-					// never be attached to a section; keep it out loudly
-					// instead of filing it under a silent NaN key
+				const headingIdx = parseHeadingIndex(comment.oidHeadingText, headingCount);
+				if (headingIdx === null) {
+					// a comment whose heading reference is empty, not a
+					// positive integer, or past the last heading can never be
+					// attached to a section; keep it out loudly instead of
+					// filing it under heading 0 / a NaN key
 					console.warn(
-						"feedback comment with unparsable heading reference:",
+						"feedback comment with an invalid heading reference:",
 						comment.oidHeadingText
 					);
 					return;
