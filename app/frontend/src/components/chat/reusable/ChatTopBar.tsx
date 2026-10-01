@@ -1,12 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import { CHAT_SAVE_STATE } from "@src/const";
 import { cn } from "@helpers/cn";
+import type { ParentIdea } from "@components/chat/types";
 
 import TransparentButton from "@ds/TransparentButton";
 import ChatIntroText from "@components/chat/ChatIntroText";
 
 interface ChatTopBarProps {
-	parentIdea?: { title?: string | null } | null;
+	parentIdea?: ParentIdea | null;
 	showTranscript: boolean;
 	setShowTranscript: Dispatch<SetStateAction<boolean>>;
 	leftButtonIcon?: string | null;

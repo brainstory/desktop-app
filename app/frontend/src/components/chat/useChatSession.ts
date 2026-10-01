@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from "react";
 import type { ChatMessage } from "@src/types";
+import type { ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import {
 	handleStreamResult,
@@ -25,12 +26,7 @@ export type CoachResponseOutcome = "sent" | "flagged" | "failed" | "cancelled";
 
 export interface ChatSessionOptions {
 	chatType: string;
-	parentIdea?: {
-		id: string;
-		title?: string | null;
-		summary?: string | null;
-		creatorName?: string | null;
-	};
+	parentIdea?: ParentIdea;
 	ideaId?: string;
 	fromGuideParam?: string | null;
 	onError: (message: string) => void;

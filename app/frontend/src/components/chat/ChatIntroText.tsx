@@ -1,8 +1,9 @@
 import { getQueryParam } from "@helpers/helpers";
 import { cn } from "@helpers/cn";
+import type { ParentIdea } from "@components/chat/types";
 
 interface ChatIntroTextProps {
-	parentIdea?: { id?: string; title?: string | null } | null;
+	parentIdea?: ParentIdea | null;
 	classes?: string;
 }
 

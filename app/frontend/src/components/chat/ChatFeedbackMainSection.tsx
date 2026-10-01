@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ChatMessage } from "@src/types";
+import type { ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE } from "@src/const";
 import ConversationTranscript from "@components/chat/ConversationTranscript";
 import ParentIdeaText from "@components/global/ParentIdeaText";
@@ -9,12 +10,7 @@ import EndChatButton from "./reusable/EndChatButton";
 interface ChatFeedbackMainSectionProps {
 	showTranscript: boolean;
 	setShowTranscript: (show: boolean) => void;
-	parentIdea?: {
-		id: string;
-		title?: string | null;
-		summary?: string | null;
-		creatorName?: string | null;
-	};
+	parentIdea?: ParentIdea;
 	currConversation: ChatMessage[];
 	conversationState: string;
 	handleGetResult: () => void;

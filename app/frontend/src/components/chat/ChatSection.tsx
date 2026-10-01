@@ -4,6 +4,7 @@ import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
 import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
 import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
 import type { ChatMessage } from "@src/types";
+import type { ParentIdea } from "@components/chat/types";
 import { getIdeaApi } from "@helpers/api/idea";
 import { getQueryParam } from "@helpers/helpers";
 
@@ -46,15 +47,7 @@ export function ChatSection({
 	conversationEndCallbacks
 }: ChatSectionProps) {
 	const [result, setResult] = useState("");
-	const [parentIdea, setParentIdea] = useState<
-		| {
-				id: string;
-				title?: string | null;
-				summary?: string | null;
-				creatorName?: string | null;
-		  }
-		| undefined
-	>();
+	const [parentIdea, setParentIdea] = useState<ParentIdea | undefined>();
 	const [showTranscript, setShowTranscript] = useState(false);
 	/** fatal load failure: an error section replaces the mic ui */
 	const [fatalError, setFatalError] = useState<ChatFatalError | null>(null);
