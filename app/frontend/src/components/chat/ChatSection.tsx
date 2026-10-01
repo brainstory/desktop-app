@@ -112,6 +112,7 @@ export function ChatSection({
 	useDraftLoader(persistence.ideaId, parentIdParam, {
 		conversationLengthRef: persistence.conversationLengthRef,
 		fetchedParentRef: persistence.fetchedParentRef,
+		createdIdeaIdRef: persistence.createdIdeaIdRef,
 		setIdeaId: persistence.setIdeaId,
 		setCurrConversation,
 		markPersisted: persistence.markPersisted,

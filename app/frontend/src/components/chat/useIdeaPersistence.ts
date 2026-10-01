@@ -52,6 +52,10 @@ export function useIdeaPersistence(
 	const creatingIdeaRef = useRef(false);
 	const conversationLengthRef = useRef(conversation.length);
 	const fetchedParentRef = useRef<string | null>(null);
+	/** the idea this session created: the draft loader must not re-fetch
+	 * it (there is nothing to restore, and a failed read would replace
+	 * the live chat with "Draft idea not found") */
+	const createdIdeaIdRef = useRef<string | null>(null);
 	const onErrorRef = useRef(onError);
 	useEffect(() => {
 		onErrorRef.current = onError;
@@ -151,6 +155,7 @@ export function useIdeaPersistence(
 					creatingIdeaRef.current = false;
 					// the create already stored this conversation
 					persistedRef.current = createdWith;
+					createdIdeaIdRef.current = createdIdeaId;
 					setIdeaId(createdIdeaId);
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
@@ -206,7 +211,8 @@ export function useIdeaPersistence(
 		updateIdeaApi,
 		onFatalError,
 		onParentIdea,
-		fetchedParentRef
+		fetchedParentRef,
+		createdIdeaIdRef
 	};
 }
 
@@ -217,6 +223,8 @@ export function useDraftLoader(
 	hooks: {
 		conversationLengthRef: React.RefObject<number>;
 		fetchedParentRef: React.RefObject<string | null>;
+		/** the idea created by this session (never re-fetched) */
+		createdIdeaIdRef: React.RefObject<string | null>;
 		setIdeaId: (id: string | undefined) => void;
 		setCurrConversation: (next: ChatMessage[]) => void;
 		/** tell the autosave the loaded transcript is already stored */
@@ -230,6 +238,7 @@ export function useDraftLoader(
 	const {
 		conversationLengthRef,
 		fetchedParentRef,
+		createdIdeaIdRef,
 		setCurrConversation,
 		markPersisted,
 		onDraftRestored,
@@ -238,6 +247,10 @@ export function useDraftLoader(
 	} = hooks;
 
 	useEffect(() => {
+		if (ideaId && ideaId === createdIdeaIdRef.current) {
+			// just created from the conversation on screen: nothing to load
+			return;
+		}
 		if (ideaId) {
 			getIdeaApi(ideaId)
 				.then((res) => {

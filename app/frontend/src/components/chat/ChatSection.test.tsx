@@ -248,8 +248,6 @@ describe("ChatSection", () => {
 		mockChat({
 			create_idea: () => ({ id: "idea-1" }),
 			update_idea: () => ({ id: "idea-1" }),
-			// the draft loader re-reads the idea once it has an id
-			get_idea: () => ({ id: "idea-1", transcript: [] }),
 			generate_response: () => ({ response: "and then?" })
 		});
 		render(
@@ -265,6 +263,30 @@ describe("ChatSection", () => {
 			expect(new URLSearchParams(window.location.search).get("id")).toBe("idea-1")
 		);
 		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")).toHaveLength(1);
+	});
+
+	it("does not re-fetch (or lose the chat over) the idea it just created", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" }),
+			// a transient read failure right after create
+			get_idea: () => {
+				throw new Error("database is locked");
+			},
+			generate_response: () => ({ response: "and then?" })
+		});
+		render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+		const user = userEvent.setup();
+		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
+		await waitFor(() =>
+			expect(new URLSearchParams(window.location.search).get("id")).toBe("idea-1")
+		);
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
+		expect(screen.queryByText("Draft idea not found")).not.toBeInTheDocument();
+		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "get_idea")).toHaveLength(0);
+		vi.mocked(console.error).mockRestore();
 	});
 
 	describe("feedback on an idea", () => {
