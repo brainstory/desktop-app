@@ -10,7 +10,8 @@ import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import {
 	handleStreamResult,
 	addConversationMessage,
-	removeLastConversationMessage
+	removeLastConversationMessage,
+	isGenerationCancelled
 } from "@helpers/chat";
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
@@ -74,7 +75,9 @@ export function useChatSession(
 					parentIdea ? parentIdea?.creatorName == null : false,
 					chatType
 				);
-			callApiWithRetry(apiCall)
+			// a cancel must stay cancelled: retrying would start a fresh
+			// generation with a new cancel token 500 ms later
+			callApiWithRetry(apiCall, 1, (err) => !isGenerationCancelled(err))
 				.then((message) => {
 					const isUser = false;
 					addConversationMessage(message, isUser, currConversation, setCurrConversation);
@@ -82,6 +85,11 @@ export function useChatSession(
 					setInappropriateUserTranscript(null);
 				})
 				.catch((err) => {
+					if (isGenerationCancelled(err)) {
+						// user-initiated: the message stays and the chat
+						// returns to idle, no error banner
+						return;
+					}
 					if (isModerationError(err)) {
 						const removedMessage = removeLastConversationMessage(
 							currConversation,
@@ -139,7 +147,12 @@ export function useChatSession(
 			setResult,
 			resultFinishedCallbacks,
 			(err) => {
-				onError(normalizeApiError(err));
+				// drop any partial summary: while a result is set the
+				// finished-result view replaces the chat (and its banner)
+				setResult("");
+				if (!isGenerationCancelled(err)) {
+					onError(normalizeApiError(err));
+				}
 				setConversationState(CONVERSATION_STATE.Idle);
 			}
 		);

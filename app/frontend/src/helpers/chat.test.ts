@@ -9,7 +9,8 @@ import {
 	findMostRecentAssistantContent,
 	findMostRecentUserContent,
 	getFirstPrompt,
-	groupTranscript
+	groupTranscript,
+	isGenerationCancelled
 } from "./chat";
 
 describe("getFirstPrompt", () => {
@@ -298,5 +299,17 @@ describe("handleStreamResult", () => {
 		await done;
 		expect(errors).toHaveLength(1);
 		expect(successRan).toBe(false);
+	});
+});
+
+describe("isGenerationCancelled", () => {
+	it("recognises the backend's cancel rejection (string or Error)", () => {
+		expect(isGenerationCancelled("generation cancelled")).toBe(true);
+		expect(isGenerationCancelled(new Error("generation cancelled"))).toBe(true);
+	});
+
+	it("does not match other failures", () => {
+		expect(isGenerationCancelled("download cancelled")).toBe(false);
+		expect(isGenerationCancelled("external endpoint stalled (no data for 60s)")).toBe(false);
 	});
 });

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
-import { getQueryParam } from "@helpers/helpers";
+import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import type { RefObject, Dispatch, SetStateAction } from "react";
 
 export function useIdeaIdFromUrl(
@@ -81,6 +81,15 @@ export const removeLastConversationMessage = (
 	setConversation(conversation.slice(0, -1));
 	return removedMessage?.content ?? "";
 };
+
+/** What the backend rejects a generation with after cancel_generation
+ * (llm.rs checks the cancel token between chunks). */
+export const GENERATION_CANCELLED = "generation cancelled";
+
+/** A user-initiated cancel: never retried, never shown as an error. */
+export function isGenerationCancelled(error: unknown): boolean {
+	return normalizeApiError(error).includes(GENERATION_CANCELLED);
+}
 
 export interface StreamChunk {
 	type: string;
