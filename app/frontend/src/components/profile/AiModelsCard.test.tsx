@@ -212,6 +212,27 @@ describe("AiModelsCard", () => {
 		expect(screen.queryByText(/invalid extLlmBaseUrl/)).not.toBeInTheDocument();
 	});
 
+	it("Save Endpoints sends only the edited endpoint fields", async () => {
+		const user = userEvent.setup();
+		mockCard({
+			get_ai_settings: () => ({
+				...aiSettings,
+				// stale values the backend would now reject
+				llmModel: "removed-model",
+				extLlmBaseUrl: "localhost:1234"
+			})
+		});
+		renderCard();
+		await user.type(await screen.findByLabelText("STT model"), "whisper-1");
+		await user.click(screen.getByRole("button", { name: "Save Endpoints" }));
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call, "save_ai_settings was called").toBeTruthy();
+			expect(call![1]).toEqual({ ai: { extSttModel: "whisper-1" } });
+		});
+		expect(await screen.findByRole("button", { name: "All changes saved" })).toBeDisabled();
+	});
+
 	it("enabling the external LLM needs a saved URL, not just a typed one", async () => {
 		const user = userEvent.setup();
 		mockCard();

@@ -7,7 +7,7 @@ import { useAiModels } from "./useAiModels";
 import { useState } from "react";
 import { normalizeApiError } from "@helpers/helpers";
 import { testLlmEndpointApi, testSttEndpointApi, saveAiSettingsApi } from "@helpers/api/models";
-import type { ModelStatus } from "@helpers/api/models";
+import type { AiSettingsResponse, ModelStatus } from "@helpers/api/models";
 
 const formatSize = (bytes?: number): string => {
 	if (!bytes) return "";
@@ -33,6 +33,8 @@ const localeLabel = (id: string): string => {
 		return id;
 	}
 };
+
+const ENDPOINT_KEYS = ["extLlmBaseUrl", "extLlmModel", "extSttBaseUrl", "extSttModel"] as const;
 
 const STATUS_LABELS = {
 	ready: "Ready",
@@ -471,16 +473,22 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			    explicit single actions. Test always saves what's typed first, so
 			    it can never test a stale endpoint. */}
 				{(() => {
-					const endpointDirty =
-						(settings.extLlmBaseUrl ?? "") !== (savedSettings?.extLlmBaseUrl ?? "") ||
-						(settings.extLlmModel ?? "") !== (savedSettings?.extLlmModel ?? "") ||
-						(settings.extSttBaseUrl ?? "") !== (savedSettings?.extSttBaseUrl ?? "") ||
-						(settings.extSttModel ?? "") !== (savedSettings?.extSttModel ?? "");
+					// only the edited fields are sent: the backend validates every
+					// key it receives, so re-sending an untouched stale value
+					// would fail the whole save
+					const changedEndpoints = Object.fromEntries(
+						ENDPOINT_KEYS.filter(
+							(key) => (settings[key] ?? "") !== (savedSettings?.[key] ?? "")
+						).map((key) => [key, settings[key]])
+					) as Partial<AiSettingsResponse>;
+					const endpointDirty = Object.keys(changedEndpoints).length > 0;
 
 					const saveEndpoints = (): Promise<void> =>
-						saveAiSettingsApi(settings as unknown as Record<string, unknown>)
+						saveAiSettingsApi(changedEndpoints)
 							.then(() => {
-								setSavedSettings(settings);
+								setSavedSettings((prev) =>
+									prev ? { ...prev, ...changedEndpoints } : prev
+								);
 								refresh();
 								openSnackbar(true, "Settings saved");
 							})
