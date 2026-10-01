@@ -465,6 +465,37 @@ impl Db {
 		))
 	}
 
+	/// Library-list rows: the transcript only for drafts (the grid previews
+	/// a draft's last user message), and no structured or sectioned
+	/// result - nothing in the list reads them, and decoding every
+	/// transcript and result document made each dashboard load scale with
+	/// the whole library's text.
+	fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<(Option<String>, IdeaItem)> {
+		let transcript: Option<String> = row.get("transcript")?;
+		Ok((
+			row.get("parent_idea_id")?,
+			IdeaItem {
+				id: row.get("id")?,
+				title: row.get("title")?,
+				result: Some(row.get("result")?),
+				r#type: Some(row.get::<_, String>("idea_type")?),
+				created_at: row.get("created_at")?,
+				creator_email: row.get("creator_email")?,
+				creator_name: row.get("creator_name")?,
+				is_unread: Some(row.get::<_, i64>("is_unread")? != 0),
+				transcript: transcript
+					.and_then(|t| serde_json::from_str::<Vec<ChatMessage>>(&t).ok()),
+				shared_with_users: None,
+				structured_result: None,
+				result_json: None,
+				parent_idea: None,
+				feedback: None,
+			},
+		))
+	}
+
+	const IDEA_SUMMARY_COLS: &'static str = "id, title, idea_type, result, CASE WHEN result = '' THEN transcript END AS transcript, parent_idea_id, is_unread, creator_name, creator_email, created_at";
+
 	const IDEA_COLS: &'static str =
 		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";
 
@@ -775,20 +806,21 @@ impl Db {
 		Ok(children_items)
 	}
 
-	/// All top-level ideas with their feedback children, newest first.
+	/// All top-level ideas with their feedback children, newest first, as
+	/// summaries (see `row_to_summary`; `get_idea` has the full row).
 	/// Single query + one grouping pass (no per-idea child lookups).
 	pub fn list_ideas(&self) -> Result<Vec<IdeaItem>, String> {
 		let conn = self.lock();
 		let mut stmt = conn
 			.prepare(&format!(
 				"SELECT {} FROM ideas ORDER BY created_at DESC, rowid DESC",
-				Self::IDEA_COLS
+				Self::IDEA_SUMMARY_COLS
 			))
 			.map_err(|e| format!("failed to list ideas: {e}"))?;
 		let mut rows: Vec<(Option<String>, IdeaItem)> = Vec::new();
 		{
 			let queried = stmt
-				.query_map([], Self::row_to_idea)
+				.query_map([], Self::row_to_summary)
 				.map_err(|e| format!("failed to list ideas: {e}"))?;
 			for row in queried {
 				match row {
@@ -1543,6 +1575,54 @@ mod coverage_tests {
 		let feedback = ideas[1].feedback.as_ref().unwrap();
 		assert_eq!(feedback.len(), 2);
 		assert_eq!(feedback[0].id, "c2", "children newest first");
+	}
+
+	#[test]
+	fn list_ideas_skips_what_the_library_grid_never_reads() {
+		let (db, _path) = db();
+		let chat = vec![ChatMessage {
+			role: "user".into(),
+			content: "a long brainstorm".into(),
+		}];
+		db.insert_idea(NewIdea {
+			id: "done",
+			title: "Done",
+			idea_type: IdeaType::Original,
+			result: "## Result\nbody",
+			structured_result: Some(&json!({ "feedback_items": [] })),
+			transcript: &chat,
+			metadata: &json!({}),
+			..Default::default()
+		})
+		.unwrap();
+		db.insert_idea(NewIdea {
+			id: "draft",
+			title: "",
+			idea_type: IdeaType::Original,
+			result: "",
+			transcript: &chat,
+			metadata: &json!({}),
+			..Default::default()
+		})
+		.unwrap();
+		let ideas = db.list_ideas().unwrap();
+		let done = ideas.iter().find(|i| i.id == "done").unwrap();
+		let draft = ideas.iter().find(|i| i.id == "draft").unwrap();
+		// finished ideas: the grid shows title + result preview only
+		assert!(
+			done.transcript.is_none(),
+			"no transcript for finished ideas"
+		);
+		assert!(done.result_json.is_none() && done.structured_result.is_none());
+		assert_eq!(done.result.as_deref(), Some("## Result\nbody"));
+		// drafts: the grid previews the last user message of the transcript
+		assert_eq!(
+			draft.transcript.as_ref().map(|t| t[0].content.as_str()),
+			Some("a long brainstorm")
+		);
+		// the full read still has everything
+		let full = db.get_idea("done").unwrap().unwrap();
+		assert!(full.transcript.is_some() && full.result_json.is_some());
 	}
 
 	#[test]
