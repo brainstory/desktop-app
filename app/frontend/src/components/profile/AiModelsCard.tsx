@@ -4,7 +4,7 @@ import BorderedButton from "@ds/BorderedButton";
 import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useAiModels } from "./useAiModels";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 import { normalizeApiError } from "@helpers/helpers";
 import { cn } from "@helpers/cn";
@@ -79,6 +79,7 @@ interface AiModelsCardProps {
 
 export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const ai = useAiModels(openSnackbar);
+	const appleHintId = useId();
 	const {
 		models,
 		settings: maybeSettings,
@@ -405,9 +406,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								{
 									id: "apple",
 									label: "Apple Speech",
-									hint: appleStt?.available
-										? "Built into macOS 26+ - no model download"
-										: "Built into macOS 26+ - not available on this system"
+									hint: "Built into macOS 26+ - no model download"
 								},
 								{
 									id: "whisper",
@@ -422,7 +421,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								<button
 									key={opt.id}
 									type="button"
-									title={disabled ? "Requires macOS 26 or newer" : opt.hint}
+									title={disabled ? undefined : opt.hint}
+									aria-pressed={selected}
+									aria-describedby={disabled ? appleHintId : undefined}
 									disabled={disabled}
 									onClick={() => save({ sttEngine: opt.id })}
 									className={cn(
@@ -439,11 +440,18 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							);
 						})}
 					</div>
+					{appleStt && !appleStt.available && (
+						// visible, not just a tooltip on the disabled chip
+						<p id={appleHintId} className="text-sm text-stone-500">
+							Apple Speech needs macOS 26 or newer and isn&rsquo;t available on this
+							system.
+						</p>
+					)}
 					{settings.sttEngine === "auto" && (
 						<p className="text-sm text-stone-500">
 							{appleStt?.available
 								? "Apple Speech is available on this Mac and will be used; whisper is the automatic fallback."
-								: "Apple Speech is not available here, so whisper handles transcription."}
+								: "Auto uses whisper for transcription here."}
 						</p>
 					)}
 					{appleActive && appleStt && !appleStt.authorized && (

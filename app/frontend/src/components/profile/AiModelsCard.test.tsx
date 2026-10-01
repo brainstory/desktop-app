@@ -300,6 +300,24 @@ describe("AiModelsCard", () => {
 		).toBeInTheDocument();
 	});
 
+	it("explains visibly why Apple Speech is unavailable and exposes the selected engine", async () => {
+		mockCard();
+		renderCard();
+		const apple = await screen.findByRole("button", { name: "Apple Speech" });
+		expect(apple).toBeDisabled();
+		const hint = screen.getByText(/Apple Speech needs macOS 26 or newer/);
+		expect(hint).toBeVisible();
+		expect(apple).toHaveAccessibleDescription(hint.textContent!);
+		expect(screen.getByRole("button", { name: "Whisper" })).toHaveAttribute(
+			"aria-pressed",
+			"true"
+		);
+		expect(screen.getByRole("button", { name: "Auto" })).toHaveAttribute(
+			"aria-pressed",
+			"false"
+		);
+	});
+
 	it("hides the speech language for an English-only whisper model", async () => {
 		mockCard();
 		renderCard();
