@@ -78,8 +78,7 @@ async fn tick(app: &AppHandle) -> Duration {
 		return until_next_due(now, hour, minute).min(MAX_SLEEP);
 	}
 
-	let due = now.hour() > hour || (now.hour() == hour && now.minute() >= minute);
-	if !due {
+	if !is_due(now.time(), hour, minute) {
 		return until_next_due(now, hour, minute).min(MAX_SLEEP);
 	}
 
@@ -108,6 +107,12 @@ async fn tick(app: &AppHandle) -> Duration {
 		log::warn!("failed to record reminder: {e}");
 	}
 	until_next_due(chrono::Local::now(), hour, minute).min(MAX_SLEEP)
+}
+
+/// True once today's reminder time (HH:MM, local) has been reached; the
+/// minute itself counts as due.
+fn is_due(now: chrono::NaiveTime, hour: u32, minute: u32) -> bool {
+	(now.hour(), now.minute()) >= (hour, minute)
 }
 
 /// How long until the reminder is due again: the next occurrence of
@@ -190,6 +195,30 @@ mod tests {
 			.unwrap();
 		let until = until_next_due(exact, 9, 0);
 		assert_eq!(until.as_secs(), 24 * 3600, "due now -> tomorrow");
+	}
+
+	#[test]
+	fn the_reminder_is_due_from_its_minute_on() {
+		let at = |h, m, s| chrono::NaiveTime::from_hms_opt(h, m, s).unwrap();
+		for (now, hour, minute, due) in [
+			(at(8, 59, 59), 9, 0, false),
+			(at(9, 0, 0), 9, 0, true),
+			(at(9, 0, 59), 9, 0, true),
+			(at(9, 29, 0), 9, 30, false),
+			(at(10, 0, 0), 9, 30, true),
+			// a later hour wins even with a smaller minute
+			(at(10, 5, 0), 9, 30, true),
+			(at(8, 45, 0), 9, 30, false),
+			(at(0, 0, 0), 0, 0, true),
+			(at(23, 58, 0), 23, 59, false),
+			(at(23, 59, 0), 23, 59, true),
+		] {
+			assert_eq!(
+				super::is_due(now, hour, minute),
+				due,
+				"{now} vs {hour:02}:{minute:02}"
+			);
+		}
 	}
 
 	#[tokio::test]
