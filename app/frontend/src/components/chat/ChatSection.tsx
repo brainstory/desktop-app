@@ -1,37 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { useStore } from "@nanostores/react";
 import { $aiStatus, llmBusy } from "@components/global/aiStatusStore";
-import {
-	CONVERSATION_STATE,
-	CHAT_SAVE_STATE,
-	MIN_CONVERSATION_LENGTH_BEFORE_SAVE,
-	CHAT_TYPE,
-	ASK_A_DIFFERENT_QUESTION
-} from "@src/const";
-import {
-	handleStreamResult,
-	addConversationMessage,
-	removeLastConversationMessage,
-	findMostRecentAssistantContent,
-	getFirstPrompt,
-	useIdeaIdFromUrl
-} from "@helpers/chat";
-import { markGettingStartedDone } from "@helpers/storage";
+import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
+import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
 import type { ChatMessage } from "@src/types";
-import { getIdeaApi, createIdeaApi, updateIdeaApi } from "@helpers/api/idea";
-import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
-import {
-	getQueryParam,
-	callApiWithRetry,
-	normalizeApiError,
-	isModerationError
-} from "@helpers/helpers";
+import { getIdeaApi } from "@helpers/api/idea";
+import { getQueryParam } from "@helpers/helpers";
 
 import ChatRecorder from "@components/chat/reusable/ChatRecorder";
 import FinishedResultSection from "@components/chat/reusable/FinishedResultSection";
 import ChatIdeaMainSection from "@components/chat/ChatIdeaMainSection";
 import ChatFeedbackMainSection from "@components/chat/ChatFeedbackMainSection";
 import ErrorSection from "@components/error/ErrorSection";
+import { ChatErrorBanner } from "@components/chat/ChatErrorBanner";
+import { useChatSession } from "@components/chat/useChatSession";
+import { useDraftLoader, useIdeaPersistence } from "@components/chat/useIdeaPersistence";
 
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
 import ChatTopBar from "./reusable/ChatTopBar";
@@ -67,23 +50,10 @@ export function ChatSection({
 		  }
 		| undefined
 	>();
-	const [conversationState, setConversationState] = useState(CONVERSATION_STATE.Start);
-	const [ideaId, setIdeaId] = useState<string | undefined>(draftId);
-	/** true if result finished generating result */
-	const [readyToSave, setReadyToSave] = useState(false);
-	/** true if there's no id in query param and conversation meets length */
-	/** true if user message was inappropriate by the AI provider */
-	const [isUserResendRequired, setIsUserResendRequired] = useState(false);
-	/** if isUserResendRequired is true, then this field value is the inappropriate flagged transcript */
-	const [inappropriateUserTranscript, setInappropriateUserTranscript] = useState<string | null>(
-		null
-	);
 	const [showTranscript, setShowTranscript] = useState(false);
 	/** display error component as the section instead of mic ui */
 	const [errorComponent, setErrorComponent] = useState<React.ReactNode>();
-	/** true if saving is in progress, false if already saved */
-	const [saveState, setSaveState] = useState(CHAT_SAVE_STATE.WAITING);
-	/** error from the AI layer that is not the 469 resend case (e.g. no model downloaded) */
+	/** error from the AI layer that is not the 469 resend case */
 	const [aiError, setAiError] = useState<string | null>(null);
 
 	const aiStatus = useStore($aiStatus);
@@ -99,13 +69,8 @@ export function ChatSection({
 	const fetchParentIdea = (parentId: string): void => {
 		getIdeaApi(parentId)
 			.then((res) => {
-				const ideaContent = {
-					id: res.id,
-					title: res.title,
-					summary: res.summary
-				};
 				document.title = `Feedback for "${res.title}"`;
-				setParentIdea(ideaContent);
+				setParentIdea({ id: res.id, title: res.title, summary: res.summary });
 			})
 			.catch((err) => {
 				console.error("Parent Idea not found with ID", parentId, err);
@@ -121,295 +86,91 @@ export function ChatSection({
 	};
 
 	const hasMounted = useRef(false);
-	/** guards createIdeaApi: the effect can legally re-run while a create
-	 *  is still in flight (StrictMode double-invoke, conversation updates);
-	 *  a second create would produce a duplicate idea row */
-	const creatingIdeaRef = useRef(false);
-	/** latest conversation length without re-running the mount fetch */
-	const conversationLengthRef = useRef(currConversation.length);
+
+	const persistence = useIdeaPersistence(currConversation, result, {
+		initialIdeaId: draftId,
+		chatType,
+		parentIdParam,
+		dailyLogId,
+		minLength: minConversationLenForCreateAndEnd,
+		onError: setAiError,
+		onFatalError: setErrorComponent,
+		onParentIdea: fetchParentIdea
+	});
+
+	// session's setConversationState is stable (useState setter), but the
+	// hook ordering requires declaring it after the loaders; a ref bridges
+	const setConvStateRef = useRef<(s: string) => void>(() => {});
+	useDraftLoader(persistence.ideaId, parentIdParam, {
+		conversationLengthRef: persistence.conversationLengthRef,
+		fetchedParentRef: persistence.fetchedParentRef,
+		setIdeaId: persistence.setIdeaId,
+		setCurrConversation,
+		setConversationState: (s) => setConvStateRef.current(s),
+		onParentIdea: fetchParentIdea,
+		onFatalError: setErrorComponent
+	});
+
+	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
+
+	const session = useChatSession(currConversation, setCurrConversation, {
+		chatType,
+		parentIdea,
+		ideaId: persistence.ideaId,
+		fromGuideParam,
+		onError: setAiError,
+		conversationEndCallbacks,
+		setSaveState: persistence.setSaveState,
+		setResult
+	});
+
 	useEffect(() => {
-		conversationLengthRef.current = currConversation.length;
-	}, [currConversation.length]);
-	/** monotonic autosave sequence: only the newest save may settle state */
-	const autosaveSeqRef = useRef(0);
-	/** parent idea already fetched (id keyed) */
-	const fetchedParentRef = useRef<string | null>(null);
-
-	useIdeaIdFromUrl(hasMounted, setIdeaId);
-
-	// derived: an idea must be created as soon as the conversation is long
-	// enough and no idea row exists yet
-	const readyToCreateIdea =
-		!ideaId && currConversation.length >= minConversationLenForCreateAndEnd;
-
-	useEffect(() => {
-		// this useEffect is to protect from creating duplicates of the same idea if the currConversation is set twice
-		// perhaps to the same value but the useEffect is triggered since array variables are pointers to memory
-		if (readyToCreateIdea && !creatingIdeaRef.current) {
-			creatingIdeaRef.current = true;
-			createIdeaApi(result, currConversation, chatType, parentIdParam, dailyLogId)
-				.then((createdIdeaId) => {
-					creatingIdeaRef.current = false;
-					setIdeaId(createdIdeaId);
-					const url = new URL(window.location.href);
-					const params = new URLSearchParams(url.search);
-					params.set("id", createdIdeaId);
-					history.pushState(null, "", "?" + params.toString());
-				})
-				.catch((err) => {
-					creatingIdeaRef.current = false;
-					setAiError(`Could not save this session: ${normalizeApiError(err)}`);
-					// readyToCreateIdea stays true; the next conversation
-					// update re-runs this effect and retries creation
-				});
-		}
-	}, [readyToCreateIdea, currConversation, dailyLogId, result, chatType, parentIdParam]);
-
-	// Autosave: debounced (rapid user/assistant turns must not fire one
-	// write each), sequenced (a stale completion can never overwrite the
-	// top-bar state of a newer save), and the SAVING state lives here so
-	// the append sites don't have to set it.
-	useEffect(() => {
-		if (!ideaId || currConversation.length < minConversationLenForCreateAndEnd) {
-			return;
-		}
-		const seq = ++autosaveSeqRef.current;
-		const timer = window.setTimeout(() => {
-			setSaveState(CHAT_SAVE_STATE.SAVING);
-			updateIdeaApi(ideaId, currConversation)
-				.then(() => {
-					if (seq !== autosaveSeqRef.current) return;
-					// don't show SAVED visual for saving the user message so that
-					// the switch from SAVING to SAVED doesn't happen twice
-					if (currConversation[currConversation.length - 1]?.role === "assistant") {
-						setSaveState(CHAT_SAVE_STATE.SUCCESS);
-					}
-				})
-				.catch((e) => {
-					if (seq !== autosaveSeqRef.current) return;
-					setSaveState(CHAT_SAVE_STATE.FAILED);
-					setAiError(`Autosave failed: ${normalizeApiError(e)}`);
-				});
-		}, 400);
-		return () => window.clearTimeout(timer);
-	}, [currConversation, ideaId, minConversationLenForCreateAndEnd]);
-
-	// Draft load: runs once per ideaId (NOT on every message - the old
-	// currConversation.length dependency re-fetched mid-session and made
-	// two in-flight reads able to resolve out of order).
-	useEffect(() => {
-		if (ideaId) {
-			getIdeaApi(ideaId)
-				.then((res) => {
-					if (res.summary) {
-						// if result already present, change to idea result page
-						// it's not the smoothest transition I'll admit
-						window.location.href = `/idea?id=${res.id}`;
-						return;
-					}
-					const savedConversation = [...(res.transcript ?? [])];
-					// Only adopt the saved transcript if it has more messages than
-					// what we hold locally (via the ref: this closure sees the
-					// mount-time conversation): restores a resumed draft, but
-					// never clobbers newer messages with a stale fetch.
-					if (savedConversation.length > conversationLengthRef.current) {
-						setCurrConversation(savedConversation);
-						const lastMessage = savedConversation.at(-1);
-						if (lastMessage?.role === "user") {
-							setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
-						} else {
-							setConversationState(CONVERSATION_STATE.Idle);
-						}
-					}
-
-					const parentIdData = res.parentIdea?.id;
-					if (parentIdData && fetchedParentRef.current !== parentIdData) {
-						fetchedParentRef.current = parentIdData;
-						fetchParentIdea(parentIdData);
-					}
-				})
-				.catch((err) => {
-					console.error("idea not found with ID", ideaId, err);
-					setErrorComponent(
-						<ErrorSection
-							title="Draft idea not found"
-							paragraphs={[
-								"This draft no longer exists.",
-								"If you did not mean to open a draft, start a new idea instead"
-							]}
-						/>
-					);
-				});
-		} else if (parentIdParam && fetchedParentRef.current !== parentIdParam) {
-			// when idea id isn't in the query parameter bc the idea hasn't been created yet
-			fetchedParentRef.current = parentIdParam;
-			fetchParentIdea(parentIdParam);
-		}
-	}, [ideaId, parentIdParam]);
-
-	/** Generate assistant response. NOT for the final outline result. */
-	const handleGetResponse = () => {
-		setConversationState(CONVERSATION_STATE.WaitingForCoach);
-		try {
-			const apiCall = () =>
-				generateResponseApi(
-					currConversation,
-					parentIdea?.summary,
-					parentIdea?.creatorName ?? null,
-					parentIdea ? parentIdea?.creatorName == null : false,
-					chatType
-				);
-			callApiWithRetry(apiCall)
-				.then((message) => {
-					const isUser = false;
-					addConversationMessage(message, isUser, currConversation, setCurrConversation);
-					setIsUserResendRequired(false);
-					setInappropriateUserTranscript(null);
-				})
-				.catch((err) => {
-					if (isModerationError(err)) {
-						const removedMessage = removeLastConversationMessage(
-							currConversation,
-							setCurrConversation
-						);
-						setInappropriateUserTranscript(removedMessage);
-						setIsUserResendRequired(true);
-					} else {
-						setAiError(normalizeApiError(err));
-					}
-				})
-				.finally(() => {
-					setConversationState(CONVERSATION_STATE.Idle);
-				});
-		} catch (error) {
-			console.error(error);
-			setConversationState(CONVERSATION_STATE.Idle);
-		}
-	};
-
-	/** Generate idea summary result */
-	const handleGetResult = () => {
-		// idea creation can still be in flight for young conversations; never
-		// generate a result we can't save
-		if (!ideaId) {
-			setAiError("Still saving this session - try again in a moment.");
-			return;
-		}
-		conversationEndCallbacks();
-		setConversationState(CONVERSATION_STATE.FinishWithResult);
-		const resultFinishedCallbacks = async (
-			result: string,
-			structuredResult: unknown
-		): Promise<void> => {
-			// final update with saving result - only claim success once it saved
-			try {
-				await updateIdeaApi(ideaId, currConversation, result, structuredResult);
-				setReadyToSave(true);
-			} catch (e) {
-				setAiError(`Could not save your summary: ${normalizeApiError(e)}`);
-				setConversationState(CONVERSATION_STATE.Idle);
-				return;
-			}
-			if (fromGuideParam) {
-				markGettingStartedDone();
-			}
-		};
-		handleStreamResult(
-			() =>
-				generateResponseStreamApi(
-					currConversation,
-					true,
-					parentIdea?.summary,
-					parentIdea?.creatorName ?? null,
-					parentIdea ? parentIdea?.creatorName == null : false,
-					chatType
-				),
-			setResult,
-			resultFinishedCallbacks,
-			(err) => {
-				setAiError(normalizeApiError(err));
-				// re-enable the button so the user can retry
-				setConversationState(CONVERSATION_STATE.Idle);
-			}
-		);
-	};
-
-	const askADifferentQuestion = async () => {
-		const isUser = true;
-		addConversationMessage(
-			ASK_A_DIFFERENT_QUESTION,
-			isUser,
-			currConversation,
-			setCurrConversation
-		);
-		setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
-	};
+		setConvStateRef.current = session.setConversationState;
+	});
 
 	if (result) {
 		return (
 			<FinishedResultSection
-				ideaId={ideaId}
+				ideaId={persistence.ideaId}
 				result={result}
 				parentSummary={parentIdea?.summary}
-				readyForFinish={readyToSave}
+				readyForFinish={session.readyToSave}
 			/>
 		);
 	} else if (errorComponent) {
 		return errorComponent;
 	} else {
-		const aiMessageContent = isUserResendRequired
-			? inappropriateUserTranscript
+		const aiMessageContent = session.isUserResendRequired
+			? session.inappropriateUserTranscript
 			: findMostRecentAssistantContent(currConversation);
 		const enableSkip =
-			currConversation.length > 1 && conversationState === CONVERSATION_STATE.Idle;
+			currConversation.length > 1 && session.conversationState === CONVERSATION_STATE.Idle;
 		const mainSectionChildren = [
 			<AssistantResponseText
 				key="assistant-response"
 				styleSetting={parentIdea && "feedback"}
 				content={aiMessageContent}
 				enableSkip={enableSkip}
-				handleSkipQuestion={askADifferentQuestion}
-				didFailToSend={isUserResendRequired}
+				handleSkipQuestion={session.askADifferentQuestion}
+				didFailToSend={session.isUserResendRequired}
 			/>,
 			<ChatRecorder
 				key="chat-recorder"
 				isCompressed={Boolean(parentIdea)}
-				conversationState={conversationState}
-				setConversationState={setConversationState}
+				conversationState={session.conversationState}
+				setConversationState={session.setConversationState}
 				currConversation={currConversation}
 				setCurrConversation={setCurrConversation}
-				setSaveState={setSaveState}
-				handleGetResponse={() => Promise.resolve(handleGetResponse())}
+				setSaveState={persistence.setSaveState}
+				handleGetResponse={() => Promise.resolve(session.handleGetResponse())}
 			/>
 		];
 
 		return (
 			<section className="wow">
 				{aiError && (
-					<div
-						role="alert"
-						className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm"
-					>
-						<span>
-							<b>Hmm, the AI couldn&rsquo;t respond:</b> {aiError}
-						</span>
-						<span className="flex gap-2 shrink-0">
-							<a
-								className="underline font-semibold whitespace-nowrap"
-								href="/profile?tab=aiModels"
-							>
-								Open AI settings
-							</a>
-							<button
-								className="underline text-stone-500 whitespace-nowrap"
-								onClick={() => setAiError(null)}
-							>
-								Dismiss
-							</button>
-						</span>
-					</div>
+					<ChatErrorBanner aiError={aiError} onDismiss={() => setAiError(null)} />
 				)}
-
 				{showModelLoading && (
 					<p
 						role="status"
@@ -427,7 +188,7 @@ export function ChatSection({
 						fromGuideParam && !getQueryParam("id") ? "arrow-back-outline" : null
 					}
 					leftButtonHref="/get-started"
-					saveState={saveState}
+					saveState={persistence.saveState}
 				/>
 				{parentIdea ? (
 					<ChatFeedbackMainSection
@@ -435,8 +196,8 @@ export function ChatSection({
 						setShowTranscript={setShowTranscript}
 						parentIdea={parentIdea}
 						currConversation={currConversation}
-						conversationState={conversationState}
-						handleGetResult={handleGetResult}
+						conversationState={session.conversationState}
+						handleGetResult={session.handleGetResult}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
 						{mainSectionChildren}
@@ -446,8 +207,8 @@ export function ChatSection({
 						showTranscript={showTranscript}
 						setShowTranscript={setShowTranscript}
 						currConversation={currConversation}
-						conversationState={conversationState}
-						handleGetResult={handleGetResult}
+						conversationState={session.conversationState}
+						handleGetResult={session.handleGetResult}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
 						{mainSectionChildren}
