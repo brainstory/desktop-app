@@ -39,6 +39,13 @@ pub mod setting {
 		pub const EXT_LLM_API_KEY: &str = "ext_llm_api_key";
 		pub const EXT_STT_API_KEY: &str = "ext_stt_api_key";
 	}
+
+	/// where debug builds keep the secrets instead of the keychain
+	pub mod dev_secret {
+		pub const HF_TOKEN: &str = "dev_hf_token";
+		pub const EXT_LLM_API_KEY: &str = "dev_ext_llm_api_key";
+		pub const EXT_STT_API_KEY: &str = "dev_ext_stt_api_key";
+	}
 }
 
 #[cfg(test)]
@@ -72,6 +79,9 @@ mod tests {
 			setting::secret::HF_TOKEN,
 			setting::secret::EXT_LLM_API_KEY,
 			setting::secret::EXT_STT_API_KEY,
+			setting::dev_secret::HF_TOKEN,
+			setting::dev_secret::EXT_LLM_API_KEY,
+			setting::dev_secret::EXT_STT_API_KEY,
 		];
 		let mut sorted = keys.to_vec();
 		sorted.sort_unstable();

@@ -502,15 +502,16 @@ mod tests {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let path = dir.path().join("clear-fail.db");
 		let db = Db::open(&path).expect("open");
-		db.set_setting(setting::secret::HF_TOKEN, "hf_old")
-			.expect("seed fallback row");
+		// the row this build keeps the token in (dev-only in debug builds)
+		let row = crate::secrets::Secret::HfToken.store_key();
+		db.set_setting(row, "hf_old").expect("seed fallback row");
 		{
 			let conn = rusqlite::Connection::open(&path).unwrap();
-			conn.execute_batch(
+			conn.execute_batch(&format!(
 				"CREATE TRIGGER keep_token BEFORE DELETE ON settings
-				 WHEN OLD.key = 'hf_token'
-				 BEGIN SELECT RAISE(ABORT, 'database is locked'); END;",
-			)
+				 WHEN OLD.key = '{row}'
+				 BEGIN SELECT RAISE(ABORT, 'database is locked'); END;"
+			))
 			.unwrap();
 		}
 		let previous = AiSettings::load(&db);
@@ -520,10 +521,7 @@ mod tests {
 			.save(&db, &previous)
 			.expect_err("a secret that survives a clear must not report success");
 		assert!(err.contains("database is locked"), "unexpected: {err}");
-		assert_eq!(
-			db.get_setting(setting::secret::HF_TOKEN).as_deref(),
-			Some("hf_old")
-		);
+		assert_eq!(db.get_setting(row).as_deref(), Some("hf_old"));
 	}
 
 	#[test]
