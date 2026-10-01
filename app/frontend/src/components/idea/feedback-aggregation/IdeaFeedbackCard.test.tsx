@@ -47,4 +47,13 @@ describe("EmojiList", () => {
 		await user.click(screen.getByRole("button"));
 		expect(onReactionClick).toHaveBeenCalledWith(comment);
 	});
+
+	it("highlights reactions with the pink accent ramp, not blue", () => {
+		const { container } = render(
+			<EmojiList reactions={[comment]} onReactionClick={() => {}} />
+		);
+		const chip = container.querySelector(".border.rounded-md");
+		expect(chip).toHaveClass("border-accent-400", "bg-accent-50");
+		expect(container.innerHTML).not.toMatch(/\bblue-\d/);
+	});
 });

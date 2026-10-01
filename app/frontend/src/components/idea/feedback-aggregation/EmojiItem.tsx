@@ -40,7 +40,7 @@ export default function EmojiItem({
 				className={cn(
 					"flex items-center",
 					!labelsHasBorder && "p-1",
-					isBlue && "border rounded-md border-blue-400 bg-blue-50 hover:bg-blue-200"
+					isBlue && "border rounded-md border-accent-400 bg-accent-50 hover:bg-accent-200"
 				)}
 			>
 				<Tooltip text={creatorName ?? creatorEmail ?? undefined} position="left">
