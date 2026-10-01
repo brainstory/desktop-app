@@ -3,14 +3,23 @@ import LoadingAnimation from "@components/global/LoadingAnimation";
 
 interface IdeaSummaryProps {
 	content?: string | null;
+	/** Explicit loading flag: a null `content` after load is an idea
+	 * without a summary, not a pending fetch. */
+	isLoading?: boolean;
 }
 
-export default function IdeaSummary({ content }: IdeaSummaryProps) {
-	// explicit loading state instead of a markdown string used as a flag
-	if (content == null) {
+export default function IdeaSummary({ content, isLoading = false }: IdeaSummaryProps) {
+	if (isLoading) {
 		return (
 			<div className="p-5 pb-8 mx-auto">
 				<LoadingAnimation text="Loading idea..." />
+			</div>
+		);
+	}
+	if (content == null || content.trim() === "") {
+		return (
+			<div className="p-5 pb-8 mx-auto">
+				<p className="text-sm text-stone-500">This idea has no summary yet.</p>
 			</div>
 		);
 	}
