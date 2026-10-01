@@ -1,8 +1,8 @@
 import js from "@eslint/js";
 import globals from "globals";
-import react from "eslint-plugin-react";
+import eslintReact from "@eslint-react/eslint-plugin";
 import reactHooks from "eslint-plugin-react-hooks";
-import jsxA11y from "eslint-plugin-jsx-a11y";
+import jsxA11y from "eslint-plugin-jsx-a11y-x";
 import astro from "eslint-plugin-astro";
 import tseslint from "typescript-eslint";
 
@@ -18,10 +18,12 @@ export default tseslint.config(
 		files: ["**/*.{ts,tsx}"],
 		extends: [
 			tseslint.configs.recommendedTypeChecked,
-			// same plugin object eslint-plugin-astro registers for its
-			// a11y rules (flatConfigs carries a copy, and flat config
-			// refuses two different "jsx-a11y" plugins)
-			{ ...jsxA11y.flatConfigs.recommended, plugins: { "jsx-a11y": jsxA11y } }
+			// the maintained jsx-a11y fork (the original stopped at ESLint 9);
+			// eslint-plugin-astro wraps the same rules as astro/jsx-a11y/*
+			jsxA11y.configs.recommended,
+			// eslint-plugin-react stopped at ESLint 9 (it calls the removed
+			// context.getFilename); @eslint-react is the maintained successor
+			eslintReact.configs["recommended-type-checked"]
 		],
 		languageOptions: {
 			globals: { ...globals.browser, ...globals.node },
@@ -34,22 +36,48 @@ export default tseslint.config(
 			}
 		},
 		plugins: {
-			react,
 			"react-hooks": reactHooks
 		},
-		settings: { react: { version: "detect" } },
 		rules: {
-			...react.configs.flat.recommended.rules,
 			...reactHooks.configs.recommended.rules,
-			// React 19 JSX transform: no React import needed
-			"react/react-in-jsx-scope": "off",
-			"react/jsx-uses-react": "off",
-			// ion-icon is a web component; unknown DOM props are fine
-			"react/no-unknown-property": ["error", { ignore: ["class"] }],
+			// eslint-plugin-react-hooks (the React team's) stays the source of
+			// truth for hooks; turn off @eslint-react's re-implementations so
+			// each problem is reported once
+			"@eslint-react/error-boundaries": "off",
+			"@eslint-react/exhaustive-deps": "off",
+			"@eslint-react/purity": "off",
+			"@eslint-react/rules-of-hooks": "off",
+			"@eslint-react/set-state-in-effect": "off",
+			"@eslint-react/set-state-in-render": "off",
+			"@eslint-react/static-components": "off",
+			"@eslint-react/unsupported-syntax": "off",
+			"@eslint-react/use-memo": "off",
+			// ion-icon is a web component; its `class` attribute is fine
+			"@eslint-react/dom-no-unknown-property": ["error", { ignore: ["class"] }],
+			// Style rules @eslint-react adds that eslint-plugin-react never
+			// enforced. Off to keep the ESLint 10 move a like-for-like swap;
+			// adopting them is a separate cleanup:
+			// - React 19 idioms (use() over useContext, <Ctx> over
+			//   <Ctx.Provider>, ref-as-prop over forwardRef)
+			"@eslint-react/no-use-context": "off",
+			"@eslint-react/no-context-provider": "off",
+			"@eslint-react/no-forward-ref": "off",
+			// - naming conventions for useId/useRef results
+			"@eslint-react/naming-convention-id-name": "off",
+			"@eslint-react/naming-convention-ref-name": "off",
+			// - lazy useState initialisers (the flagged ones are cheap reads)
+			"@eslint-react/use-state": "off",
+			// - index keys: the flagged lists are static or re-rendered whole
+			"@eslint-react/no-array-index-key": "off",
+			// - the tabs and tooltip primitives use the Children API and
+			//   cloneElement on purpose (to wire ids and aria-* onto children)
+			"@eslint-react/no-children-count": "off",
+			"@eslint-react/no-children-for-each": "off",
+			"@eslint-react/no-children-map": "off",
+			"@eslint-react/no-children-to-array": "off",
+			"@eslint-react/no-clone-element": "off",
 			// keep the console clean in production
 			"no-console": ["warn", { allow: ["error", "warn"] }],
-			// prop-type declarations are superseded by TypeScript
-			"react/prop-types": "off",
 			// allow the conventional `_` name for intentionally unused vars
 			"no-unused-vars": "off",
 			"@typescript-eslint/no-unused-vars": [
