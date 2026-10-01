@@ -46,6 +46,9 @@ jobs:
             os: ubuntu-latest
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
+    # cold-cache llama.cpp + whisper.cpp release builds run long; still
+    # cap a hung bundler or runner well below the 6h default
+    timeout-minutes: 90
     env:
       REQUIRE_MACOS26_SDK: "1"
     steps:
@@ -172,6 +175,7 @@ jobs:
     name: Publish GitHub release + updater feed
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       # write access only where it is needed: this job
       contents: write

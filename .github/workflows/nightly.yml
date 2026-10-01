@@ -34,6 +34,9 @@ jobs:
             os: ubuntu-latest
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
+    # release build + bundling + the engine smoke test (a debug build of
+    # the test crate) on a cold cache; still well below the 6h default
+    timeout-minutes: 120
     env:
       REQUIRE_MACOS26_SDK: "1"
     steps:
