@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 
 import PinkButton from "@ds/PinkButton";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
@@ -60,6 +60,26 @@ export function PhotoNameCard({ userName, createdAt }: PhotoNameCardProps) {
 	);
 }
 
+let runtimeTimezones: string[] | null = null;
+
+/**
+ * The zones the timezone select offers. `Intl.supportedValuesOf` lists
+ * canonical IANA zones only - Chromium (and Node) omit "UTC", "Etc/GMT"
+ * and legacy aliases like "US/Pacific" - so a stored value such as "UTC"
+ * would match no option and show as "Detect automatically". Always offer
+ * "UTC" and the stored value.
+ */
+export function timezoneOptions(stored?: string | null): string[] {
+	runtimeTimezones ??= Intl.supportedValuesOf("timeZone");
+	if (runtimeTimezones.includes("UTC") && (!stored || runtimeTimezones.includes(stored))) {
+		return runtimeTimezones;
+	}
+	const zones = new Set(runtimeTimezones);
+	zones.add("UTC");
+	if (stored) zones.add(stored);
+	return [...zones].sort();
+}
+
 interface GeneralCardProps {
 	userName?: string | null;
 	timezone?: string;
@@ -71,6 +91,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 	const [selectedTimezone, setSelectedTimezone] = useState(timezone ?? "Etc/GMT");
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
 	const [hasChanged, setHasChanged] = useState(false);
+	const timezones = useMemo(() => timezoneOptions(timezone), [timezone]);
 
 	const handleNameChange = (e: ChangeEvent<HTMLInputElement>): void => {
 		const input = e.target.value;
@@ -136,7 +157,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 					className="w-full border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 p-2 bg-white"
 				>
 					<option value="">Detect automatically</option>
-					{(Intl.supportedValuesOf("timeZone") as string[]).map((tz) => (
+					{timezones.map((tz) => (
 						<option key={tz} value={tz}>
 							{tz.replaceAll("_", " ")}
 						</option>
