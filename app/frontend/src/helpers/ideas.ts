@@ -10,21 +10,50 @@ export function isOwnIdea(idea: Pick<CreatorInfo, "creatorName">): boolean {
 }
 
 /**
- * Section index of a feedback comment's `oid_heading_text`
- * ("<ordinal>##<heading text>", 1-based per the feedback JSON prompt).
- * The idea's result sections keep index 0 as the (empty) title slot, so
- * a valid ordinal is a positive integer below `headingCount`. Anything
- * else (empty, "0", "-1", "1.5", out of range) returns null.
+ * Section index (into the idea's result sections: [title slot, "# Title",
+ * "## ...", ...]) of a feedback comment's `oid_heading_text`,
+ * "<number>##<heading text>". Placed by heading text first - it names the
+ * section unambiguously - and otherwise by the number, which counts only
+ * the `##` sections (first `##` = 1), as the feedback prompt defines it and
+ * as the model numbers them. Using the number as a raw array index put
+ * every comment one section too early (on the title). Returns null when
+ * neither identifies a section.
  */
 export function parseHeadingIndex(
 	oidHeadingText: string | null | undefined,
-	headingCount: number
+	sections: { heading?: string | null }[]
 ): number | null {
-	const ordinal = (oidHeadingText ?? "").split("#")[0]!.trim();
-	if (!/^\d+$/.test(ordinal)) return null;
-	const index = Number(ordinal);
-	if (index < 1 || index >= headingCount) return null;
-	return index;
+	const raw = oidHeadingText ?? "";
+	const hashes = raw.indexOf("##");
+	const numberPart = (hashes === -1 ? raw : raw.slice(0, hashes)).trim();
+	const textPart = hashes === -1 ? "" : normalizeHeading(raw.slice(hashes));
+
+	// indexes of the "## " sections, in order
+	const subsections = sections.flatMap((s, i) =>
+		(s.heading ?? "").trimStart().startsWith("## ") ? [i] : []
+	);
+
+	if (textPart) {
+		const matches = sections.flatMap((s, i) =>
+			normalizeHeading(s.heading ?? "") === textPart ? [i] : []
+		);
+		// a title sharing its text with a section: prefer the section
+		const sub = matches.filter((i) => subsections.includes(i));
+		if (sub.length > 0) return sub[0]!;
+		if (matches.length > 0) return matches[0]!;
+	}
+
+	if (!/^\d+$/.test(numberPart)) return null;
+	const ordinal = Number(numberPart);
+	if (ordinal < 1 || ordinal > subsections.length) return null;
+	return subsections[ordinal - 1]!;
+}
+
+function normalizeHeading(heading: string): string {
+	return heading
+		.replace(/^\s*#+\s*/, "")
+		.trim()
+		.toLowerCase();
 }
 
 /**

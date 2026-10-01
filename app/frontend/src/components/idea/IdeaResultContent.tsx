@@ -65,7 +65,7 @@ export default function IdeaResultContent() {
 		getIdeaApi(id)
 			.then((res) => {
 				if (isCurrent) {
-					fetchIdeaChildrenData(id, res.resultJson?.length ?? 0)
+					fetchIdeaChildrenData(id, res.resultJson ?? [])
 						.then(([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
 							if (!isCurrent) return;
 							setIdeaChildren(updateIdeaChildren);
@@ -213,14 +213,14 @@ export default function IdeaResultContent() {
 
 async function fetchIdeaChildrenData(
 	ideaId: string,
-	headingCount: number
+	sections: { heading?: string | null }[]
 ): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
 	const result = await getIdeaChildrenApi(ideaId).then(
 		(res): [IdeaFeedbackItem[], Record<number, FeedbackComment[]>] => {
 			const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
 			const ideaChildren = res.map((idea) => {
 				(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
-					const headingIdx = parseHeadingIndex(comment.oidHeadingText, headingCount);
+					const headingIdx = parseHeadingIndex(comment.oidHeadingText, sections);
 					if (headingIdx === null) {
 						// a comment whose heading reference is empty, not a
 						// positive integer, or past the last heading can never be
