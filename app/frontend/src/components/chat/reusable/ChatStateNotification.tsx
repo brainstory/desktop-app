@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import BorderedButton from "@ds/BorderedButton";
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import { cancelGenerationApi } from "@helpers/api/ai";
 
 /** Cancels the in-flight local generation; the backend checks the token
@@ -18,7 +18,7 @@ export function CancelGenerationButton() {
 	);
 }
 
-function RenderFromState({ conversationState }: { conversationState: string }) {
+function RenderFromState({ conversationState }: { conversationState: ConversationState }) {
 	const renderList: (string | ReactNode)[] = [];
 
 	if (conversationState === CONVERSATION_STATE.WaitingForCoach) {

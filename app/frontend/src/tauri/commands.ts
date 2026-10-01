@@ -23,6 +23,7 @@ import type {
 	ModelsResponse
 } from "@helpers/api/models";
 import type { ExportIdeaResult, ImportShareResult } from "@helpers/api/share";
+import type { ChatType } from "@src/const";
 
 export const COMMANDS = {
 	getUser: "get_user",
@@ -75,7 +76,7 @@ type GenerateArgs = {
 	reactTo: string | null;
 	reactToAuthor: string | null;
 	reactToIsCurrentUser: boolean;
-	chatType: string | null;
+	chatType: ChatType | null;
 };
 
 type IdeaIdArgs = { ideaId: string };
@@ -98,7 +99,7 @@ interface CommandSignatures {
 			transcript: ChatMessage[];
 			parentIdeaId: string | null;
 			ideaMetadata: Record<string, unknown>;
-			ideaType: string;
+			ideaType: ChatType;
 			logId: string | null;
 		};
 		result: { id: string };

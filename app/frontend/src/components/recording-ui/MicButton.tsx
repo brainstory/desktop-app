@@ -1,14 +1,14 @@
 /** Mic button states and rendering, extracted from RecordButton. */
 
 import { ICON } from "./RecordIcons";
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import { cn } from "@helpers/cn";
 
 interface MicButtonProps {
 	isRecording: boolean;
 	isDisabled: boolean;
 	micStarting: boolean;
-	conversationState: string;
+	conversationState: ConversationState;
 	elapsedSeconds: number;
 	status: string;
 	onToggle: () => void;

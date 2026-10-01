@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@src/types";
-import { CHAT_SAVE_STATE } from "@src/const";
+import { CHAT_SAVE_STATE, type ChatSaveState, type ChatType } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
@@ -15,7 +15,7 @@ import { QUERY_PARAMS } from "@src/tauri/commands";
 export type ChatFatalError = "draft-not-found" | "parent-not-found";
 
 export interface IdeaPersistenceOptions {
-	chatType: string;
+	chatType: ChatType;
 	parentIdParam: string | null;
 	dailyLogId?: string | null;
 	/** the draft id from the URL, seeding the initial ideaId */
@@ -47,7 +47,7 @@ export function useIdeaPersistence(
 	} = options;
 
 	const [ideaId, setIdeaId] = useState<string | undefined>(initialIdeaId);
-	const [saveState, setSaveState] = useState(CHAT_SAVE_STATE.WAITING);
+	const [saveState, setSaveState] = useState<ChatSaveState>(CHAT_SAVE_STATE.WAITING);
 
 	// refs so the effects see live values without re-running
 	const creatingIdeaRef = useRef(false);

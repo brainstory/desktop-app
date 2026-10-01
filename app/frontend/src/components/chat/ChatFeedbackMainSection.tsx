@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ChatMessage } from "@src/types";
 import type { ParentIdea } from "@components/chat/types";
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import ConversationTranscript from "@components/chat/ConversationTranscript";
 import ParentIdeaText from "@components/global/ParentIdeaText";
 import TransparentButton from "@ds/TransparentButton";
@@ -12,7 +12,7 @@ interface ChatFeedbackMainSectionProps {
 	setShowTranscript: (show: boolean) => void;
 	parentIdea?: ParentIdea;
 	currConversation: ChatMessage[];
-	conversationState: string;
+	conversationState: ConversationState;
 	handleGetResult: () => void;
 	minConversationLenForEnd: number;
 	children?: ReactNode;

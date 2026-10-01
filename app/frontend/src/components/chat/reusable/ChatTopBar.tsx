@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { CHAT_SAVE_STATE } from "@src/const";
+import { CHAT_SAVE_STATE, type ChatSaveState } from "@src/const";
 import { cn } from "@helpers/cn";
 import type { ParentIdea } from "@components/chat/types";
 
@@ -12,7 +12,7 @@ interface ChatTopBarProps {
 	setShowTranscript: Dispatch<SetStateAction<boolean>>;
 	leftButtonIcon?: string | null;
 	leftButtonHref?: string;
-	saveState: string;
+	saveState: ChatSaveState;
 }
 
 export default function ChatTopBar({

@@ -37,23 +37,26 @@ export const TOPICS: Topic[] = [
 	}
 ];
 
-// used in CoachingSection
+/** The chat session's state machine (useChatSession). The values are
+ * also what the UI compares against, so keep them stable. */
 export const CONVERSATION_STATE = {
-	// as const: derived union types below make the state machine unrepresentable-outside-the-enum
 	Start: "starting new",
 	Idle: "waiting for next user action (record, send, finish)",
 	TranscribingUser: "transcribing...",
 	ReadyToSendUserTranscript: "ready to send user message",
 	WaitingForCoach: "sending message...",
 	FinishWithResult: "finalizing..."
-};
+} as const;
+export type ConversationState = (typeof CONVERSATION_STATE)[keyof typeof CONVERSATION_STATE];
 
+/** Autosave indicator states (the values are the labels shown). */
 export const CHAT_SAVE_STATE = {
 	WAITING: "Waiting",
 	SAVING: "Saving...",
 	SUCCESS: "Saved",
 	FAILED: "Autosave failed"
-};
+} as const;
+export type ChatSaveState = (typeof CHAT_SAVE_STATE)[keyof typeof CHAT_SAVE_STATE];
 
 export const ERROR_MESSAGE_MAP: Record<number, string> = {
 	469: "HttpError 469: Inappropriate input"
@@ -68,26 +71,9 @@ export const CHAT_TYPE = {
 	ORIGINAL: "original",
 	FEEDBACK: "feedback",
 	DAILY_INTENT: "daily_intent"
-};
+} as const;
+export type ChatType = (typeof CHAT_TYPE)[keyof typeof CHAT_TYPE];
 
 /** Sentinel user message recorded when the user asks for a different
  * question. Transcripts must not display it as a real answer. */
 export const ASK_A_DIFFERENT_QUESTION = "Ask me a different question!";
-
-// ---- derived union types (kept next to the objects they constrain) ----
-
-export const CONVERSATION_STATES = [
-	"starting new",
-	"waiting for next user action (record, send, finish)",
-	"transcribing...",
-	"ready to send user message",
-	"sending message...",
-	"finalizing..."
-] as const;
-export type ConversationState = (typeof CONVERSATION_STATES)[number];
-
-export const CHAT_SAVE_STATES = ["Waiting", "Saving...", "Saved", "Autosave failed"] as const;
-export type ChatSaveState = (typeof CHAT_SAVE_STATES)[number];
-
-export const CHAT_TYPES = ["original", "feedback", "daily_intent"] as const;
-export type ChatType = (typeof CHAT_TYPES)[number];

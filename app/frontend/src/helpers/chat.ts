@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
+import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION, type ChatType } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
@@ -39,7 +39,7 @@ export function currentQueryParams(): FirstPromptParams {
  * been sent...") - change them together.
  */
 export function getFirstPrompt(
-	chatType: string,
+	chatType: ChatType,
 	params: FirstPromptParams = currentQueryParams()
 ): string {
 	const isQotd = params.qotd != null;

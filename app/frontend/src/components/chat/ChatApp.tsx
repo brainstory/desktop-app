@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { getUserDailyStatusApi } from "@helpers/api/user";
 import { getQueryParam } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
-import { CHAT_TYPE } from "@src/const";
+import { CHAT_TYPE, type ChatType } from "@src/const";
 
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
@@ -13,7 +13,7 @@ import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 /** Resolve the chat mode from the URL once, inside the component (module
  * scope would read window.location at import time and make the module
  * untestable). */
-function chatTypeFromParams(): string {
+function chatTypeFromParams(): ChatType {
 	const parentId = getQueryParam(QUERY_PARAMS.parentId);
 	if (getQueryParam(QUERY_PARAMS.dailyIntent) === "true") {
 		return CHAT_TYPE.DAILY_INTENT;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
-import { CONVERSATION_STATE } from "../../const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import { transcribeApi } from "@helpers/api/ai";
 import { callApiWithRetry } from "@helpers/helpers";
 import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
@@ -20,7 +20,7 @@ interface RecordButtonProps {
 	/** the language model is still loading: recording and sending would
 	 * only fail, typing is fine */
 	modelLoading?: boolean;
-	conversationState: string;
+	conversationState: ConversationState;
 	setIsRecording: (recording: boolean) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
 	onTranscript: (transcript: string) => void;

@@ -1,5 +1,5 @@
 import { invokeCommand } from "@src/tauri/invoke";
-import { TOPICS } from "@src/const";
+import { CHAT_TYPE, TOPICS, type ChatType } from "@src/const";
 import type { ChatMessage, IdeaDetail, IdeaFeedbackItem } from "@src/types";
 
 /** Raw idea as serialized by the backend (snake_case). */
@@ -117,7 +117,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 export async function createIdeaApi(
 	result: string,
 	transcript: ChatMessage[],
-	ideaType = "original",
+	ideaType: ChatType = CHAT_TYPE.ORIGINAL,
 	parentIdeaId: string | null = null,
 	logId: string | null = null,
 	ideaMetadata: Record<string, unknown> = {}

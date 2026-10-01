@@ -6,6 +6,7 @@ import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 
 import ChatStateNotification from "@components/chat/reusable/ChatStateNotification";
 import type { Dispatch, SetStateAction } from "react";
+import type { ConversationState } from "@src/const";
 
 function useTimer(isRunning: boolean, setTime: Dispatch<SetStateAction<number>>) {
 	useEffect(() => {
@@ -29,7 +30,7 @@ interface AudioRecorderProps {
 	isDisabled?: boolean;
 	/** the language model is still loading: mic and Send wait for it */
 	modelLoading?: boolean;
-	conversationState: string;
+	conversationState: ConversationState;
 	getCoachResponse: () => Promise<CoachResponseOutcome>;
 	onTranscript: (transcript: string) => void;
 	setIsTranscribing: (transcribing: boolean) => void;

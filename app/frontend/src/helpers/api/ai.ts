@@ -2,6 +2,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { invokeCommand } from "@src/tauri/invoke";
 import type { ChatMessage } from "@src/types";
 import type { GenerationResult } from "@helpers/chat";
+import type { ChatType } from "@src/const";
 
 /**
  * @param blob WAV audio blob captured by the recorder
@@ -17,7 +18,7 @@ export async function transcribeApi(blob: Blob): Promise<string> {
  * the idea being reacted to. */
 export interface GenerateOptions {
 	messages: ChatMessage[];
-	chatType?: string | null;
+	chatType?: ChatType | null;
 	/** the parent idea's document a feedback chat reacts to */
 	reactTo?: string | null;
 	/** who wrote it (imported ideas only) */

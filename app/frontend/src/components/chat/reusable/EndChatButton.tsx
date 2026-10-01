@@ -1,8 +1,8 @@
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import BlackButton from "@ds/BlackButton";
 
 interface EndChatButtonProps {
-	conversationState: string;
+	conversationState: ConversationState;
 	handleGetResult: () => void;
 	classes?: string;
 }

@@ -7,7 +7,13 @@
 import { useCallback, useReducer, useRef } from "react";
 import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
-import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
+import {
+	CONVERSATION_STATE,
+	ASK_A_DIFFERENT_QUESTION,
+	type ChatSaveState,
+	type ChatType,
+	type ConversationState
+} from "@src/const";
 import {
 	handleStreamResult,
 	addConversationMessage,
@@ -30,14 +36,14 @@ import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 export type CoachResponseOutcome = "sent" | "flagged" | "failed" | "cancelled";
 
 export interface ChatSessionOptions {
-	chatType: string;
+	chatType: ChatType;
 	parentIdea?: ParentIdea;
 	ideaId?: string;
 	fromGuideParam?: string | null;
 	/** report an error; `source` defaults to "ai" */
 	onError: (message: string, source?: ChatErrorSource) => void;
 	conversationEndCallbacks: () => void;
-	setSaveState: (state: string) => void;
+	setSaveState: (state: ChatSaveState) => void;
 	/** persist the final result (ordered after in-flight autosaves) */
 	saveResult: (
 		ideaId: string,
@@ -63,7 +69,7 @@ function reactionOptions(
 
 /** Everything the session tracks besides the conversation itself. */
 export interface ChatSessionState {
-	conversationState: string;
+	conversationState: ConversationState;
 	/** moderation removed the last message; the user must reword it */
 	isUserResendRequired: boolean;
 	inappropriateUserTranscript: string | null;

@@ -1,7 +1,12 @@
 import { useCallback, useState, useRef } from "react";
 import { useStore } from "@nanostores/react";
 import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
-import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
+import {
+	CONVERSATION_STATE,
+	MIN_CONVERSATION_LENGTH_BEFORE_SAVE,
+	CHAT_TYPE,
+	type ChatType
+} from "@src/const";
 import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
 import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
@@ -31,7 +36,7 @@ interface ChatSectionProps {
 	dailyLogId?: string | null;
 	/** chat mode (computed by the parent from the URL, so this module has
 	 * no import-time window.location reads) */
-	chatType?: string;
+	chatType?: ChatType;
 	/** ?parentId= query value, when giving feedback on an idea */
 	parentIdParam?: string | null;
 	/** ?topic= query value (guide entry) */

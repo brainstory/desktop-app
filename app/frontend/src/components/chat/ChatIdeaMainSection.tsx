@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { ChatMessage } from "@src/types";
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import ConversationTranscript from "@components/chat/ConversationTranscript";
 import EndChatButton from "./reusable/EndChatButton";
 
@@ -8,7 +8,7 @@ interface ChatIdeaMainSectionProps {
 	showTranscript: boolean;
 	setShowTranscript: (show: boolean) => void;
 	currConversation: ChatMessage[];
-	conversationState: string;
+	conversationState: ConversationState;
 	handleGetResult: () => void;
 	minConversationLenForEnd: number;
 	children?: ReactNode;

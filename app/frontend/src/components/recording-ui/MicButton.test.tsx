@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import { MicButton } from "./MicButton";
 
-function renderMic(conversationState: string, onToggle = vi.fn()) {
+function renderMic(conversationState: ConversationState, onToggle = vi.fn()) {
 	render(
 		<MicButton
 			isRecording={false}

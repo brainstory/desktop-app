@@ -1,4 +1,4 @@
-import { CHAT_SAVE_STATE } from "@src/const";
+import { CHAT_SAVE_STATE, type ChatSaveState, type ConversationState } from "@src/const";
 import { addConversationMessage } from "@helpers/chat";
 import AudioRecorder from "@components/recording-ui/AudioRecorder";
 import type { ChatMessage } from "@src/types";
@@ -12,11 +12,11 @@ import { useCallback } from "react";
  * doesn't pass dispatch further down.
  */
 interface ChatRecorderProps {
-	conversationState: string;
+	conversationState: ConversationState;
 	dispatch: (event: ChatSessionEvent) => void;
 	currConversation: ChatMessage[];
 	setCurrConversation: Dispatch<SetStateAction<ChatMessage[]>>;
-	setSaveState: (state: string) => void;
+	setSaveState: (state: ChatSaveState) => void;
 	handleGetResponse: () => Promise<CoachResponseOutcome>;
 	/** the language model is still loading: no recording or sending yet */
 	modelLoading?: boolean;
