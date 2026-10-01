@@ -47,6 +47,44 @@ fn neutralize_turn_markers(content: &str) -> String {
 	out
 }
 
+/// How a restored KV cache lines up with the next prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KvReuse {
+	/// First prompt position that still decodes; restored cells from
+	/// here on are dropped.
+	decode_from: usize,
+	/// Leading cached tokens that stay in the restored cache.
+	kept: usize,
+}
+
+impl KvReuse {
+	/// The tokens the cache holds once the prompt tail is decoded.
+	fn tokens_after_prompt<T: Clone>(&self, cached: &[T], prompt: &[T]) -> Vec<T> {
+		let mut tokens = cached[..self.kept].to_vec();
+		tokens.extend_from_slice(&prompt[self.decode_from..]);
+		tokens
+	}
+}
+
+/// Plan reusing a cache built from `cached` for `prompt`: only the tail
+/// past the common prefix decodes, but at least the final prompt token
+/// always does so logits exist for sampling even on an exact repeat.
+/// None when nothing is shared.
+fn plan_kv_reuse<T: PartialEq>(cached: &[T], prompt: &[T]) -> Option<KvReuse> {
+	let common = cached
+		.iter()
+		.zip(prompt.iter())
+		.take_while(|(a, b)| a == b)
+		.count();
+	if common == 0 {
+		return None;
+	}
+	Some(KvReuse {
+		decode_from: common.min(prompt.len().saturating_sub(1)),
+		kept: common,
+	})
+}
+
 /// A captured KV cache plus the tokens it was built from. Restoring
 /// this into a fresh context skips re-decoding the common prefix of the
 /// next turn's prompt (the biggest per-turn latency cost).
@@ -330,7 +368,8 @@ impl LocalLlm {
 		// Restore the previous KV cache when one exists and reuse its
 		// common prefix with this prompt, so only the new tail decodes.
 		// (A restore failure just falls back to a full decode.)
-		let mut kv_tokens: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
+		// kv_tokens tracks what the cache holds, for the next turn's reuse.
+		let mut kv_tokens: Vec<llama_cpp_2::token::LlamaToken> = tokens.clone();
 		let mut decode_from = 0usize;
 		if let Some(saved) = self
 			.kv_state
@@ -338,32 +377,22 @@ impl LocalLlm {
 			.unwrap_or_else(|e| e.into_inner())
 			.take()
 		{
-			let common = saved
-				.tokens
-				.iter()
-				.zip(tokens.iter())
-				.take_while(|(a, b)| a == b)
-				.count();
-			if common > 0 {
+			if let Some(plan) = plan_kv_reuse(&saved.tokens, &tokens) {
 				match ctx.state_seq_set(&saved.kv, 0) {
 					Ok(()) => {
-						// Only the tail past the common prefix decodes; keep
-						// at least the final token so logits exist for
-						// sampling even on an exact-prefix repeat.
-						decode_from = common.min(n_prompt.saturating_sub(1));
 						// The restored cache also holds the previous turn's
 						// generated tokens; drop every cell past the reuse
 						// point so the tail decodes into free cells.
 						if let Err(e) =
-							ctx.clear_kv_cache_seq(Some(0), Some(decode_from as u32), None)
+							ctx.clear_kv_cache_seq(Some(0), Some(plan.decode_from as u32), None)
 						{
 							log::warn!("KV truncation failed; decoding full prompt: {e:?}");
-							decode_from = 0;
-							kv_tokens.clear();
 						} else {
-							kv_tokens = saved.tokens[..common].to_vec();
+							decode_from = plan.decode_from;
+							kv_tokens = plan.tokens_after_prompt(&saved.tokens, &tokens);
 							log::info!(
-								"reusing KV cache: {common} cached tokens, decoding {} new",
+								"reusing KV cache: {} cached tokens, decoding {} new",
+								plan.kept,
 								n_prompt - decode_from
 							);
 						}
@@ -384,7 +413,6 @@ impl LocalLlm {
 		// Decode the (possibly partial) prompt in chunks: cancel stays
 		// responsive and a stalled decode aborts instead of hanging the
 		// whole budget. The KV prefix is already in the context.
-		kv_tokens.extend_from_slice(&tokens[decode_from..]);
 		let mut batch = LlamaBatch::new(PROMPT_DECODE_CHUNK, 1);
 		for (offset, chunk) in tokens[decode_from..]
 			.chunks(PROMPT_DECODE_CHUNK)
@@ -956,6 +984,31 @@ mod tests {
 			"<idea author=\"x\">plain</idea>"
 		);
 		assert_eq!(f("math: 5 < 10 > 2"), "math: 5 < 10 > 2");
+	}
+
+	#[test]
+	fn kv_reuse_decodes_only_the_new_tail_of_a_grown_prompt() {
+		use super::plan_kv_reuse;
+		// cache = last prompt + the reply generated after it; the next
+		// prompt repeats that history and appends a new user turn
+		let cached = [1, 2, 3, 40, 41];
+		let prompt = [1, 2, 3, 40, 41, 7, 8];
+		let plan = plan_kv_reuse(&cached, &prompt).expect("shared prefix");
+		assert_eq!(plan.decode_from, 5);
+		assert_eq!(plan.tokens_after_prompt(&cached, &prompt), prompt);
+
+		// the reply was re-templated differently: reuse stops at the split
+		let prompt = [1, 2, 3, 9, 9];
+		let plan = plan_kv_reuse(&cached, &prompt).expect("shared prefix");
+		assert_eq!(plan.decode_from, 3);
+		assert_eq!(plan.tokens_after_prompt(&cached, &prompt), prompt);
+	}
+
+	#[test]
+	fn kv_reuse_is_skipped_for_divergent_prompts() {
+		use super::plan_kv_reuse;
+		assert_eq!(plan_kv_reuse(&[1, 2, 3], &[7, 2, 3]), None);
+		assert_eq!(plan_kv_reuse::<i32>(&[], &[1, 2]), None);
 	}
 
 	fn run(pieces: &[&str]) -> String {
