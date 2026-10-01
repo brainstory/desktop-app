@@ -291,7 +291,10 @@ impl PromptRequest {
 						"<oid oida=\"{}\" is_current_user=\"{}\">{}</oid>\n{}",
 						author,
 						is_current_user,
-						sanitize_tag_content(oid, "oid"),
+						// the summaries react to the author's idea, not to the
+						// assistant's synthesis appendix: given those tidy bullet
+						// lists, a small model copies them into the feedback
+						sanitize_tag_content(idea_without_synthesis(oid), "oid"),
 						content
 					);
 				}
@@ -302,6 +305,27 @@ impl PromptRequest {
 			}];
 		}
 		self.messages.clone()
+	}
+}
+
+/// An idea document without the assistant's synthesis appendix. Story
+/// summaries end with a `---` line followed by `##` synthesis sections
+/// (Core Thesis, Key Assumptions, ...): the assistant's reading of the
+/// session, not the author's idea. Only that exact shape is cut - the last
+/// standalone `---` line, when what follows starts with a `## ` heading - so
+/// a document that merely uses a horizontal rule is left whole.
+pub fn idea_without_synthesis(doc: &str) -> &str {
+	let mut offset = 0;
+	let mut divider = None;
+	for line in doc.split_inclusive('\n') {
+		if line.trim() == "---" {
+			divider = Some((offset, offset + line.len()));
+		}
+		offset += line.len();
+	}
+	match divider {
+		Some((start, end)) if doc[end..].trim_start().starts_with("## ") => doc[..start].trim_end(),
+		_ => doc,
 	}
 }
 
@@ -672,6 +696,56 @@ mod contract_tests {
 			);
 			assert!(!prompt.embedded().trim().is_empty(), "{prompt:?} is empty");
 		}
+	}
+
+	const IDEA_WITH_SYNTHESIS: &str = "# Testing Focus\n\n## Testing Focus\nI am testing.\n\n---\n## Core Thesis\nMy current focus is testing.\n\n## Open Questions\n* What am I testing?\n";
+
+	#[test]
+	fn feedback_summaries_get_the_idea_without_the_synthesis_sections() {
+		let mut req = request(ChatType::Feedback, true);
+		req.react_to = Some(IDEA_WITH_SYNTHESIS.into());
+		let content = &req.user_messages()[0].content;
+		assert!(
+			content.contains("## Testing Focus\nI am testing."),
+			"{content}"
+		);
+		assert!(
+			!content.contains("Core Thesis"),
+			"synthesis leaked: {content}"
+		);
+		assert!(
+			!content.contains("What am I testing?"),
+			"synthesis leaked: {content}"
+		);
+	}
+
+	#[test]
+	fn the_feedback_interview_still_sees_the_whole_idea() {
+		// only the summaries drop the synthesis; the conversation is unchanged
+		let mut req = request(ChatType::Feedback, false);
+		req.react_to = Some(IDEA_WITH_SYNTHESIS.into());
+		assert!(req.system_prompt().contains("Core Thesis"));
+	}
+
+	#[test]
+	fn idea_without_synthesis_only_cuts_a_trailing_synthesis_appendix() {
+		assert_eq!(
+			idea_without_synthesis(IDEA_WITH_SYNTHESIS),
+			"# Testing Focus\n\n## Testing Focus\nI am testing."
+		);
+		// no divider: unchanged
+		let plain = "# Idea\n\n## One\nText.\n";
+		assert_eq!(idea_without_synthesis(plain), plain);
+		// a horizontal rule inside the body that is not followed by a
+		// heading is content, not the synthesis divider
+		let hr = "# Idea\n\n## One\nBefore.\n\n---\n\nAfter the rule.\n";
+		assert_eq!(idea_without_synthesis(hr), hr);
+		// only the LAST divider counts
+		let two = "# Idea\n\n## One\nA\n\n---\n\nB\n\n---\n## Core Thesis\nX\n";
+		assert_eq!(
+			idea_without_synthesis(two),
+			"# Idea\n\n## One\nA\n\n---\n\nB"
+		);
 	}
 }
 
