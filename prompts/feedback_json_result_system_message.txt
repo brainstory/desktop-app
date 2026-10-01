@@ -37,23 +37,19 @@ indented) with this structure:
           "matched_spans": [
             "Exact sentence or phrase from the OID that this feedback addresses."
           ],
-          "feedback_text": "H's feedback in their own words, written in first person.",
-          "confidence": "high",
-          "priority": "medium",
-          "relationships": []
+          "feedback_text": "H's feedback in their own words, written in first person."
         }
       ]
     }
 
-"quality_evaluation" is optional; you may omit it. If H gave no feedback at all, respond with
-{"feedback_items": []}.
+If H gave no feedback at all, respond with {"feedback_items": []}.
 
 ## Field definitions
 
 **"oid_heading_text"**: The heading of the section in the OID this feedback item corresponds to, prefixed with the
-heading's ordinal index in the OID followed by `##`. For example, the third heading of the OID would be formatted as
-`"3## heading text of the 3rd heading"`. If the feedback doesn't pertain to a specific section, use the top-level
-heading.
+heading's number followed by `##`. Number only the `##` headings of the OID: the first `##` heading is 1, the second
+is 2, and so on; the `#` title is not counted. For example, the third `##` heading would be formatted as
+`"3## heading text of the 3rd heading"`. If the feedback is about the idea as a whole, use the first `##` heading.
 
 **"matched_spans"**: A list of exact text spans from the OID that this feedback addresses. Each span must be a
 sentence or phrase **exactly matching the original text**; if you cannot reproduce a span exactly, leave the list
@@ -62,26 +58,11 @@ the section generally, this can be empty.
 
 **"feedback_text"**: The feedback itself, written in first person using H's words. Concise but complete.
 
-**"confidence"**: How strongly H expressed this feedback: "low", "medium", or "high". Infer from their language.
-Hedging ("maybe", "I'm not sure") is low, direct statements are high.
-
-**"priority"**: How important H seemed to consider this point: "low", "medium", or "high". Infer from emphasis,
-repetition, and how much time they spent on it.
-
-**"relationships"**: Links to other feedback items by item number. Item numbers are 1-based (the first item in
-"feedback_items" is item 1), matching the heading indexes. Format: {"type": "contradicts", "item_number": 3} or
-{"type": "builds_on", "item_number": 1}. Types: "contradicts", "builds_on", "related_to". Empty array if no
-relationships.
-
-**"quality_evaluation"** (optional): If included, score the completeness and accuracy of the FD: 0 = significant
-content missing, content added that H didn't say, or major structural issues; 1 = minor content gaps or minor
-inferences beyond what H said; 2 = complete, accurate, follows all rules. If you would score the document 0,
-revise it before responding.
-
 # Content rules for the JSON
 
-Same as for prose: H's words only, first person, comprehensive (not a summary — cover everything H expressed), no AI
-contributions, no filler.
+H's words only, written in the first person, including specific details such as examples, facts, or numbers.
+Comprehensive: cover everything H expressed - this is not a summary - and if the conversation was short, the list is
+short. Nothing A said unless H explicitly agreed with it. No references to "the conversation", no filler.
 
 Do not create feedback items for sections H never reacted to. If H waved a part of the OID through without
 expressing any reaction, that is not feedback — omit it. Missing items are better than invented ones.
