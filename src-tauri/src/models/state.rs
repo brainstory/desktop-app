@@ -95,6 +95,25 @@ pub struct AppState {
 	pub quit_on_close: AtomicBool,
 }
 
+/// Whisper reads the model file fresh on each load: after a failed
+/// reload of the active model (its engine already dropped), retrying the
+/// same model recovers from a transient failure (339b19e).
+const STT_ROLLBACK_ON_SAME: bool = true;
+/// An identical llama reload fails deterministically on the same mmap;
+/// retrying the model that just failed is pointless.
+const LLM_ROLLBACK_ON_SAME: bool = false;
+
+/// The model to restore after `failed` did not load: the previously
+/// loaded one - unless that is `failed` itself and the engine kind does
+/// not retry an identical load.
+fn rollback_candidate(
+	prev: Option<ModelSpec>,
+	failed: &ModelSpec,
+	rollback_on_same: bool,
+) -> Option<ModelSpec> {
+	prev.filter(|prev| rollback_on_same || prev.id != failed.id)
+}
+
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 	// A poisoned lock still holds usable state; recover instead of
 	// panicking on every later call.
@@ -307,8 +326,7 @@ impl AppState {
 					// while loading; don't resurrect a deleted model.
 					log::warn!("{} was deleted while loading; not activating it", spec.id);
 				}
-				if let Some(prev) = prev_spec.filter(|prev| rollback_on_same || prev.id != spec.id)
-				{
+				if let Some(prev) = rollback_candidate(prev_spec, spec, rollback_on_same) {
 					match rollback(&prev) {
 						Ok(()) => {
 							log::warn!(
@@ -372,9 +390,7 @@ impl AppState {
 				LocalLlm::load(backend, path, spec.id)
 			},
 			|prev| self.reload_llm(prev),
-			// an identical llama reload fails deterministically on the
-			// same mmap; not worth retrying
-			false,
+			LLM_ROLLBACK_ON_SAME,
 			true,
 		)
 	}
@@ -429,11 +445,39 @@ impl AppState {
 				lock(&self.runtime).stt = Some(Arc::new(engine));
 				Ok(())
 			},
-			// whisper reads the file fresh each time: retry the same model
-			// after a transient failure (the engine was already dropped)
-			true,
+			STT_ROLLBACK_ON_SAME,
 			false,
 		)
+	}
+}
+
+#[cfg(test)]
+mod rollback_tests {
+	use super::super::catalog::{LLM_MODELS, STT_MODELS};
+	use super::{rollback_candidate, LLM_ROLLBACK_ON_SAME, STT_ROLLBACK_ON_SAME};
+
+	#[test]
+	fn whisper_retries_the_same_model_llama_does_not() {
+		let small = &STT_MODELS[1];
+		let tiny = &STT_MODELS[2];
+		// a failed reload of the active whisper model gets a retry
+		// (339b19e): its engine was already dropped
+		let retry = rollback_candidate(Some(small.clone()), small, STT_ROLLBACK_ON_SAME);
+		assert_eq!(retry.map(|s| s.id), Some(small.id));
+		// switching whisper models rolls back to the previous one
+		let back = rollback_candidate(Some(tiny.clone()), small, STT_ROLLBACK_ON_SAME);
+		assert_eq!(back.map(|s| s.id), Some(tiny.id));
+
+		// llama: an identical reload fails the same way, so no retry...
+		let gemma = &LLM_MODELS[0];
+		let other = &LLM_MODELS[1];
+		assert!(rollback_candidate(Some(gemma.clone()), gemma, LLM_ROLLBACK_ON_SAME).is_none());
+		// ...but a failed switch still restores the previous model
+		let back = rollback_candidate(Some(other.clone()), gemma, LLM_ROLLBACK_ON_SAME);
+		assert_eq!(back.map(|s| s.id), Some(other.id));
+
+		// nothing was loaded before: nothing to restore
+		assert!(rollback_candidate(None, small, STT_ROLLBACK_ON_SAME).is_none());
 	}
 }
 
