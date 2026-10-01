@@ -53,6 +53,20 @@ Unstructured (prose) feedback idea result.
 Structured JSON feedback result. Stored as the idea's `structured_result` and rendered as
 comment cards in the UI.
 
+## Runtime overrides
+
+The prompts are compiled into the binary. At startup the app also looks for
+`<app data dir>/prompts/<name>.txt` (for example `story_result_system_message.txt`) and, when found,
+uses it instead of the built-in prompt, so a prompt fix can ship without a new release. The app data
+dir is the platform's Tauri app data directory (on macOS `~/Library/Application Support/ai.brainstory.desktop/`).
+
+- Only the six file names above are read; anything else in the folder is ignored.
+- A file that is empty, not UTF-8, larger than 256 KB or unreadable is skipped with a warning, and
+  the built-in prompt is used.
+- Overrides are read once at launch (restart the app to pick up changes), and every applied
+  override is logged.
+- An override replaces the whole prompt, so it must keep the tag contracts above intact.
+
 ## License
 
 GPL-3.0-only. See [LICENSE](../LICENSE) at the repo root.

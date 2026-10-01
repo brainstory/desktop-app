@@ -1,3 +1,7 @@
+use std::io::Read;
+use std::path::Path;
+use std::sync::OnceLock;
+
 use crate::types::ChatMessage;
 
 // The three interview prompts describe the opening assistant message the
@@ -63,10 +67,92 @@ impl Prompt {
 		}
 	}
 
-	/// The text in effect for this prompt.
+	/// The text in effect for this prompt: the runtime override loaded by
+	/// [`init_overrides`] if there is one, else the embedded text.
 	pub fn text(self) -> &'static str {
-		self.embedded()
+		self.text_from(OVERRIDES.get())
 	}
+
+	fn text_from(self, overrides: Option<&[Option<String>; Prompt::ALL.len()]>) -> &str {
+		overrides
+			.and_then(|overrides| overrides[self as usize].as_deref())
+			.unwrap_or_else(|| self.embedded())
+	}
+}
+
+/// Largest override file accepted. The shipped prompts are a few KB; a
+/// bigger file is a mistake and would only eat the context window.
+const MAX_OVERRIDE_BYTES: u64 = 256 * 1024;
+
+/// Overrides loaded once at startup, indexed by `Prompt as usize`.
+static OVERRIDES: OnceLock<[Option<String>; Prompt::ALL.len()]> = OnceLock::new();
+
+/// Load prompt overrides from `<app_data_dir>/prompts/<file stem>.txt`
+/// once, at startup, so a prompt fix can ship without a binary release.
+/// Only the known prompt names are looked up; a missing, unreadable,
+/// oversized, non-UTF-8 or blank file falls back to the embedded prompt.
+/// Later calls are ignored: prompts never change mid-session.
+pub fn init_overrides(app_data_dir: &Path) {
+	let overrides = load_overrides(&app_data_dir.join("prompts"));
+	if OVERRIDES.set(overrides).is_err() {
+		log::warn!("prompt overrides were already initialized; ignoring the second call");
+	}
+}
+
+fn load_overrides(dir: &Path) -> [Option<String>; Prompt::ALL.len()] {
+	if !dir.is_dir() {
+		return Default::default();
+	}
+	Prompt::ALL.map(|prompt| load_override(dir, prompt))
+}
+
+fn load_override(dir: &Path, prompt: Prompt) -> Option<String> {
+	let path = dir.join(format!("{}.txt", prompt.file_stem()));
+	let file = match std::fs::File::open(&path) {
+		Ok(file) => file,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+		Err(e) => {
+			log::warn!(
+				"prompt override {} is unreadable ({e}); using the built-in prompt",
+				path.display()
+			);
+			return None;
+		}
+	};
+	let mut bytes = Vec::new();
+	if let Err(e) = file.take(MAX_OVERRIDE_BYTES + 1).read_to_end(&mut bytes) {
+		log::warn!(
+			"prompt override {} is unreadable ({e}); using the built-in prompt",
+			path.display()
+		);
+		return None;
+	}
+	if bytes.len() as u64 > MAX_OVERRIDE_BYTES {
+		log::warn!(
+			"prompt override {} is larger than {} KB; using the built-in prompt",
+			path.display(),
+			MAX_OVERRIDE_BYTES / 1024
+		);
+		return None;
+	}
+	let Ok(text) = String::from_utf8(bytes) else {
+		log::warn!(
+			"prompt override {} is not valid UTF-8; using the built-in prompt",
+			path.display()
+		);
+		return None;
+	};
+	// editors on Windows like to prepend a byte-order mark
+	let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+	if text.trim().is_empty() {
+		log::warn!(
+			"prompt override {} is empty; using the built-in prompt",
+			path.display()
+		);
+		return None;
+	}
+	log::info!("applied prompt override {}", path.display());
+	Some(text.to_string())
 }
 
 /// Chat type communicated by the frontend (mirrors CHAT_TYPE in src/const.ts).
@@ -586,5 +672,101 @@ mod contract_tests {
 			);
 			assert!(!prompt.embedded().trim().is_empty(), "{prompt:?} is empty");
 		}
+	}
+}
+
+#[cfg(test)]
+mod override_tests {
+	use super::*;
+
+	fn write(dir: &Path, prompt: Prompt, bytes: &[u8]) {
+		std::fs::write(dir.join(format!("{}.txt", prompt.file_stem())), bytes).unwrap();
+	}
+
+	#[test]
+	fn overrides_take_precedence_over_embedded_text() {
+		let mut overrides: [Option<String>; Prompt::ALL.len()] = Default::default();
+		overrides[Prompt::FeedbackResult as usize] = Some("override".into());
+		for prompt in Prompt::ALL {
+			let expected = if prompt == Prompt::FeedbackResult {
+				"override"
+			} else {
+				prompt.embedded()
+			};
+			assert_eq!(prompt.text_from(Some(&overrides)), expected, "{prompt:?}");
+			assert_eq!(prompt.text_from(None), prompt.embedded(), "{prompt:?}");
+		}
+	}
+
+	#[test]
+	fn missing_directory_means_no_overrides() {
+		let tmp = tempfile::tempdir().unwrap();
+		let loaded = load_overrides(&tmp.path().join("prompts"));
+		assert!(loaded.iter().all(Option::is_none));
+	}
+
+	#[test]
+	fn a_valid_file_overrides_only_its_prompt() {
+		let tmp = tempfile::tempdir().unwrap();
+		write(tmp.path(), Prompt::StoryResult, b"# Role\n\nfixed prompt\n");
+		let loaded = load_overrides(tmp.path());
+		for prompt in Prompt::ALL {
+			let expected = (prompt == Prompt::StoryResult).then_some("# Role\n\nfixed prompt\n");
+			assert_eq!(loaded[prompt as usize].as_deref(), expected, "{prompt:?}");
+		}
+	}
+
+	#[test]
+	fn unknown_file_names_are_ignored() {
+		let tmp = tempfile::tempdir().unwrap();
+		std::fs::write(tmp.path().join("evil_system_message.txt"), "x").unwrap();
+		std::fs::write(tmp.path().join("story_result_system_message.md"), "x").unwrap();
+		assert!(load_overrides(tmp.path()).iter().all(Option::is_none));
+	}
+
+	#[test]
+	fn blank_invalid_or_oversized_files_fall_back() {
+		let tmp = tempfile::tempdir().unwrap();
+		write(tmp.path(), Prompt::StoryInterview, b"");
+		write(tmp.path(), Prompt::StoryInterviewContext, b"  \n\t\n");
+		write(tmp.path(), Prompt::StoryInterviewReact, &[0xff, 0xfe, b'a']);
+		write(
+			tmp.path(),
+			Prompt::FeedbackResult,
+			&vec![b'a'; MAX_OVERRIDE_BYTES as usize + 1],
+		);
+		// a directory where a file is expected is unreadable, not fatal
+		std::fs::create_dir(
+			tmp.path()
+				.join(format!("{}.txt", Prompt::StoryResult.file_stem())),
+		)
+		.unwrap();
+		assert!(load_overrides(tmp.path()).iter().all(Option::is_none));
+	}
+
+	#[test]
+	fn a_file_at_the_size_cap_is_accepted_and_a_bom_is_stripped() {
+		let tmp = tempfile::tempdir().unwrap();
+		write(
+			tmp.path(),
+			Prompt::FeedbackResult,
+			&vec![b'a'; MAX_OVERRIDE_BYTES as usize],
+		);
+		write(
+			tmp.path(),
+			Prompt::FeedbackJsonResult,
+			"\u{feff}json prompt".as_bytes(),
+		);
+		let loaded = load_overrides(tmp.path());
+		assert_eq!(
+			loaded[Prompt::FeedbackResult as usize]
+				.as_ref()
+				.map(String::len),
+			Some(MAX_OVERRIDE_BYTES as usize)
+		);
+		assert_eq!(
+			loaded[Prompt::FeedbackJsonResult as usize].as_deref(),
+			Some("json prompt")
+		);
 	}
 }

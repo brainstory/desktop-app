@@ -150,6 +150,7 @@ pub fn run() {
 			};
 			std::fs::create_dir_all(data_dir.join("models")).ok();
 			sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());
+			prompts::init_overrides(&data_dir);
 
 			let db = match open_database(&data_dir) {
 				Ok(db) => db,
