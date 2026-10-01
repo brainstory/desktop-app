@@ -25,6 +25,7 @@ import {
 } from "@helpers/api/models";
 import { normalizeApiError } from "@helpers/helpers";
 import { $aiStatus } from "@components/global/aiStatusStore";
+import { EVENTS } from "@src/tauri/commands";
 
 export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
@@ -90,7 +91,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 			kind: "progress" | "done" | "error" | "load-error";
 			pct?: number;
 			message?: string;
-		}>("model-download", (event) => {
+		}>(EVENTS.modelDownload, (event) => {
 			const { modelId, kind, pct, message } = event.payload ?? {};
 			if (kind === "progress") {
 				setDownloadProgress((prev: Record<string, number>) => ({
