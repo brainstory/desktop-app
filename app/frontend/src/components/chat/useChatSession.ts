@@ -21,6 +21,7 @@ import {
 } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 import { markGettingStartedDone } from "@helpers/storage";
+import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 
 /** What became of a sent user message:
  * - sent: the coach answered
@@ -166,6 +167,8 @@ export function useChatSession(
 	} = options;
 
 	const [state, dispatch] = useReducer(chatSessionReducer, initialChatSessionState);
+	// leaving the chat cancels a pending coach retry
+	const unmountSignal = useUnmountSignal();
 
 	/** Generate assistant response. NOT for the final outline result.
 	 * Resolves with what happened to the user's message, so the composer
@@ -180,19 +183,25 @@ export function useChatSession(
 				chatType,
 				...reactionOptions(parentIdea)
 			});
+		const signal = unmountSignal();
 		try {
 			// a cancel must stay cancelled: retrying would start a fresh
 			// generation with a new cancel token 500 ms later
 			const message = await callApiWithRetry(
 				apiCall,
 				1,
-				(err) => !isGenerationCancelled(err)
+				(err) => !isGenerationCancelled(err),
+				signal
 			);
 			const isUser = false;
 			addConversationMessage(message, isUser, currConversation, setCurrConversation);
 			dispatch({ type: "coachAnswered" });
 			return "sent";
 		} catch (err) {
+			if (signal.aborted) {
+				// the chat is gone: nobody to show an error to
+				return "cancelled";
+			}
 			if (isGenerationCancelled(err)) {
 				// user-initiated: the message stays and the chat returns
 				// to idle, no error banner
@@ -211,7 +220,7 @@ export function useChatSession(
 			dispatch({ type: "coachFailed" });
 			return "failed";
 		}
-	}, [currConversation, setCurrConversation, parentIdea, chatType, onError]);
+	}, [currConversation, setCurrConversation, parentIdea, chatType, onError, unmountSignal]);
 
 	/** Generate idea summary result */
 	const handleGetResult = () => {

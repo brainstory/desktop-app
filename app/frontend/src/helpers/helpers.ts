@@ -63,33 +63,53 @@ export function isModerationError(message: unknown): boolean {
 	);
 }
 
+/**
+ * Run `apiCall`, retrying a failed attempt after 500 ms.
+ *
+ * `signal` cancels a pending retry (e.g. when the caller unmounts): the
+ * timer is cleared and the promise rejects with `signal.reason`. An
+ * attempt already in flight is not interrupted, but a failure that
+ * arrives after the abort is not retried.
+ */
 export async function callApiWithRetry<T>(
 	apiCall: () => Promise<T>,
 	retriesLeft = 1,
 	/** Decide whether an error is worth retrying; defaults to always
 	 * (except moderation errors, which never retry). */
-	shouldRetry: (error: unknown) => boolean = () => true
+	shouldRetry: (error: unknown) => boolean = () => true,
+	signal?: AbortSignal
 ): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
 		apiCall()
 			.then((message) => {
 				resolve(message);
 			})
 			.catch((error: unknown) => {
-				if (isModerationError(error) || !shouldRetry(error)) {
+				if (
+					isModerationError(error) ||
+					!shouldRetry(error) ||
+					retriesLeft < 1 ||
+					signal?.aborted
+				) {
 					reject(error);
 					return;
 				}
-				if (retriesLeft >= 1) {
-					setTimeout(() => {
-						callApiWithRetry(apiCall, retriesLeft - 1, shouldRetry).then(
-							resolve,
-							reject
-						);
-					}, 500);
-				} else {
-					reject(error);
-				}
+				const onAbort = () => {
+					clearTimeout(timer);
+					reject(signal?.reason);
+				};
+				const timer = setTimeout(() => {
+					signal?.removeEventListener("abort", onAbort);
+					callApiWithRetry(apiCall, retriesLeft - 1, shouldRetry, signal).then(
+						resolve,
+						reject
+					);
+				}, 500);
+				signal?.addEventListener("abort", onAbort, { once: true });
 			});
 	});
 }

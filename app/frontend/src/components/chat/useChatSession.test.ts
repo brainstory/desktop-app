@@ -106,6 +106,29 @@ describe("useChatSession", () => {
 			expect(opts.onError).toHaveBeenCalledWith("endpoint down");
 			expect(result.current.conversation).toEqual([q1, a1]);
 		});
+
+		it("unmounting cancels a pending retry", async () => {
+			vi.useFakeTimers();
+			mockInvoke({
+				generate_response: () => {
+					throw "endpoint down";
+				}
+			});
+			const { result, opts, unmount } = renderSession([q1, a1]);
+			let outcome: string | undefined;
+			let pending!: Promise<unknown>;
+			await act(async () => {
+				pending = result.current.handleGetResponse().then((o) => (outcome = o));
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			expect(callsTo("generate_response")).toHaveLength(1);
+			unmount();
+			await vi.advanceTimersByTimeAsync(2000);
+			await pending;
+			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(outcome).toBe("cancelled");
+			expect(opts.onError).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("cancelling a coach response", () => {

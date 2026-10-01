@@ -3,6 +3,7 @@ import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
 import { transcribeApi } from "@helpers/api/ai";
 import { callApiWithRetry } from "@helpers/helpers";
+import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 import { describeError } from "@helpers/describeError";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 import { useVoiceCapture } from "./useVoiceCapture";
@@ -63,6 +64,7 @@ function RecordButton({
 			mountedRef.current = false;
 		};
 	}, []);
+	const unmountSignal = useUnmountSignal();
 
 	const handleError = (error: unknown): void => {
 		setIsTranscribing(false);
@@ -91,11 +93,12 @@ function RecordButton({
 		setAnnouncement(TRANSCRIBING);
 		// Transient transport hiccups deserve one retry; configuration
 		// and input problems ("no model downloaded", bad audio) never fix
-		// themselves. No retry once unmounted either.
+		// themselves. Unmounting cancels a pending retry.
 		callApiWithRetry(
 			() => transcribeApi(blobby),
 			1,
-			(error) => mountedRef.current && isTransientTranscriptionError(error)
+			isTransientTranscriptionError,
+			unmountSignal()
 		)
 			.then((transcript) => {
 				if (!mountedRef.current) return;

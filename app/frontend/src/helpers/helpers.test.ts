@@ -152,4 +152,55 @@ describe("callApiWithRetry", () => {
 		await expect(promise).rejects.toThrow("not downloaded yet");
 		expect(calls).toBe(1);
 	});
+
+	it("an abort during the retry delay cancels the retry", async () => {
+		vi.useFakeTimers();
+		const controller = new AbortController();
+		let calls = 0;
+		const promise = callApiWithRetry(
+			async () => {
+				calls++;
+				throw new Error("transient");
+			},
+			1,
+			() => true,
+			controller.signal
+		);
+		promise.catch(() => {});
+		await vi.advanceTimersByTimeAsync(100);
+		controller.abort();
+		await vi.advanceTimersByTimeAsync(5000);
+		await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+		expect(calls).toBe(1);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("does not start at all once the signal is aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const apiCall = vi.fn(async () => "ok");
+		await expect(
+			callApiWithRetry(apiCall, 1, () => true, controller.signal)
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(apiCall).not.toHaveBeenCalled();
+	});
+
+	it("still retries with a signal that is never aborted", async () => {
+		vi.useFakeTimers();
+		const controller = new AbortController();
+		let calls = 0;
+		const promise = callApiWithRetry(
+			async () => {
+				calls++;
+				if (calls === 1) throw new Error("transient");
+				return "ok";
+			},
+			1,
+			() => true,
+			controller.signal
+		);
+		await vi.advanceTimersByTimeAsync(500);
+		await expect(promise).resolves.toBe("ok");
+		expect(calls).toBe(2);
+	});
 });

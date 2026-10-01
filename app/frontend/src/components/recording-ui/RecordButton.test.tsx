@@ -91,6 +91,23 @@ describe("RecordButton", () => {
 			vi.mocked(console.error).mockRestore();
 		});
 
+		it("unmounting cancels a pending transcription retry", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav,
+				transcribe: () => {
+					throw "connection reset";
+				}
+			});
+			const { unmount } = renderRecorder();
+			await recordAndStop();
+			await vi.waitFor(() => expect(callsTo("transcribe")).toHaveLength(1));
+			unmount();
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(callsTo("transcribe")).toHaveLength(1);
+		});
+
 		it("ignores a transcript that arrives after the recorder unmounted", async () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
