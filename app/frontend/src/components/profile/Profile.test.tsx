@@ -60,8 +60,24 @@ describe("Profile", () => {
 		});
 		render(<Profile />);
 		expect(
-			await screen.findByRole("checkbox", { name: "Check for updates automatically" })
-		).not.toBeChecked();
+			await screen.findByRole("switch", { name: "Check for updates automatically" })
+		).toHaveAttribute("aria-checked", "false");
+		expect(screen.getByText(/Automatic update checks are off/)).toBeInTheDocument();
+	});
+
+	it("shows the updates-off warning above the tabs, on every tab", async () => {
+		const user = userEvent.setup();
+		mockInvoke({
+			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })
+		});
+		render(<Profile />);
+		const warning = await screen.findByText(/Automatic update checks are off/);
+		// rendered before the tab list in document order, not inside a card
+		expect(
+			warning.compareDocumentPosition(screen.getByRole("tablist")) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		await user.click(screen.getByRole("tab", { name: "Daily Log Settings" }));
 		expect(screen.getByText(/Automatic update checks are off/)).toBeInTheDocument();
 	});
 

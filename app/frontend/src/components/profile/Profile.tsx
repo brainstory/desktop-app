@@ -12,7 +12,7 @@ import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
 import AppPresenceCard from "./AppPresenceCard";
-import UpdatesCard from "./UpdatesCard";
+import { UpdatesCard, UpdatesDisabledWarning, useUpdatesEnabled } from "./UpdatesCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
@@ -39,8 +39,8 @@ export default function Profile() {
 	const [notifications, setNotifications] = useState<NotificationSetting[]>([]);
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
-	const [updatesEnabled, setUpdatesEnabled] = useState(true);
 	const { openSnackbar, snackbars } = useSnackbar();
+	const updates = useUpdatesEnabled(openSnackbar);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
 
@@ -53,7 +53,7 @@ export default function Profile() {
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);
-				setUpdatesEnabled(res.updates.enabled);
+				updates.load(res.updates.enabled);
 			})
 			.catch((e) => {
 				// without this the spinner never ends
@@ -133,7 +133,7 @@ export default function Profile() {
 						saveSettings={handleNotificationsSave}
 					/>
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
-					<UpdatesCard enabled={updatesEnabled} openSnackbar={openSnackbar} />
+					<UpdatesCard enabled={updates.enabled} onToggle={updates.save} />
 				</div>
 			)
 		},
@@ -170,11 +170,18 @@ export default function Profile() {
 					hideDashboardLink
 				/>
 			) : (
-				<TailwindComposedTabs
-					data={tabData}
-					activeTab={activeTab}
-					tabParams={["general", "dailyLog", "aiModels"]}
-				/>
+				<>
+					{/* above the tabs so it shows on every settings tab */}
+					<UpdatesDisabledWarning
+						enabled={updates.enabled}
+						onTurnOn={() => updates.save(true)}
+					/>
+					<TailwindComposedTabs
+						data={tabData}
+						activeTab={activeTab}
+						tabParams={["general", "dailyLog", "aiModels"]}
+					/>
+				</>
 			)}
 		</div>
 	);
