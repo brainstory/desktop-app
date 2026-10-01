@@ -1,8 +1,7 @@
 import { formatISO8601ToHumanReadable } from "../../helpers/helpers";
 import { deleteIdeaApi } from "@helpers/api/idea";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick } from "@src/hooks/useTimeout";
-import { Snackbar } from "@ds/Snackbar";
-import { useState } from "react";
+import { useSnackbar } from "@ds/Snackbar";
 
 interface DraftIdeaCardProps {
 	id: string;
@@ -21,7 +20,7 @@ export default function DraftIdeaCard({
 }: DraftIdeaCardProps) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
 	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();
-	const [deleteFailed, setDeleteFailed] = useState(false);
+	const { openSnackbar, snackbars } = useSnackbar();
 
 	const handleDelete = (): void => {
 		if (!confirm()) return;
@@ -29,19 +28,13 @@ export default function DraftIdeaCard({
 			.then(() => onDeleted?.(id))
 			.catch((err) => {
 				console.error("delete failed", err);
-				setDeleteFailed(true);
+				openSnackbar(false, "Error: Could not delete this draft");
 			});
 	};
 
 	return (
 		<div className="relative h-auto w-80 sm:w-[275px] max-w-sm p-6 bg-white border-2 border-pink-200 rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform">
-			{deleteFailed && (
-				<Snackbar
-					isSuccess={false}
-					message="Error: Could not delete this draft"
-					onClose={() => setDeleteFailed(false)}
-				/>
-			)}
+			{snackbars}
 			<a href={`/chat?id=${id}`} className="block">
 				<div className="float-left">
 					<span className="flex items-center justify-center mt-1 mr-2 w-6 h-6 bg-pink-100 text-pink-600 rounded-full -left-4 ring-8 ring-white">

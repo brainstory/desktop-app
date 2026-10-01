@@ -5,7 +5,7 @@ import { exportIdeaApi } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
-import { Snackbar } from "@ds/Snackbar";
+import { useSnackbar } from "@ds/Snackbar";
 
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
@@ -14,8 +14,7 @@ interface IdeaTitleBarProps {
 }
 
 export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBarProps) {
-	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
-	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState("Error: Title field is empty");
+	const { openSnackbar, snackbars } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
 	const {
 		isConfirming: confirmingDelete,
@@ -63,8 +62,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 		if (!endSession()) return;
 		const trimmed = draftTitle.trim();
 		if (trimmed.length === 0) {
-			setSnackbarErrorMessage("Error: Title field is empty");
-			setSnackbarErrorOpen(true);
+			openSnackbar(false, "Error: Title field is empty");
 			setIsEditing(false);
 			return;
 		}
@@ -79,8 +77,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 		updateIdeaTitleApi(idea.id, trimmed).catch((err) => {
 			console.error("rename failed", err);
 			setEditedTitle(previous);
-			setSnackbarErrorMessage("Error: Could not save the new title");
-			setSnackbarErrorOpen(true);
+			openSnackbar(false, "Error: Could not save the new title");
 		});
 	};
 
@@ -126,8 +123,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 			})
 			.catch((err) => {
 				console.error("delete failed", err);
-				setSnackbarErrorMessage("Error: Could not delete this idea");
-				setSnackbarErrorOpen(true);
+				openSnackbar(false, "Error: Could not delete this idea");
 			});
 	};
 
@@ -186,13 +182,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 
 	return (
 		<div className="px-5 pt-5 md:px-7 md:pt-7">
-			{snackbarErrorOpen && (
-				<Snackbar
-					isSuccess={false}
-					message={snackbarErrorMessage}
-					onClose={() => setSnackbarErrorOpen(false)}
-				/>
-			)}
+			{snackbars}
 			<div className="flex flex-wrap gap-4 justify-between">
 				<div className="flex flex-wrap gap-4 justify-between">
 					{parentId && (

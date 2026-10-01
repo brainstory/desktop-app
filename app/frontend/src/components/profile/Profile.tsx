@@ -17,7 +17,7 @@ import UpdatesCard from "./UpdatesCard";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
 import PinkButton from "@ds/PinkButton";
-import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
+import { SUCCESS_COPY, useSnackbar } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
 
 const TAB_MAP: Record<string, number> = {
@@ -40,10 +40,7 @@ export default function Profile() {
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
 	const [updatesEnabled, setUpdatesEnabled] = useState(true);
-	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
-	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
-	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
-	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState(ERROR_COPY.DEFAULT);
+	const { openSnackbar, snackbars } = useSnackbar();
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
 
@@ -76,16 +73,6 @@ export default function Profile() {
 	useEffect(() => {
 		loadSettings();
 	}, []);
-
-	const openSnackbar = (isSuccess: boolean, message: string): void => {
-		if (isSuccess) {
-			setSnackbarSuccessOpen(true);
-			setSnackbarSuccessMessage(message);
-		} else {
-			setSnackbarErrorOpen(true);
-			setSnackbarErrorMessage(message);
-		}
-	};
 
 	const handleUserSettingsSave = (newName: string, newTimezone: string): void => {
 		saveUserSettingsApi({ name: newName, timezone: newTimezone })
@@ -166,20 +153,7 @@ export default function Profile() {
 
 	return (
 		<div className="flex flex-col items-center">
-			{snackbarSuccessOpen && (
-				<Snackbar
-					isSuccess={true}
-					message={snackbarSuccessMessage}
-					onClose={() => setSnackbarSuccessOpen(false)}
-				/>
-			)}
-			{snackbarErrorOpen && (
-				<Snackbar
-					isSuccess={false}
-					message={snackbarErrorMessage}
-					onClose={() => setSnackbarErrorOpen(false)}
-				/>
-			)}
+			{snackbars}
 
 			{isLoading ? (
 				<LoadingAnimation text="Loading your settings..." />

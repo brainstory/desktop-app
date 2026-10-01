@@ -10,7 +10,7 @@ import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
 import TransparentButton from "@ds/TransparentButton";
 import PinkButton from "@ds/PinkButton";
-import { Snackbar, ERROR_COPY, SUCCESS_COPY } from "@ds/Snackbar";
+import { useSnackbar } from "@ds/Snackbar";
 import ErrorSection from "@components/error/ErrorSection";
 
 import IdeaGrid from "./IdeaGrid";
@@ -21,10 +21,7 @@ export default function DashboardSection() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
-	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
-	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
-	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
-	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState(ERROR_COPY.DEFAULT);
+	const { openSnackbar, snackbars } = useSnackbar();
 
 	useEffect(() => {
 		getAllIdeasApi()
@@ -63,8 +60,8 @@ export default function DashboardSection() {
 		importShareApi()
 			.then((res) => {
 				if (res.cancelled) return;
-				setSnackbarSuccessOpen(true);
-				setSnackbarSuccessMessage(
+				openSnackbar(
+					true,
 					res.kind === "feedback"
 						? `Imported feedback from ${res.author}`
 						: `Imported "${res.title}" from ${res.author}`
@@ -82,27 +79,13 @@ export default function DashboardSection() {
 					.finally(() => setIsLoading(false));
 			})
 			.catch((err) => {
-				setSnackbarErrorOpen(true);
-				setSnackbarErrorMessage(normalizeApiError(err));
+				openSnackbar(false, normalizeApiError(err));
 			});
 	};
 
 	return (
 		<section>
-			{snackbarSuccessOpen && (
-				<Snackbar
-					isSuccess={true}
-					message={snackbarSuccessMessage}
-					onClose={() => setSnackbarSuccessOpen(false)}
-				/>
-			)}
-			{snackbarErrorOpen && (
-				<Snackbar
-					isSuccess={false}
-					message={snackbarErrorMessage}
-					onClose={() => setSnackbarErrorOpen(false)}
-				/>
-			)}
+			{snackbars}
 			<div className="flex items-center justify-center relative">
 				<h1 className="mb-2 text-2xl font-bold tracking-tight text-center text-stone-900 md:text-2xl lg:text-4xl">
 					Dashboard

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useState } from "react";
 
-import { Snackbar } from "./Snackbar";
+import { Snackbar, useSnackbar } from "./Snackbar";
 
 // a failing assertion must not leak fake timers into the next test
 afterEach(() => {
@@ -72,5 +72,33 @@ describe("Snackbar", () => {
 		render(<Snackbar isSuccess={true} message="hi" onClose={onClose} />);
 		await user.click(screen.getByRole("button", { name: "Dismiss message" }));
 		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("useSnackbar", () => {
+	function Harness() {
+		const { openSnackbar, snackbars } = useSnackbar();
+		return (
+			<>
+				<button onClick={() => openSnackbar(true, "Saved it")}>ok</button>
+				<button onClick={() => openSnackbar(false, "Broke it")}>fail</button>
+				{snackbars}
+			</>
+		);
+	}
+
+	it("shows success and error messages independently until dismissed", async () => {
+		const user = (await import("@testing-library/user-event")).default.setup();
+		render(<Harness />);
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "ok" }));
+		await user.click(screen.getByRole("button", { name: "fail" }));
+		expect(screen.getByText("Saved it")).toBeInTheDocument();
+		expect(screen.getByText("Broke it")).toBeInTheDocument();
+
+		await user.click(screen.getAllByRole("button", { name: "Dismiss message" })[0]!);
+		expect(screen.queryByText("Saved it")).not.toBeInTheDocument();
+		expect(screen.getByText("Broke it")).toBeInTheDocument();
 	});
 });

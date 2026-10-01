@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 export const SUCCESS_COPY = {
 	DEFAULT: "Success!",
@@ -49,6 +49,52 @@ export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
 			</button>
 		</div>
 	);
+}
+
+/**
+ * Success + error snackbar state for one screen. Render `snackbars`
+ * where the Snackbar elements belong; `openSnackbar` (stable identity)
+ * shows a message. A success and an error can be open at once, each
+ * dismissing itself.
+ *
+ *   const { openSnackbar, snackbars } = useSnackbar();
+ *   openSnackbar(false, "Could not save");
+ */
+export function useSnackbar(): {
+	openSnackbar: (isSuccess: boolean, message: string) => void;
+	snackbars: ReactNode;
+} {
+	const [successMessage, setSuccessMessage] = useState<string | null>(null);
+	const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+	const openSnackbar = useCallback((isSuccess: boolean, message: string): void => {
+		if (isSuccess) {
+			setSuccessMessage(message);
+		} else {
+			setErrorMessage(message);
+		}
+	}, []);
+
+	const snackbars = (
+		<>
+			{successMessage !== null && (
+				<Snackbar
+					isSuccess={true}
+					message={successMessage}
+					onClose={() => setSuccessMessage(null)}
+				/>
+			)}
+			{errorMessage !== null && (
+				<Snackbar
+					isSuccess={false}
+					message={errorMessage}
+					onClose={() => setErrorMessage(null)}
+				/>
+			)}
+		</>
+	);
+
+	return { openSnackbar, snackbars };
 }
 
 export default {
