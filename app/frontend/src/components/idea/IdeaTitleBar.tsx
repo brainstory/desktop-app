@@ -31,6 +31,11 @@ export default function IdeaTitleBar({
 	// the in-progress value while editing; discarded on Escape
 	const [draftTitle, setDraftTitle] = useState(idea.title ?? "");
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	// Each edit session ends exactly once. Enter/Escape unmount the
+	// focused input, and the webview may fire blur during that removal -
+	// running onBlur with the previous render's closure, which would
+	// commit an Escaped draft or rename twice on Enter.
+	const sessionFinishedRef = useRef(true);
 
 	let createdByText = "You";
 	if (idea.creatorName) {
@@ -38,8 +43,16 @@ export default function IdeaTitleBar({
 	}
 
 	const startEditing = (): void => {
+		sessionFinishedRef.current = false;
 		setDraftTitle(editedTitle);
 		setIsEditing(true);
+	};
+
+	/** Claims the end of the current edit session; false if already ended. */
+	const endSession = (): boolean => {
+		if (sessionFinishedRef.current) return false;
+		sessionFinishedRef.current = true;
+		return true;
 	};
 
 	useEffect(() => {
@@ -50,6 +63,7 @@ export default function IdeaTitleBar({
 	}, [isEditing]);
 
 	const finishEditing = (): void => {
+		if (!endSession()) return;
 		const trimmed = draftTitle.trim();
 		if (trimmed.length === 0) {
 			setSnackbarErrorMessage("Error: Title field is empty");
@@ -75,6 +89,7 @@ export default function IdeaTitleBar({
 
 	const cancelEditing = (): void => {
 		// Escape: discard the draft, keep the saved title
+		endSession();
 		setIsEditing(false);
 	};
 

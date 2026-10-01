@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
@@ -88,5 +88,73 @@ describe("IdeaTitleBar rename", () => {
 					([cmd, args]) => !(cmd === "update_idea" && (args as { title?: string }).title)
 				)
 		).toBe(true);
+	});
+});
+
+// Removing a focused input can fire `blur` (WebKit/Chromium webviews do)
+// while React is committing the keydown's state change, i.e. with the
+// previous render's onBlur closure. Simulate that by firing blur inside
+// the same act() scope as the keydown, before the re-render lands.
+function keyThenRemovalBlur(input: HTMLElement, key: string) {
+	act(() => {
+		fireEvent.keyDown(input, { key });
+		fireEvent.blur(input);
+	});
+}
+
+function updateIdeaTitles(): (string | undefined)[] {
+	return vi
+		.mocked(invoke)
+		.mock.calls.filter(([cmd]) => cmd === "update_idea")
+		.map(([, args]) => (args as { title?: string }).title);
+}
+
+describe("IdeaTitleBar edit session finishes exactly once", () => {
+	it("Escape followed by a removal blur does not commit the draft", async () => {
+		const user = userEvent.setup();
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		renderBar();
+		const input = await startEditing(user);
+		await user.clear(input);
+		await user.type(input, "Discarded");
+		keyThenRemovalBlur(input, "Escape");
+		expect(screen.getByText("Original title")).toBeInTheDocument();
+		await Promise.resolve();
+		expect(updateIdeaTitles()).toEqual([]);
+	});
+
+	it("Enter followed by a removal blur renames once", async () => {
+		const user = userEvent.setup();
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		renderBar();
+		const input = await startEditing(user);
+		await user.clear(input);
+		await user.type(input, "Renamed");
+		keyThenRemovalBlur(input, "Enter");
+		expect(screen.getByText("Renamed")).toBeInTheDocument();
+		await waitFor(() => expect(updateIdeaTitles()).toEqual(["Renamed"]));
+	});
+
+	it("the finish button saves once even though clicking it blurs the input", async () => {
+		const user = userEvent.setup();
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		renderBar();
+		const input = await startEditing(user);
+		await user.clear(input);
+		await user.type(input, "Clicked");
+		await user.click(screen.getByRole("button", { name: "Finish editing" }));
+		await waitFor(() => expect(updateIdeaTitles()).toEqual(["Clicked"]));
+	});
+
+	it("a new edit session after a finished one still saves", async () => {
+		const user = userEvent.setup();
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		renderBar();
+		let input = await startEditing(user);
+		await user.type(input, "{Escape}");
+		input = await startEditing(user);
+		await user.clear(input);
+		await user.type(input, "Second try{Enter}");
+		await waitFor(() => expect(updateIdeaTitles()).toEqual(["Second try"]));
 	});
 });
