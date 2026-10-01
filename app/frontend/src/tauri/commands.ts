@@ -13,7 +13,7 @@ import type { ChatMessage } from "@src/types";
 import type { GenerationResult } from "@helpers/chat";
 import type { RawFeedbackChild, RawIdea } from "@helpers/api/idea";
 import type { RawDailyStatus, RawIdeaItem, RawUser } from "@helpers/api/user";
-import type { DailyLogQuestionApi, LogAnswerItem } from "@helpers/api/forms";
+import type { DailyLogQuestion, LogAnswerItem } from "@helpers/api/forms";
 import type { RawUserSettings } from "@helpers/api/settings";
 import type {
 	AiSettingsResponse,
@@ -116,7 +116,7 @@ interface CommandSignatures {
 	};
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
 	deleteIdea: { args: IdeaIdArgs; result: unknown };
-	getLogQuestions: { args: undefined; result: { log: DailyLogQuestionApi[] } };
+	getLogQuestions: { args: undefined; result: { log: DailyLogQuestion[] } };
 	submitLog: { args: { log: LogAnswerItem[] }; result: { id: string } };
 	// registered on the Rust side but not called by the frontend
 	getSurveyFields: { args: undefined; result: unknown };

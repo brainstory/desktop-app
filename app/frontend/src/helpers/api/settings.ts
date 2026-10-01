@@ -1,11 +1,5 @@
 import { invokeCommand } from "@src/tauri/invoke";
 
-export interface DailyLogQuestion {
-	id: number;
-	text: string;
-	label: string;
-}
-
 export interface LogSettingsQuestion {
 	id: number;
 	label: string;

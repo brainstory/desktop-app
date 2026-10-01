@@ -1,6 +1,7 @@
 import { invokeCommand } from "@src/tauri/invoke";
 
-export interface DailyLogQuestionApi {
+/** A daily-log question as the backend lists it. */
+export interface DailyLogQuestion {
 	id: number;
 	text: string;
 	label: string;
@@ -18,7 +19,7 @@ export interface LogFormAnswer {
 	value: boolean;
 }
 
-export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestionApi[]> {
+export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestion[]> {
 	const response = await invokeCommand("getLogQuestions");
 
 	return response.log.map((question) => ({
