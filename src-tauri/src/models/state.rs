@@ -114,6 +114,53 @@ fn rollback_candidate(
 	prev.filter(|prev| rollback_on_same || prev.id != failed.id)
 }
 
+/// Exclusive use of one engine slot (the `llm_loading`/`stt_loading`
+/// flag) for work other than a load, e.g. the model loader unloading an
+/// engine. Released on drop.
+pub struct EngineSlotClaim<'a> {
+	flag: &'a AtomicBool,
+	claimed: bool,
+}
+
+impl<'a> EngineSlotClaim<'a> {
+	/// Wait for an in-flight load of this slot to finish, then hold the
+	/// slot. An unload racing a running load is undone when the load
+	/// installs its engine, leaving a runtime that contradicts the
+	/// reported status. Gives up waiting after `max_wait` (a load that
+	/// long is wedged; proceed unclaimed rather than block forever).
+	pub fn acquire(flag: &'a AtomicBool, max_wait: std::time::Duration) -> Self {
+		let deadline = std::time::Instant::now() + max_wait;
+		loop {
+			if !flag.swap(true, Ordering::SeqCst) {
+				return Self {
+					flag,
+					claimed: true,
+				};
+			}
+			if std::time::Instant::now() >= deadline {
+				log::warn!("engine slot still busy after {max_wait:?}; proceeding unclaimed");
+				return Self {
+					flag,
+					claimed: false,
+				};
+			}
+			std::thread::sleep(std::time::Duration::from_millis(50));
+		}
+	}
+
+	/// Release now, e.g. right before starting a load that claims the
+	/// slot itself.
+	pub fn release(self) {}
+}
+
+impl Drop for EngineSlotClaim<'_> {
+	fn drop(&mut self) {
+		if self.claimed {
+			self.flag.store(false, Ordering::SeqCst);
+		}
+	}
+}
+
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 	// A poisoned lock still holds usable state; recover instead of
 	// panicking on every later call.
@@ -448,6 +495,46 @@ impl AppState {
 			STT_ROLLBACK_ON_SAME,
 			false,
 		)
+	}
+}
+
+#[cfg(test)]
+mod slot_claim_tests {
+	use super::EngineSlotClaim;
+	use std::sync::atomic::{AtomicBool, Ordering};
+	use std::sync::Arc;
+	use std::time::{Duration, Instant};
+
+	#[test]
+	fn a_claim_waits_for_the_running_load_and_blocks_new_ones() {
+		let loading = Arc::new(AtomicBool::new(true)); // a load is running
+		let running = loading.clone();
+		let finisher = std::thread::spawn(move || {
+			std::thread::sleep(Duration::from_millis(200));
+			running.store(false, Ordering::SeqCst); // the load finishes
+		});
+		let started = Instant::now();
+		let claim = EngineSlotClaim::acquire(&loading, Duration::from_secs(5));
+		assert!(
+			started.elapsed() >= Duration::from_millis(150),
+			"the claim must wait for the running load"
+		);
+		// while held, a new load is refused (load_llm/load_stt swap the flag)
+		assert!(loading.swap(true, Ordering::SeqCst), "slot is held");
+		drop(claim);
+		assert!(!loading.load(Ordering::SeqCst), "released on drop");
+		finisher.join().unwrap();
+	}
+
+	#[test]
+	fn a_wedged_slot_is_not_released_by_a_claim_that_gave_up() {
+		let loading = AtomicBool::new(true);
+		let claim = EngineSlotClaim::acquire(&loading, Duration::from_millis(100));
+		claim.release();
+		assert!(
+			loading.load(Ordering::SeqCst),
+			"an unclaimed slot stays owned by whoever holds it"
+		);
 	}
 }
 

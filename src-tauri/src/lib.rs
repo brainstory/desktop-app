@@ -571,9 +571,17 @@ fn run_model_loader(app: AppHandle, settings: AiSettings) {
 	let plan = plan_model_load(&settings, apple::speech_available(), |spec| {
 		state.is_model_downloaded(spec)
 	});
+	// Each slot change first waits for an in-flight load of that engine
+	// (an activation, a download's auto-load) and holds the slot while
+	// unloading: an unload racing a running load would be undone when
+	// that load installs its engine, contradicting the reported status.
+	const SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
+	let stt_slot = models::EngineSlotClaim::acquire(&state.stt_loading, SLOT_WAIT);
 	match plan.whisper {
 		WhisperPlan::Load(id) => {
+			// load_stt claims the slot itself
+			stt_slot.release();
 			if let Some(spec) = models::find_model(id, ModelKind::Stt) {
 				if let Err(e) = state.load_stt(&app, spec) {
 					log::error!("startup STT load failed: {e}");
@@ -602,8 +610,11 @@ fn run_model_loader(app: AppHandle, settings: AiSettings) {
 		state.emit_stt_status(&app);
 	}
 
+	let llm_slot = models::EngineSlotClaim::acquire(&state.llm_loading, SLOT_WAIT);
 	match plan.llm {
 		LlmPlan::Load(id) => {
+			// load_llm claims the slot itself
+			llm_slot.release();
 			if let Some(spec) = models::find_model(id, ModelKind::Llm) {
 				if let Err(e) = state.load_llm(&app, spec) {
 					log::error!("startup LLM load failed: {e}");

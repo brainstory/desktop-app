@@ -18,6 +18,6 @@ pub use download::{
 	materialize_snapshot, migrate_legacy_models, model_url, primary_hub_cache, remove_cached_model,
 	sweep_stale_part_files,
 };
-pub use state::{AppState, EngineState, EngineStatus, Runtime};
+pub use state::{AppState, EngineSlotClaim, EngineState, EngineStatus, Runtime};
 
 pub(crate) use download::USER_AGENT;
