@@ -6,6 +6,7 @@ import {
 	normalizeApiError,
 	parseBackendUtc
 } from "./helpers";
+import { isTransientTranscriptionError } from "@components/recording-ui/transcription";
 
 describe("normalizeApiError", () => {
 	it("passes strings through", () => {
@@ -137,13 +138,14 @@ describe("callApiWithRetry", () => {
 	it("does not retry when the predicate says the error is permanent", async () => {
 		vi.useFakeTimers();
 		let calls = 0;
+		// the real transcription predicate RecordButton uses, not a copy
 		const promise = callApiWithRetry(
 			async () => {
 				calls++;
 				throw new Error("Speech model not downloaded yet.");
 			},
 			1,
-			(err) => !normalizeApiError(err).includes("not downloaded yet")
+			isTransientTranscriptionError
 		);
 		promise.catch(() => {});
 		await vi.advanceTimersByTimeAsync(5000);

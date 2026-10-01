@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE } from "../../const";
 import { transcribeApi } from "@helpers/api/ai";
-import { callApiWithRetry, normalizeApiError } from "@helpers/helpers";
+import { callApiWithRetry } from "@helpers/helpers";
 import { describeError } from "@helpers/describeError";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 import { useVoiceCapture } from "./useVoiceCapture";
+import { isTransientTranscriptionError } from "./transcription";
 import { MicButton, MicPermissionDenied } from "./MicButton";
 import { RecordingWarnings, TextComposer, useRecordingWarnings } from "./RecordingWarnings";
 import type { CoachResponseOutcome } from "@components/chat/useChatSession";
@@ -48,6 +49,15 @@ function RecordButton({
 
 	// one-shot guard so the coach response fires once per ReadyToSend
 	const respondedRef = useRef(false);
+	// a transcription (or its retry) can settle after the chat is gone:
+	// ignore it then instead of feeding a conversation nobody sees
+	const mountedRef = useRef(true);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 
 	const handleError = (error: unknown): void => {
 		setIsTranscribing(false);
@@ -71,15 +81,22 @@ function RecordButton({
 	const generateTranscript = (blobby: Blob): void => {
 		setIsTranscribing(true);
 		// Transient transport hiccups deserve one retry; configuration
-		// problems ("no model downloaded") never fix themselves.
-		const isTransient = (error: unknown): boolean =>
-			!normalizeApiError(error).includes("not downloaded yet");
-		callApiWithRetry(() => transcribeApi(blobby), 1, isTransient)
+		// and input problems ("no model downloaded", bad audio) never fix
+		// themselves. No retry once unmounted either.
+		callApiWithRetry(
+			() => transcribeApi(blobby),
+			1,
+			(error) => mountedRef.current && isTransientTranscriptionError(error)
+		)
 			.then((transcript) => {
+				if (!mountedRef.current) return;
 				onTranscript(transcript);
 				setIsTranscribing(false);
 			})
-			.catch(handleError);
+			.catch((error: unknown) => {
+				if (!mountedRef.current) return;
+				handleError(error);
+			});
 	};
 
 	const voice = useVoiceCapture({
