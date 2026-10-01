@@ -9,8 +9,13 @@ use crate::models::AppState;
 
 /// Wakes the reminder loop early when reminder settings change (so a new
 /// time takes effect immediately instead of at the next scheduled wake).
-pub static REMINDER_SETTINGS_CHANGED: std::sync::LazyLock<tokio::sync::Notify> =
+static REMINDER_SETTINGS_CHANGED: std::sync::LazyLock<tokio::sync::Notify> =
 	std::sync::LazyLock::new(tokio::sync::Notify::new);
+
+/// Wake the reminder loop because its settings changed.
+pub fn notify_settings_changed() {
+	REMINDER_SETTINGS_CHANGED.notify_waiters();
+}
 
 /// The loop's maximum sleep even when nothing is due: settings can be
 /// edited outside the app's control (hand-edited rows), and the clock

@@ -378,7 +378,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 				// keep the native checkmark and the setting in lockstep
 				sync_tray_reminder_check(enabled);
 				// wake the scheduler so the toggle applies immediately
-				reminders::REMINDER_SETTINGS_CHANGED.notify_waiters();
+				reminders::notify_settings_changed();
 			}
 			"quit" => {
 				crate::force_exit();

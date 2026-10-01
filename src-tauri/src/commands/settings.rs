@@ -222,7 +222,7 @@ pub async fn save_user_settings(
 	}
 	if reminder_enabled_after.is_some() || time_changed {
 		// wake the scheduler so a new time/state applies immediately
-		crate::reminders::REMINDER_SETTINGS_CHANGED.notify_waiters();
+		crate::reminders::notify_settings_changed();
 	}
 
 	Ok(serde_json::json!({ "id": "settings" }))
