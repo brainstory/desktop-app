@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	getReactionsApi,
+	toggleCommentReactionApi,
 	toggleSectionReactionApi,
+	type CommentReaction,
 	type IdeaReactions,
 	type SectionReaction
 } from "@helpers/api/reactions";
@@ -26,6 +28,24 @@ function withSectionReaction(
 	return { ...reactions, sections };
 }
 
+/** `reactions` with the user's reaction on a feedback comment set to `isOn`. */
+function withCommentReaction(
+	reactions: IdeaReactions,
+	feedbackIdeaId: string,
+	itemIndex: number,
+	emoji: string,
+	isOn: boolean
+): IdeaReactions {
+	const comments = reactions.comments.filter(
+		(r) =>
+			!(r.feedbackIdeaId === feedbackIdeaId && r.itemIndex === itemIndex && r.emoji === emoji)
+	);
+	if (isOn) {
+		comments.push({ feedbackIdeaId, itemIndex, emoji });
+	}
+	return { ...reactions, comments };
+}
+
 /**
  * The reactions on one idea page: loaded once with the idea, toggled
  * optimistically. Each toggle applies the backend's returned state; when
@@ -39,6 +59,8 @@ export function useIdeaReactions(
 ): {
 	sectionReactions: SectionReaction[];
 	toggleSectionReaction: (sectionIndex: number, emoji: string) => void;
+	commentReactions: CommentReaction[];
+	toggleCommentReaction: (feedbackIdeaId: string, itemIndex: number, emoji: string) => void;
 } {
 	const [reactions, setReactions] = useState<IdeaReactions>(NO_REACTIONS);
 	// latest request number per target, to drop stale answers
@@ -88,5 +110,35 @@ export function useIdeaReactions(
 			});
 	}
 
-	return { sectionReactions: reactions.sections, toggleSectionReaction };
+	function toggleCommentReaction(feedbackIdeaId: string, itemIndex: number, emoji: string): void {
+		const wasOn = reactions.comments.some(
+			(r) =>
+				r.feedbackIdeaId === feedbackIdeaId &&
+				r.itemIndex === itemIndex &&
+				r.emoji === emoji
+		);
+		const isLatest = startRequest(`comment:${feedbackIdeaId}:${itemIndex}:${emoji}`);
+		const apply = (isOn: boolean) =>
+			setReactions((prev) =>
+				withCommentReaction(prev, feedbackIdeaId, itemIndex, emoji, isOn)
+			);
+
+		apply(!wasOn);
+		toggleCommentReactionApi(feedbackIdeaId, itemIndex, emoji)
+			.then((isOn) => {
+				if (isLatest()) apply(isOn);
+			})
+			.catch((err) => {
+				console.error("failed to toggle comment reaction", err);
+				if (isLatest()) apply(wasOn);
+				onError(REACTION_ERROR);
+			});
+	}
+
+	return {
+		sectionReactions: reactions.sections,
+		toggleSectionReaction,
+		commentReactions: reactions.comments,
+		toggleCommentReaction
+	};
 }

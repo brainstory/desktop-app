@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { cn } from "@helpers/cn";
 
 import Avatar from "@ds/Avatar";
+import ReactionBar from "@components/idea/reactions/ReactionBar";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 interface IdeaFeedbackCardProps {
@@ -15,12 +16,17 @@ interface IdeaFeedbackCardProps {
 	};
 	focusedIdea?: (FeedbackComment & { ideaId: string }) | null;
 	focusSection: (feedback: FeedbackComment & { hid: string | number }) => void;
+	/** the user's own reaction emojis on this comment (local only) */
+	myReactions: string[];
+	onToggleReaction: (emoji: string) => void;
 }
 
 export default function IdeaFeedbackCard({
 	feedback,
 	focusedIdea,
-	focusSection
+	focusSection,
+	myReactions,
+	onToggleReaction
 }: IdeaFeedbackCardProps) {
 	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText } = feedback;
 	const authorName = creatorName ?? creatorEmail ?? null;
@@ -58,7 +64,8 @@ export default function IdeaFeedbackCard({
 	}
 
 	// A real button (keyboard focus + activation for free) with the
-	// show-more toggle OUTSIDE it - a button inside a button is invalid.
+	// show-more toggle and the reactions OUTSIDE it - a button inside a
+	// button is invalid.
 	return (
 		<div id={ideaId} className={containerClasses}>
 			<button
@@ -96,6 +103,12 @@ export default function IdeaFeedbackCard({
 					{isShowingMore ? "show less" : "show more"}
 				</button>
 			)}
+			<ReactionBar
+				className="mt-2"
+				label={`comment from ${authorName ?? "someone"}`}
+				reactions={myReactions.map((emoji) => ({ emoji, mine: true }))}
+				onToggle={onToggleReaction}
+			/>
 		</div>
 	);
 }

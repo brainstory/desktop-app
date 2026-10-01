@@ -42,9 +42,8 @@ export default function IdeaResultContent() {
 	const isMdSizeOrLess = useMediaQuery("(max-width: 768px)");
 	const [isUnread, setIsUnread] = useState(false);
 	const { openSnackbar, snackbars } = useSnackbar();
-	const { sectionReactions, toggleSectionReaction } = useIdeaReactions(ideaId, (message) =>
-		openSnackbar(false, message)
-	);
+	const { sectionReactions, toggleSectionReaction, commentReactions, toggleCommentReaction } =
+		useIdeaReactions(ideaId, (message) => openSnackbar(false, message));
 
 	// Opening an unread (imported feedback) idea marks it read.
 	useMarkReadApi(ideaId, isUnread);
@@ -147,6 +146,8 @@ export default function IdeaResultContent() {
 								canShare={isOwn}
 								sectionReactions={sectionReactions}
 								onToggleSectionReaction={toggleSectionReaction}
+								commentReactions={commentReactions}
+								onToggleCommentReaction={toggleCommentReaction}
 							/>
 						)
 					},

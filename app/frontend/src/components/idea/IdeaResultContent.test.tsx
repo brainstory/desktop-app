@@ -301,3 +301,87 @@ describe("IdeaResultContent section reactions", () => {
 		).toBeInTheDocument();
 	});
 });
+
+describe("IdeaResultContent comment reactions", () => {
+	function withComments(toggle: (args: unknown) => unknown) {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => ({
+				sections: [],
+				comments: [{ feedbackIdeaId: "f1", itemIndex: 2, emoji: "📚" }]
+			}),
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "f1",
+						created_at: "2026-09-01T10:00:00",
+						creator_name: "Ada",
+						structured_result: {
+							feedback_items: [
+								feedbackItem("", "dropped: no heading"),
+								feedbackItem("3## Beta", "on beta"),
+								feedbackItem("2## Alpha", "on alpha")
+							]
+						}
+					}
+				]
+			}),
+			toggle_comment_reaction: toggle
+		});
+	}
+
+	it("toggles with the feedback idea id and the item's original index", async () => {
+		const user = userEvent.setup();
+		mockViewport(1024);
+		const toggle = vi.fn(() => true);
+		withComments(toggle);
+		render(<IdeaResultContent />);
+
+		// two comments by Ada: find each card's bar through its text
+		const alphaCard = (await screen.findByText("on alpha")).closest<HTMLElement>("[id='f1']")!;
+		const alphaBar = within(alphaCard).getByRole("group", {
+			name: "Reactions to comment from Ada"
+		});
+		// preloaded reaction lands on item 2 ("on alpha"), not on "on beta"
+		expect(within(alphaBar).getByRole("button", { name: "info 📚, 1" })).toHaveAttribute(
+			"aria-pressed",
+			"true"
+		);
+		const betaCard = screen.getByText("on beta").closest<HTMLElement>("[id='f1']")!;
+		const betaBar = within(betaCard).getByRole("group", {
+			name: "Reactions to comment from Ada"
+		});
+		expect(within(betaBar).queryByRole("button", { name: /📚/ })).not.toBeInTheDocument();
+
+		await user.click(within(betaBar).getByRole("button", { name: "React" }));
+		await user.click(within(betaBar).getByRole("button", { name: "React with agree 👍" }));
+		expect(toggle).toHaveBeenCalledExactlyOnceWith({
+			feedbackIdeaId: "f1",
+			itemIndex: 1,
+			emoji: "👍"
+		});
+		expect(await within(betaBar).findByRole("button", { name: "agree 👍, 1" })).toHaveAttribute(
+			"aria-pressed",
+			"true"
+		);
+	});
+
+	it("rolls back and shows an error when the toggle fails", async () => {
+		const user = userEvent.setup();
+		mockViewport(1024);
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		withComments(() => {
+			throw "database is locked";
+		});
+		render(<IdeaResultContent />);
+		const alphaCard = (await screen.findByText("on alpha")).closest<HTMLElement>("[id='f1']")!;
+		const chip = await within(alphaCard).findByRole("button", { name: "info 📚, 1" });
+
+		await user.click(chip);
+		expect(await screen.findByText("Error: Could not save your reaction")).toBeInTheDocument();
+		expect(within(alphaCard).getByRole("button", { name: "info 📚, 1" })).toHaveAttribute(
+			"aria-pressed",
+			"true"
+		);
+	});
+});

@@ -1,5 +1,5 @@
 import type { ResultSection, FeedbackComment } from "@src/types";
-import type { SectionReaction } from "@helpers/api/reactions";
+import type { CommentReaction, SectionReaction } from "@helpers/api/reactions";
 import IdeaDocument from "@components/idea/feedback-aggregation/IdeaDocument";
 import IdeaSidebar from "@components/idea/feedback-aggregation/IdeaSidebar";
 import { useState } from "react";
@@ -11,6 +11,8 @@ interface IdeaSectionProps {
 	canShare: boolean;
 	sectionReactions: SectionReaction[];
 	onToggleSectionReaction: (sectionIndex: number, emoji: string) => void;
+	commentReactions: CommentReaction[];
+	onToggleCommentReaction: (feedbackIdeaId: string, itemIndex: number, emoji: string) => void;
 }
 
 export default function IdeaSection({
@@ -18,7 +20,9 @@ export default function IdeaSection({
 	headingIdxToComments,
 	canShare,
 	sectionReactions,
-	onToggleSectionReaction
+	onToggleSectionReaction,
+	commentReactions,
+	onToggleCommentReaction
 }: IdeaSectionProps) {
 	// This should be used to tell the side bar which comment should be scrolled into view
 	type FocusedFeedback = FeedbackComment & { ideaId: string };
@@ -54,6 +58,8 @@ export default function IdeaSection({
 				headingIdxToComments={headingIdxToComments}
 				onFeedbackClick={onFeedbackClick}
 				canShare={canShare}
+				commentReactions={commentReactions}
+				onToggleCommentReaction={onToggleCommentReaction}
 			/>
 		</div>
 	);

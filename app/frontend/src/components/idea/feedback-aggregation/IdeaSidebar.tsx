@@ -1,4 +1,5 @@
 import type { FeedbackComment } from "@src/types";
+import type { CommentReaction } from "@helpers/api/reactions";
 import IdeaFeedbackCard from "@components/idea/feedback-aggregation/IdeaFeedbackCard";
 
 interface IdeaSidebarProps {
@@ -6,13 +7,17 @@ interface IdeaSidebarProps {
 	currentFocusedFeedback?: (FeedbackComment & { ideaId: string }) | null;
 	onFeedbackClick: (feedback: FeedbackComment & { hid: string | number }) => void;
 	canShare: boolean;
+	commentReactions: CommentReaction[];
+	onToggleCommentReaction: (feedbackIdeaId: string, itemIndex: number, emoji: string) => void;
 }
 
 export default function IdeaSidebar({
 	headingIdxToComments,
 	currentFocusedFeedback,
 	onFeedbackClick,
-	canShare
+	canShare,
+	commentReactions,
+	onToggleCommentReaction
 }: IdeaSidebarProps) {
 	const renderCommentCards = () => {
 		// numeric order: lexicographic sorting puts "10" before "2"
@@ -43,12 +48,22 @@ export default function IdeaSidebar({
 		}
 
 		return allComments.map((comment, index) => {
+			const feedbackIdeaId = comment.ideaId ?? "";
+			const myReactions = commentReactions
+				.filter(
+					(r) => r.feedbackIdeaId === feedbackIdeaId && r.itemIndex === comment.itemIndex
+				)
+				.map((r) => r.emoji);
 			return (
 				<IdeaFeedbackCard
 					feedback={comment as never}
 					key={comment.commentId ?? `${comment.ideaId}_${index}`}
 					focusSection={focusSection}
 					focusedIdea={currentFocusedFeedback}
+					myReactions={myReactions}
+					onToggleReaction={(emoji) =>
+						onToggleCommentReaction(feedbackIdeaId, comment.itemIndex, emoji)
+					}
 				/>
 			);
 		});
