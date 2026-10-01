@@ -6,6 +6,7 @@ import IdeaFeedbackCard from "./IdeaFeedbackCard";
 import EmojiList from "./EmojiList";
 import type { FeedbackComment } from "@src/types";
 
+// `labels` mimics old stored data: the LLM's emoji must not be shown
 const comment = {
 	commentId: "c1",
 	feedbackText: "Love this part",
@@ -23,6 +24,17 @@ describe("IdeaFeedbackCard", () => {
 		);
 		expect(container.querySelector("button button")).toBeNull();
 		expect(screen.getAllByRole("button")).toHaveLength(1);
+	});
+
+	it("shows who wrote the comment but no LLM label emoji", () => {
+		const { container } = render(
+			<IdeaFeedbackCard
+				feedback={{ ...comment, ideaId: "i1", hid: 1 }}
+				focusSection={() => {}}
+			/>
+		);
+		expect(screen.getByText("Ada")).toBeInTheDocument();
+		expect(container.textContent).not.toContain("👍");
 	});
 
 	it("focuses the comment's section when the card is clicked", async () => {
@@ -44,8 +56,15 @@ describe("EmojiList", () => {
 		const user = userEvent.setup();
 		const onReactionClick = vi.fn();
 		render(<EmojiList reactions={[comment]} onReactionClick={onReactionClick} />);
-		await user.click(screen.getByRole("button"));
+		await user.click(screen.getByRole("button", { name: "Show feedback from Ada" }));
 		expect(onReactionClick).toHaveBeenCalledWith(comment);
+	});
+
+	it("shows the commenter, not the LLM label emoji", () => {
+		const { container } = render(
+			<EmojiList reactions={[comment]} onReactionClick={() => {}} />
+		);
+		expect(container.textContent).not.toContain("👍");
 	});
 
 	it("highlights reactions with the pink accent ramp, not blue", () => {

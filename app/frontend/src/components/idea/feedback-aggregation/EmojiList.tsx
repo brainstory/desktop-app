@@ -1,29 +1,25 @@
 import type { FeedbackComment } from "@src/types";
-import EmojiItem from "./EmojiItem";
+import Avatar from "@ds/Avatar";
+import Tooltip from "@ds/Tooltip";
 import { cn } from "@helpers/cn";
 
 /**
- * EmojiList Component
- *
- * Displays a list of reactions with avatars and labels, and provides a tooltip on hover.
- *
- * @component
- * @param {Object[]} reactions - An array of reactions with each item in format [{feedbackItem, paragraphIndex}]
- * @param {function} onReactionClick - A callback function triggered when a reaction is clicked.
- *
- * @example
- * <EmojiList
- *   reactions={[
- *     { feedbackItem: { creatorEmail: "john@example.com", labels: [{ name: "like", emoji: "👍" }] }, paragraphIndex: 0 },
- *     { feedbackItem: { creatorEmail: "jane@example.com", labels: [{ name: "love", emoji: "❤️" }] }, paragraphIndex: 1 },
- *   ]}
- *   onReactionClick={(reaction) => handleReactionClick(reaction)}
- * />
+ * The people who commented on one document section, as avatar buttons.
+ * Clicking one focuses that comment in the sidebar; past six, a "+N more"
+ * button focuses the seventh.
  */
 interface EmojiListProps {
 	reactions?: FeedbackComment[];
 	onReactionClick: (reaction: FeedbackComment) => void;
 	isFocused?: boolean;
+}
+
+function commenterName(comment: FeedbackComment): string {
+	return comment.creatorName ?? comment.creatorEmail ?? "someone";
+}
+
+function avatarLetter(comment: FeedbackComment): string {
+	return (comment.creatorName ?? comment.creatorEmail ?? "?").charAt(0);
 }
 
 export default function EmojiList({ reactions = [], onReactionClick, isFocused }: EmojiListProps) {
@@ -35,19 +31,28 @@ export default function EmojiList({ reactions = [], onReactionClick, isFocused }
 			)}
 		>
 			{reactions &&
-				reactions
-					.slice(0, 6)
-					.map((reaction: FeedbackComment, index: number) => (
-						<EmojiItem
-							key={index}
-							labels={reaction.labels}
-							creatorEmail={reaction.creatorEmail}
-							onReactionClick={() => onReactionClick(reaction)}
-							style="m-1 "
-						/>
-					))}
+				reactions.slice(0, 6).map((reaction: FeedbackComment, index: number) => {
+					const name = commenterName(reaction);
+					return (
+						<Tooltip key={index} text={name}>
+							<button
+								type="button"
+								aria-label={`Show feedback from ${name}`}
+								className="m-1 p-1 rounded-md border border-accent-400 bg-accent-50 hover:bg-accent-200"
+								onClick={() => onReactionClick(reaction)}
+							>
+								<Avatar
+									id={reaction.creatorEmail ?? undefined}
+									charToShow={avatarLetter(reaction)}
+									size={"6"}
+								/>
+							</button>
+						</Tooltip>
+					);
+				})}
 			{reactions && reactions.length > 6 && (
 				<button
+					type="button"
 					className="flex items-center"
 					onClick={() => onReactionClick(reactions[6]!)}
 				>

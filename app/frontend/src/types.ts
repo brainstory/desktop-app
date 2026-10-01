@@ -25,12 +25,6 @@ export interface FeedbackComment {
 	oidHeadingText?: string;
 	matchedSpans: unknown[];
 	feedbackText: string;
-	labels: FeedbackLabel[];
-}
-
-export interface FeedbackLabel {
-	name: string;
-	emoji: string;
 }
 
 /** Attribution info shared by ideas and feedback cards. */

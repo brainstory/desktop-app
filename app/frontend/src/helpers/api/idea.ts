@@ -64,7 +64,8 @@ export interface RawFeedbackChild {
 			oid_heading_text: string;
 			matched_spans: unknown[];
 			feedback_text: string;
-			labels: { name: string; emoji: string }[];
+			// older imports may still carry the LLM's emoji `labels`; they
+			// are deliberately not mapped (reactions are chosen by people)
 		}[];
 	} | null;
 }
@@ -78,8 +79,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 			? idea.structured_result.feedback_items.map((feedbackComment) => ({
 					oidHeadingText: feedbackComment.oid_heading_text,
 					matchedSpans: feedbackComment.matched_spans,
-					feedbackText: feedbackComment.feedback_text,
-					labels: feedbackComment.labels
+					feedbackText: feedbackComment.feedback_text
 				}))
 			: [];
 		return {

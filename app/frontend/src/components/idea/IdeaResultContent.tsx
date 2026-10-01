@@ -231,8 +231,7 @@ async function fetchIdeaChildrenData(
 						creatorName: idea.creatorName,
 						createdAt: idea.createdAt,
 						matchedSpans: comment.matchedSpans,
-						feedbackText: comment.feedbackText,
-						labels: comment.labels
+						feedbackText: comment.feedbackText
 					});
 					oidHeadingToFeedbackComments[headingIdx] = currMap;
 				});

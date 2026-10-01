@@ -81,6 +81,33 @@ describe("IdeaResultContent feedback heading references", () => {
 	});
 });
 
+describe("IdeaResultContent LLM labels", () => {
+	it("never renders the emoji labels stored on old feedback items", async () => {
+		mockViewport(1024);
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "f1",
+						created_at: "2026-09-01T10:00:00",
+						creator_name: "Ada",
+						structured_result: {
+							feedback_items: [feedbackItem("2## Alpha", "nice alpha")]
+						}
+					}
+				]
+			})
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByText("nice alpha")).toBeInTheDocument();
+		// the comment is still attached to its section (avatar button)...
+		expect(screen.getByRole("button", { name: "Show feedback from Ada" })).toBeInTheDocument();
+		// ...but the LLM-chosen label is gone everywhere
+		expect(document.body.textContent).not.toContain("👍");
+	});
+});
+
 describe("IdeaResultContent ownership", () => {
 	it("an idea with only a creatorEmail is still own (no creatorName), so it can be exported", async () => {
 		mockInvoke({

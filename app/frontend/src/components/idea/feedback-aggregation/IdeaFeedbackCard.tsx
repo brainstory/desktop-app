@@ -2,7 +2,7 @@ import type { FeedbackComment } from "@src/types";
 import { useState, useEffect, useRef } from "react";
 import { cn } from "@helpers/cn";
 
-import EmojiItem from "@components/idea/feedback-aggregation/EmojiItem";
+import Avatar from "@ds/Avatar";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 interface IdeaFeedbackCardProps {
@@ -22,7 +22,8 @@ export default function IdeaFeedbackCard({
 	focusedIdea,
 	focusSection
 }: IdeaFeedbackCardProps) {
-	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText, labels } = feedback;
+	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText } = feedback;
+	const authorName = creatorName ?? creatorEmail ?? null;
 	const ref = useRef<HTMLDivElement | null>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
 	// derived: this card is the one the sidebar currently has focused,
@@ -65,16 +66,16 @@ export default function IdeaFeedbackCard({
 				className="w-full text-left cursor-pointer"
 				onClick={feedbackClicked}
 			>
-				<div className="flex mb-2 items-end">
-					<EmojiItem
-						ideaId={ideaId}
-						labels={labels}
-						creatorEmail={creatorEmail}
-						creatorName={creatorName}
-						isHighlighted={false}
-						labelsHasBorder={true}
+				<div className="flex mb-2 items-center">
+					<Avatar
 						style="mr-1"
+						id={creatorEmail ?? undefined}
+						charToShow={(authorName ?? "?").charAt(0)}
+						size={"6"}
 					/>
+					{authorName && (
+						<p className="ml-1 text-xs font-medium text-stone-700">{authorName}</p>
+					)}
 					<p className="ml-1 text-xs text-stone-500">
 						{formatISO8601ToHumanReadable(createdAt ?? "")}
 					</p>

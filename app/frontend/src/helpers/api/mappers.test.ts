@@ -47,7 +47,9 @@ describe("getIdeaApi", () => {
 });
 
 describe("getIdeaChildrenApi", () => {
-	it("builds feedbackComments and a cleaned summaryPreview", async () => {
+	// the raw item still carries the LLM's emoji `labels` (old stored
+	// data); they must not reach the UI any more
+	it("builds feedbackComments (without LLM labels) and a cleaned summaryPreview", async () => {
 		mockInvoke({
 			get_idea_children: () => ({
 				ideas: [
@@ -76,8 +78,7 @@ describe("getIdeaChildrenApi", () => {
 			{
 				oidHeadingText: "1##Point one",
 				matchedSpans: [],
-				feedbackText: "good point",
-				labels: [{ name: "Insight", emoji: "💡" }]
+				feedbackText: "good point"
 			}
 		]);
 		// first line (before \n\n) dropped, leading ## stripped
