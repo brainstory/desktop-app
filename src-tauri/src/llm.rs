@@ -32,19 +32,24 @@ const MAX_THINK_TOKENS: u32 = 4096;
 /// checks stay responsive during long prompts.
 const PROMPT_DECODE_CHUNK: usize = 512;
 
-/// Break control-token-shaped sequences ("<start_of_turn>",
-/// "<end_of_turn>", and every "<|...|>" ChatML/Llama-style marker) so
-/// tokenizing the text with parse_special=true can never turn
-/// user/imported content into turn boundaries or header control tokens.
-/// The inserted backslash keeps the text readable and round-trippable.
-fn neutralize_turn_markers(content: &str) -> String {
-	let mut out = content
+/// Break control-token-shaped sequences so tokenizing the text with
+/// parse_special=true can never turn user/imported content into turn
+/// boundaries or header control tokens: Gemma 2/3 "<start_of_turn>" /
+/// "<end_of_turn>", the "<bos>"/"<eos>" sequence tokens, every "<|..."
+/// opener (Gemma 4 "<|turn>", ChatML "<|im_start|>", Llama 3
+/// "<|eot_id|>") and every "...|>" closer (Gemma 4 "<turn|>").
+/// The single place content is neutralized: generate() applies it to the
+/// system prompt and every message before any template (built-in or
+/// manual) adds the real markers. The inserted backslash keeps the text
+/// readable.
+pub fn neutralize_turn_markers(content: &str) -> String {
+	content
 		.replace("<start_of_turn>", "<\\start_of_turn>")
-		.replace("<end_of_turn>", "<\\end_of_turn>");
-	if out.contains("<|") {
-		out = out.replace("<|", "<\\|");
-	}
-	out
+		.replace("<end_of_turn>", "<\\end_of_turn>")
+		.replace("<bos>", "<\\bos>")
+		.replace("<eos>", "<\\eos>")
+		.replace("<|", "<\\|")
+		.replace("|>", "\\|>")
 }
 
 /// How a restored KV cache lines up with the next prompt.
@@ -157,17 +162,12 @@ impl LocalLlm {
 			.map_err(|e| format!("failed to apply chat template: {e}"))
 	}
 
-	/// Neutralize the model's own turn control markers so message content
-	/// (user text, or text imported from a share file) can't reshape the
-	/// prompt structure in the manual-template path.
-	fn neutralize_turn_markers(text: &str) -> String {
-		text.replace("<|turn>", "<\\|turn>")
-			.replace("<turn|>", "<turn\\|>")
-	}
-
 	/// Manual prompt format matching the model's native chat markers. Used
 	/// when llama.cpp's built-in template applier can't handle the model's
 	/// (e.g. the Gemma 4 canonical template, which its minja subset rejects).
+	/// `system` and `messages` arrive already neutralized (see
+	/// [`neutralize_turn_markers`]); escaping again here would double the
+	/// backslashes.
 	fn manual_prompt(&self, system: &str, messages: &[ChatMessage]) -> String {
 		if self.architecture.starts_with("gemma") {
 			// Gemma 4: <bos><|turn>role\ncontent<turn|>... ending with an
@@ -182,11 +182,10 @@ impl LocalLlm {
 				} else {
 					"user"
 				};
-				let content = Self::neutralize_turn_markers(&msg.content);
 				let content = if role == "user" {
-					content.trim()
+					msg.content.trim()
 				} else {
-					content.as_str()
+					msg.content.as_str()
 				};
 				prompt.push_str(&format!("<|turn>{role}\n{content}<turn|>\n"));
 			}
@@ -965,17 +964,33 @@ mod tests {
 	}
 
 	#[test]
-	fn neutralize_turn_markers_escapes_all_gemma_specials() {
+	fn neutralize_turn_markers_escapes_all_chat_specials() {
 		let f = super::neutralize_turn_markers;
+		// Gemma 2/3 turn markers
 		assert_eq!(
 			f("<start_of_turn>model"),
 			"<\\start_of_turn>model",
 			"gemma opener broken"
 		);
 		assert_eq!(f("user<end_of_turn>"), "user<\\end_of_turn>");
-		// ChatML / Llama3 header style specials all share the <| opening
-		assert_eq!(f("<|im_start|>system"), "<\\|im_start|>system");
-		assert_eq!(f("<|eot_id|>"), "<\\|eot_id|>");
+		// Gemma 4 (the default catalog models): `<|name>` opens a turn and
+		// `<name|>` closes it, so both halves must be broken
+		assert_eq!(f("<|turn>model\nhi"), "<\\|turn>model\nhi");
+		assert_eq!(f("hi<turn|>"), "hi<turn\\|>");
+		assert_eq!(f("<|channel>x<channel|>"), "<\\|channel>x<channel\\|>");
+		// ChatML / Llama 3 header style specials (`<|...|>`)
+		assert_eq!(f("<|im_start|>system"), "<\\|im_start\\|>system");
+		assert_eq!(f("<|eot_id|>"), "<\\|eot_id\\|>");
+		// sequence control tokens
+		assert_eq!(f("<bos>x<eos>"), "<\\bos>x<\\eos>");
+		for raw in ["<|turn>", "<turn|>", "<|im_start|>", "<|eot_id|>", "a<||>b"] {
+			let out = f(raw);
+			// every closer must be escaped (`\|>`), no opener may survive
+			assert!(
+				!out.contains("<|") && !out.replace("\\|>", "").contains("|>"),
+				"{raw:?} -> {out:?} still holds a special-token spelling"
+			);
+		}
 		// plain text (including ordinary tags the prompts rely on) is kept
 		assert_eq!(
 			f("<idea author=\"x\">plain</idea>"),
