@@ -6,7 +6,6 @@ interface IdeaSidebarProps {
 	headingIdxToComments: Record<number, FeedbackComment[]>;
 	currentFocusedFeedback?: (FeedbackComment & { ideaId: string }) | null;
 	onFeedbackClick: (feedback: FeedbackComment & { hid: string | number }) => void;
-	canShare: boolean;
 	commentReactions: CommentReaction[];
 	onToggleCommentReaction: (feedbackIdeaId: string, itemIndex: number, emoji: string) => void;
 }
@@ -15,7 +14,6 @@ export default function IdeaSidebar({
 	headingIdxToComments,
 	currentFocusedFeedback,
 	onFeedbackClick,
-	canShare,
 	commentReactions,
 	onToggleCommentReaction
 }: IdeaSidebarProps) {
@@ -26,12 +24,7 @@ export default function IdeaSidebar({
 		);
 
 		if (sortedHeadingIndices.length === 0) {
-			return (
-				<p className="w-[256px] text-sm">
-					No comments found.{" "}
-					{canShare && "Export your idea and send it to someone to get their feedback!"}
-				</p>
-			);
+			return <p className="w-[256px] text-sm">No comments found.</p>;
 		}
 
 		const allComments = [];

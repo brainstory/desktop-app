@@ -143,7 +143,6 @@ export default function IdeaResultContent() {
 							<IdeaSection
 								resultSections={idea.resultJson ?? []}
 								headingIdxToComments={headingIdxToComments}
-								canShare={isOwn}
 								sectionReactions={sectionReactions}
 								onToggleSectionReaction={toggleSectionReaction}
 								commentReactions={commentReactions}
@@ -180,13 +179,10 @@ export default function IdeaResultContent() {
 				)
 			});
 		} else {
-			const tooltipText = isOwn
-				? "Export your idea and send it to someone for feedback"
-				: "No feedback on this idea yet";
 			tabData.push({
 				label: "Feedback",
 				param: "feedback",
-				tooltipText: tooltipText,
+				tooltipText: isOwn ? undefined : "No feedback on this idea yet",
 				disabled: true,
 				content: <IdeaBranches kids={[]} />
 			});

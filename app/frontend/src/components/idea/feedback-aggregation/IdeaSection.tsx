@@ -8,7 +8,6 @@ import { useTimeout } from "@src/hooks/useTimeout";
 interface IdeaSectionProps {
 	resultSections: ResultSection[];
 	headingIdxToComments: Record<number, FeedbackComment[]>;
-	canShare: boolean;
 	sectionReactions: SectionReaction[];
 	onToggleSectionReaction: (sectionIndex: number, emoji: string) => void;
 	commentReactions: CommentReaction[];
@@ -18,7 +17,6 @@ interface IdeaSectionProps {
 export default function IdeaSection({
 	resultSections,
 	headingIdxToComments,
-	canShare,
 	sectionReactions,
 	onToggleSectionReaction,
 	commentReactions,
@@ -57,7 +55,6 @@ export default function IdeaSection({
 				currentFocusedFeedback={focusedFeedback}
 				headingIdxToComments={headingIdxToComments}
 				onFeedbackClick={onFeedbackClick}
-				canShare={canShare}
 				commentReactions={commentReactions}
 				onToggleCommentReaction={onToggleCommentReaction}
 			/>

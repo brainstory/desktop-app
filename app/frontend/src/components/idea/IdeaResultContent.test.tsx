@@ -168,6 +168,19 @@ describe("IdeaResultContent feedback tab", () => {
 		expect(tab).toBeEnabled();
 	});
 
+	it("shows no 'export and send it' nudge on an own idea without feedback", async () => {
+		mockViewport(1024);
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({ ideas: [] })
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByRole("tab", { name: "Feedback" })).toBeDisabled();
+		expect(await screen.findByText("No comments found.")).toBeInTheDocument();
+		expect(screen.queryByText(/send it to someone/)).not.toBeInTheDocument();
+	});
+
 	it("stays open (uncounted) when the only child is a draft, so it can be resumed", async () => {
 		mockInvoke({
 			get_idea: () => rawIdea(),
