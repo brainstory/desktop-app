@@ -410,6 +410,25 @@ pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(
 	}
 }
 
+/// The settings after `spec` became the active engine of its kind.
+/// Activating a local LLM also switches chats off an external endpoint:
+/// otherwise the model would load but never be used.
+fn activated_settings(
+	mut settings: crate::models::AiSettings,
+	spec: &crate::models::ModelSpec,
+) -> crate::models::AiSettings {
+	match spec.kind {
+		ModelKind::Llm => {
+			settings.llm_mode = crate::models::LlmMode::Local;
+			settings.llm_model = spec.id.to_string();
+		}
+		ModelKind::Stt => {
+			settings.stt_model = spec.id.to_string();
+		}
+	}
+	settings
+}
+
 /// Explicitly activate (and load if needed) a downloaded model. The
 /// settings row is only updated once the engine actually loaded, so the
 /// recorded active model can never disagree with the runtime.
@@ -439,20 +458,10 @@ pub async fn activate_model(
 			ModelKind::Stt => state.load_stt(&app_handle, &spec),
 		} {
 			Ok(()) => {
-				let mut settings = state.ai_settings();
-				match spec.kind {
-					ModelKind::Llm => {
-						settings.llm_mode = crate::models::LlmMode::Local;
-						settings.llm_model = spec.id.to_string();
-					}
-					ModelKind::Stt => {
-						settings.stt_model = spec.id.to_string();
-					}
-				}
 				// the settings row is only updated once the engine
 				// actually loaded, so the recorded active model can never
 				// disagree with the runtime
-				state.save_ai_settings(&settings)
+				state.save_ai_settings(&activated_settings(state.ai_settings(), &spec))
 			}
 			Err(e) => Err(e),
 		}
@@ -473,6 +482,31 @@ mod tests {
 		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
 		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
 		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	#[test]
+	fn activating_a_model_records_it_for_its_kind_only() {
+		use crate::models::{find_model, LlmMode, ModelKind};
+		let (state, _dir) = temp_state("activate");
+		let mut before = state.ai_settings();
+		before.llm_mode = LlmMode::External;
+		before.stt_model = "whisper-tiny-en".into();
+
+		let llm = find_model("gemma-4-E4B", ModelKind::Llm).unwrap();
+		let after = super::activated_settings(before.clone(), llm);
+		assert_eq!(after.llm_model, "gemma-4-E4B");
+		assert_eq!(
+			after.llm_mode,
+			LlmMode::Local,
+			"a local model activated while chats use an endpoint must take over"
+		);
+		assert_eq!(after.stt_model, "whisper-tiny-en", "STT untouched");
+
+		let stt = find_model("whisper-small-en", ModelKind::Stt).unwrap();
+		let after = super::activated_settings(before.clone(), stt);
+		assert_eq!(after.stt_model, "whisper-small-en");
+		assert_eq!(after.llm_mode, LlmMode::External, "LLM mode untouched");
+		assert_eq!(after.llm_model, before.llm_model);
 	}
 
 	/// A download that ends (or never really starts) must release its slot,
