@@ -3,33 +3,11 @@ import PinkButton from "@ds/PinkButton";
 import BorderedButton from "@ds/BorderedButton";
 import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
-import { useTimeout } from "@src/hooks/useTimeout";
-import { useState, useId } from "react";
+import { useAiModels } from "./useAiModels";
+import { useState } from "react";
 import { normalizeApiError } from "@helpers/helpers";
-import { useEffect } from "react";
-
-import {
-	listModelsApi,
-	getAiSettingsApi,
-	saveAiSettingsApi,
-	downloadModelApi,
-	cancelDownloadApi,
-	deleteModelApi,
-	activateModelApi,
-	testLlmEndpointApi,
-	testSttEndpointApi,
-	getRuntimeStatusApi,
-	getAppleSttStatusApi,
-	getFreeDiskSpaceApi
-} from "@helpers/api/models";
-import { listen } from "@tauri-apps/api/event";
-import type {
-	AiSettingsResponse,
-	AppleSttStatus,
-	ModelsResponse,
-	EngineStatus,
-	ModelStatus
-} from "@helpers/api/models";
+import { testLlmEndpointApi, testSttEndpointApi, saveAiSettingsApi } from "@helpers/api/models";
+import type { ModelStatus } from "@helpers/api/models";
 
 const formatSize = (bytes?: number): string => {
 	if (!bytes) return "";
@@ -62,173 +40,43 @@ interface AiModelsCardProps {
 }
 
 export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
-	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
-	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
-	/** last persisted snapshot of the endpoint fields, for dirty tracking */
-	const [savedSettings, setSavedSettings] = useState<AiSettingsResponse | null>(null);
-	const [runtime, setRuntime] = useState<{
-		llm: Partial<EngineStatus>;
-		stt: Partial<EngineStatus>;
-	}>({ llm: {}, stt: {} });
-	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
-	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
-	const [freeBytes, setFreeBytes] = useState<number | null>(null);
-	/** model id awaiting a second "really delete?" click */
-	const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
-	const [scheduleDeleteReset] = useTimeout();
-	const externalLlmLabelId = useId();
+	const ai = useAiModels(openSnackbar);
+	const {
+		models,
+		settings: maybeSettings,
+		savedSettings,
+		runtime,
+		downloadProgress,
+		appleStt,
+		freeBytes,
+		confirmingDeleteId,
+		externalLlmLabelId,
+		refresh,
+		download,
+		save,
+		saveSecret,
+		saveEndpoint,
+		setSavedSettings,
+		setSettings,
+		setConfirmingDeleteId,
+		scheduleDeleteReset,
+		deleteModel,
+		cancelDownload,
+		activateModel
+	} = ai;
 
-	const refresh = () => {
-		listModelsApi()
-			.then((data) => {
-				setModels(data);
-				// rehydrate in-flight downloads (e.g. after navigating away and back)
-				const next: Record<string, number> = {};
-				for (const list of [data.llm, data.stt]) {
-					for (const model of list) {
-						if (model.downloading) {
-							next[model.id] = model.progress ?? 0;
-						}
-					}
-				}
-				setDownloadProgress(next);
-			})
-			.catch((e) => console.log("list models failed", e));
-		getRuntimeStatusApi()
-			.then(setRuntime)
-			.catch((e) => console.log("status failed", e));
-		getAppleSttStatusApi()
-			.then(setAppleStt)
-			.catch((e) => console.log("apple stt status failed", e));
-		// re-checked on every refresh: downloads and deletions change it
-		getFreeDiskSpaceApi()
-			.then(setFreeBytes)
-			.catch((e) => console.log("free disk space failed", e));
-	};
-
-	useEffect(() => {
-		getAiSettingsApi()
-			.then((data) => {
-				setSettings(data);
-				setSavedSettings(data);
-			})
-			.catch((e) => console.log("ai settings failed", e));
-		refresh();
-
-		const unlisteners = [
-			listen("llm-status", refresh),
-			listen("stt-status", refresh),
-			// downloads continue in the backend across page navigation
-			listen<{
-				modelId: string;
-				kind: "progress" | "done" | "error" | "load-error";
-				pct?: number;
-				message?: string;
-			}>("model-download", (event) => {
-				const { modelId, kind, pct, message } = event.payload ?? {};
-				if (kind === "progress") {
-					setDownloadProgress((prev: Record<string, number>) => ({
-						...prev,
-						[modelId]: pct ?? 0
-					}));
-				} else if (kind === "done") {
-					setDownloadProgress((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					});
-					openSnackbar(true, "Model downloaded");
-					refresh();
-				} else if (kind === "error") {
-					setDownloadProgress((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					});
-					openSnackbar(false, `Download failed: ${message}`);
-				} else if (kind === "load-error") {
-					// the download itself succeeded; activating the model failed
-					openSnackbar(false, `Model downloaded, but activating it failed: ${message}`);
-					refresh();
-				}
-			})
-		];
-		return () => {
-			unlisteners.forEach((p) => p.then((fn) => fn()));
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
-
-	if (!settings) {
+	if (!maybeSettings) {
 		return (
 			<Card title="AI Models">
 				<p className="text-sm text-stone-500">Loading...</p>
 			</Card>
 		);
 	}
-
-	const download = (modelId: string): void => {
-		downloadModelApi(modelId).invokePromise.catch((e) => {
-			// starting a download that's already running is harmless - the
-			// progress bar is already driven by backend events
-			if (!String(e).includes("already downloading")) {
-				openSnackbar(false, normalizeApiError(e));
-			}
-			refresh();
-		});
-	};
-
-	const save = (updates: Partial<AiSettingsResponse>): void => {
-		if (!settings) return;
-		const next = { ...settings, ...updates };
-		setSettings(next);
-		saveAiSettingsApi(next as Record<string, unknown>)
-			.then(() => {
-				setSavedSettings(next);
-				refresh();
-			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
-
-	// Secrets: value "" is the backend's clear signal; anything else sets.
-	// The stored value is never round-tripped through the UI.
-	const saveSecret = (key: string, value: string): void => {
-		if (!settings) return;
-		// Send ONLY the secret: the Rust command applies present keys, and
-		// the spread form would persist whatever is sitting half-typed in
-		// the endpoint inputs right now.
-		saveAiSettingsApi({ [key]: value })
-			.then(() => {
-				refresh();
-				// re-sync only the saved snapshot (the dirty flag's
-				// reference): `settings` keeps the live form state
-				getAiSettingsApi()
-					.then((saved) => setSavedSettings(saved))
-					.catch((e) => console.error("failed to reload ai settings", e));
-				openSnackbar(true, value === "" ? "Removed" : "Saved");
-			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
-
-	/** Mirror endpoint row sends ONLY its field (like the secret rows):
-	 * a half-typed token or endpoint in the form must never ride along. */
-	const saveEndpoint = (value: string): void => {
-		if (!settings) return;
-		saveAiSettingsApi({ hfEndpoint: value })
-			.then(() => {
-				refresh();
-				getAiSettingsApi()
-					.then((saved) => setSavedSettings(saved))
-					.catch((e) => console.error("failed to reload ai settings", e));
-				openSnackbar(true, value.trim() ? "Mirror saved" : "Mirror cleared");
-			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
+	const settings = maybeSettings;
 
 	const updateField =
 		(key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel") =>
 		(e: React.ChangeEvent<HTMLInputElement>): void => {
-			if (!settings) return;
 			setSettings({ ...settings, [key]: e.target.value });
 		};
 
@@ -246,9 +94,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				return;
 			}
 			setConfirmingDeleteId(null);
-			deleteModelApi(model.id)
-				.then(refresh)
-				.catch((e) => openSnackbar(false, normalizeApiError(e)));
+			deleteModel(model.id);
 		};
 		return (
 			<div
@@ -269,13 +115,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					</div>
 					<div className="flex gap-2 items-center shrink-0">
 						{model.downloaded && !model.active && (
-							<BorderedButton
-								onClick={() =>
-									activateModelApi(model.id)
-										.then(refresh)
-										.catch((e) => openSnackbar(false, normalizeApiError(e)))
-								}
-							>
+							<BorderedButton onClick={() => activateModel(model.id)}>
 								Use
 							</BorderedButton>
 						)}
@@ -309,13 +149,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							</>
 						)}
 						{isDownloading && (
-							<BorderedButton
-								onClick={() =>
-									cancelDownloadApi(model.id).catch((e) =>
-										openSnackbar(false, normalizeApiError(e))
-									)
-								}
-							>
+							<BorderedButton onClick={() => cancelDownload(model.id)}>
 								Cancel
 							</BorderedButton>
 						)}
@@ -637,13 +471,13 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 						(settings.extSttModel ?? "") !== (savedSettings?.extSttModel ?? "");
 
 					const saveEndpoints = (): Promise<void> =>
-						saveAiSettingsApi(settings)
+						saveAiSettingsApi(settings as unknown as Record<string, unknown>)
 							.then(() => {
 								setSavedSettings(settings);
 								refresh();
 								openSnackbar(true, "Settings saved");
 							})
-							.catch((e) => {
+							.catch((e: unknown) => {
 								openSnackbar(false, normalizeApiError(e));
 								throw e;
 							});
