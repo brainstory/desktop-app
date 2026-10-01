@@ -34,6 +34,7 @@ export function useVoiceCapture(options: {
 	// Refs so the unmount cleanup always sees the live values.
 	const timerRef = useRef<number | null>(null);
 	const activeRecordingRef = useRef(false);
+	const mountedRef = useRef(true);
 	// keep the latest callbacks reachable from the timer/unmount closures
 	const callbacksRef = useRef({ onWavCaptured, onError, onStopError, onTimeLimit });
 	useEffect(() => {
@@ -43,7 +44,9 @@ export function useVoiceCapture(options: {
 	// If the component goes away mid-recording (user ends the chat, page
 	// navigates), stop the timer and release the Rust-side microphone.
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
+			mountedRef.current = false;
 			if (timerRef.current !== null) {
 				clearTimeout(timerRef.current);
 			}
@@ -80,6 +83,7 @@ export function useVoiceCapture(options: {
 				// The stop failed: the mic may still be running, so keep
 				// the recording state (the button offers to stop again and
 				// the unmount cleanup still fires) and say what happened.
+				setStatus("couldn't stop the mic - try again");
 				callbacksRef.current.onStopError(error);
 			}
 		} else {
@@ -91,6 +95,13 @@ export function useVoiceCapture(options: {
 			setMicStarting(true);
 			try {
 				await invoke(COMMANDS.startVoiceCapture);
+				if (!mountedRef.current) {
+					// unmounted while the start was in flight: the cleanup
+					// already ran and saw no active recording, so release
+					// the mic now instead of arming the 4-minute timer
+					invoke(COMMANDS.stopVoiceCapture).catch(() => {});
+					return;
+				}
 				activeRecordingRef.current = true;
 				const timeout = window.setTimeout(() => {
 					callbacksRef.current.onTimeLimit();
