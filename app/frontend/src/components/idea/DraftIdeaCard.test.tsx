@@ -66,6 +66,40 @@ describe("DraftIdeaCard delete", () => {
 	});
 });
 
+describe("DraftIdeaCard resume link", () => {
+	it("resumes an original idea draft by its id", () => {
+		mockInvoke({});
+		render(<DraftIdeaCard id="d1" draftSummary="half a thought" />);
+		const link = screen.getByRole("link", { name: /half a thought/ });
+		expect(link).toHaveAttribute("href", "/chat?id=d1");
+		expect(link).toHaveTextContent("Draft");
+		expect(link).not.toHaveTextContent(/feedback/i);
+	});
+
+	it("resumes a feedback draft as a feedback chat on its idea", () => {
+		mockInvoke({});
+		render(
+			<DraftIdeaCard
+				id="fd1"
+				parentId="p1"
+				parentTitle="Party plan"
+				draftSummary="more cake"
+			/>
+		);
+		const link = screen.getByRole("link", { name: /Feedback on: Party plan/ });
+		expect(link).toHaveAttribute("href", "/chat?parentId=p1&id=fd1");
+		expect(link).toHaveTextContent("Feedback draft");
+	});
+
+	it("leaves out 'Feedback on' where the idea is already on screen", () => {
+		mockInvoke({});
+		render(<DraftIdeaCard id="fd1" parentId="p1" draftSummary="more cake" />);
+		const link = screen.getByRole("link", { name: /Feedback draft/ });
+		expect(link).toHaveAttribute("href", "/chat?parentId=p1&id=fd1");
+		expect(link).not.toHaveTextContent("Feedback on:");
+	});
+});
+
 describe("DraftIdeaCard contrast", () => {
 	it("draft summary text is stone-500 on white (4.8:1), not stone-400 (2.5:1)", () => {
 		mockInvoke({});

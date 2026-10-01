@@ -7,6 +7,13 @@ interface DraftIdeaCardProps {
 	id: string;
 	createdAt?: string | null;
 	draftSummary?: string | null;
+	/** Set for an unfinished feedback chat: the idea it gives feedback on.
+	 * The chat page only runs a feedback chat with ?parentId=, so resuming
+	 * needs it next to the draft's id. */
+	parentId?: string | null;
+	/** Title of that idea, shown as "Feedback on: ..." (omit it where the
+	 * idea is already on screen) */
+	parentTitle?: string | null;
 	/** Called after a successful delete so the parent updates its list
 	 * (no page reload). */
 	onDeleted?: (id: string) => void;
@@ -16,9 +23,13 @@ export default function DraftIdeaCard({
 	id,
 	createdAt,
 	draftSummary,
+	parentId,
+	parentTitle,
 	onDeleted
 }: DraftIdeaCardProps) {
 	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
+	const isFeedback = Boolean(parentId);
+	const href = isFeedback ? `/chat?parentId=${parentId}&id=${id}` : `/chat?id=${id}`;
 	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();
 	const { openSnackbar, snackbars } = useSnackbar();
 
@@ -35,7 +46,7 @@ export default function DraftIdeaCard({
 	return (
 		<div className="relative h-auto w-80 sm:w-[275px] max-w-sm p-6 bg-white border-2 border-pink-200 rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform">
 			{snackbars}
-			<a href={`/chat?id=${id}`} className="block">
+			<a href={href} className="block">
 				<div className="float-left">
 					<span className="flex items-center justify-center mt-1 mr-2 w-6 h-6 bg-pink-100 text-pink-600 rounded-full -left-4 ring-8 ring-white">
 						<ion-icon
@@ -46,7 +57,14 @@ export default function DraftIdeaCard({
 						></ion-icon>
 					</span>
 				</div>
-				<h3 className="mb-2 text-xl font-semibold tracking-tight text-stone-900">Draft</h3>
+				<h3 className="mb-2 text-xl font-semibold tracking-tight text-stone-900">
+					{isFeedback ? "Feedback draft" : "Draft"}
+				</h3>
+				{isFeedback && parentTitle != null && (
+					<p className="mb-2 text-sm font-medium text-accent-700 break-words line-clamp-2">
+						Feedback on: {parentTitle || "an untitled idea"}
+					</p>
+				)}
 
 				<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
 				<div className="inline-flex items-center justify-center w-full">

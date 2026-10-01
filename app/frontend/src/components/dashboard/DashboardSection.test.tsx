@@ -124,6 +124,103 @@ describe("DashboardSection", () => {
 	});
 });
 
+describe("DashboardSection feedback drafts", () => {
+	const party = {
+		id: "party",
+		title: "Idea for a Surprise Birthday Party",
+		result: "# Idea for a Surprise Birthday Party\n\n## Plan\nbody",
+		type: "original",
+		created_at: "2026-09-01T10:00:00",
+		feedback: [
+			{
+				id: "fb-draft",
+				title: "",
+				result: "",
+				type: "feedback",
+				created_at: "2026-09-03T10:00:00",
+				transcript: [
+					{ role: "assistant", content: "What do you think?" },
+					{ role: "user", content: "invite the neighbours" }
+				]
+			},
+			{
+				id: "fb-done",
+				title: "Thoughts",
+				result: "## Thoughts",
+				type: "feedback",
+				created_at: "2026-09-02T10:00:00"
+			}
+		]
+	};
+	const ownDraft = {
+		id: "own-draft",
+		title: "",
+		result: "",
+		type: "original",
+		created_at: "2026-09-02T12:00:00",
+		transcript: [{ role: "user", content: "a half idea" }],
+		feedback: []
+	};
+
+	function feedbackDraftLink() {
+		return screen.findByRole("link", {
+			name: /Feedback on: Idea for a Surprise Birthday Party/
+		});
+	}
+
+	it("shows an unfinished feedback chat as a draft card that resumes it", async () => {
+		mockBase({ get_all_ideas: () => ({ ideas: [party, ownDraft] }) });
+		render(<DashboardSection />);
+		const link = await feedbackDraftLink();
+		expect(link).toHaveAttribute("href", "/chat?parentId=party&id=fb-draft");
+		expect(link).toHaveTextContent("Feedback draft");
+		expect(link).toHaveTextContent("invite the neighbours");
+		// an ordinary draft still resumes as an original idea
+		expect(screen.getByRole("link", { name: /a half idea/ })).toHaveAttribute(
+			"href",
+			"/chat?id=own-draft"
+		);
+		// placed among the drafts by date: the feedback draft is the newest
+		const links = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+		expect(links.indexOf("/chat?parentId=party&id=fb-draft")).toBeLessThan(
+			links.indexOf("/chat?id=own-draft")
+		);
+		expect(links.indexOf("/chat?id=own-draft")).toBeLessThan(links.indexOf("/idea?id=party"));
+	});
+
+	it("does not count the draft as feedback on its idea's card", async () => {
+		mockBase({ get_all_ideas: () => ({ ideas: [party] }) });
+		render(<DashboardSection />);
+		await feedbackDraftLink();
+		expect(screen.getByRole("link", { name: "1 feedback item" })).toHaveAttribute(
+			"href",
+			"/idea?id=party&tab=feedback"
+		);
+	});
+
+	it("deletes the feedback draft from its card and drops it from the grid", async () => {
+		const user = userEvent.setup();
+		mockBase({
+			get_all_ideas: () => ({ ideas: [party] }),
+			delete_idea: () => null
+		});
+		render(<DashboardSection />);
+		await feedbackDraftLink();
+		const remove = screen.getByRole("button", { name: "Delete draft" });
+		await user.click(remove);
+		await user.click(screen.getByRole("button", { name: "Confirm delete draft" }));
+		await waitFor(() =>
+			expect(screen.queryByRole("link", { name: /Feedback on:/ })).not.toBeInTheDocument()
+		);
+		const deleted = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "delete_idea");
+		expect(deleted).toEqual([["delete_idea", { ideaId: "fb-draft" }]]);
+		// the idea itself stays
+		expect(
+			screen.getByRole("link", { name: /Idea for a Surprise Birthday Party/ })
+		).toHaveAttribute("href", "/idea?id=party");
+	});
+});
+
 describe("DashboardSection onboarding flag", () => {
 	afterEach(() => {
 		localStorage.clear();
