@@ -1,16 +1,14 @@
 import { Card } from "./ProfileCards";
 import PinkButton from "@ds/PinkButton";
-import BorderedButton from "@ds/BorderedButton";
-import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useAiModels } from "./useAiModels";
 import { useId, useState } from "react";
 import { ModelRow, type ModelRowActions } from "./ai-models/ModelRow";
 import { localeLabel } from "./ai-models/format";
-import { normalizeApiError } from "@helpers/helpers";
 import { cn } from "@helpers/cn";
-import { testLlmEndpointApi, testSttEndpointApi, saveAiSettingsApi } from "@helpers/api/models";
-import type { AiSettingsResponse, ModelStatus } from "@helpers/api/models";
+import type { ModelStatus } from "@helpers/api/models";
+import { ExternalEndpointsForm } from "./ai-models/ExternalEndpointsForm";
+import { SecretRow } from "./ai-models/SecretRow";
 
 /**
  * Languages offered for a multilingual whisper model when Apple Speech
@@ -38,8 +36,6 @@ const WHISPER_LOCALES = [
 
 /** Mirrors the backend: `*-en` whisper builds always transcribe English. */
 const isMultilingualWhisper = (modelId: string): boolean => !modelId.endsWith("-en");
-
-const ENDPOINT_KEYS = ["extLlmBaseUrl", "extLlmModel", "extSttBaseUrl", "extSttModel"] as const;
 
 const STATUS_LABELS = {
 	ready: "Ready",
@@ -85,12 +81,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		);
 	}
 	const settings = maybeSettings;
-
-	const updateField =
-		(key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel") =>
-		(e: React.ChangeEvent<HTMLInputElement>): void => {
-			setSettings({ ...settings, [key]: e.target.value });
-		};
 
 	const rowActions: ModelRowActions = {
 		onDownload: download,
@@ -248,16 +238,17 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				{settings.llmMode !== "external" && models.llm.map(renderModelRow)}
 				{settings.llmMode !== "external" && (
 					<div className="border border-stone-200 rounded-lg p-4 text-sm">
-						<label htmlFor="hf-token-input" className="font-semibold mb-1 block">
-							HuggingFace access token (optional)
-						</label>
-						<p className="text-stone-500 mb-2">
-							Authenticated downloads are faster and never hit HuggingFace&rsquo;s
-							anonymous rate limits. Create a free read token at
-							huggingface.co/settings/tokens.
-						</p>
-						<SecretField
+						<SecretRow
 							inputId="hf-token-input"
+							label="HuggingFace access token (optional)"
+							labelClassName="font-semibold mb-1 block"
+							description={
+								<>
+									Authenticated downloads are faster and never hit
+									HuggingFace&rsquo;s anonymous rate limits. Create a free read
+									token at huggingface.co/settings/tokens.
+								</>
+							}
 							placeholder="hf_..."
 							stored={settings.hfTokenSet}
 							hint={settings.hfTokenHint}
@@ -406,144 +397,15 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 
 			<hr className="my-6 border-stone-200" />
 
-			<div className="flex flex-col gap-4">
-				<h3 className="font-semibold">External endpoints (optional)</h3>
-				<p className="text-sm text-stone-500 -mt-2">
-					Offload AI to any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio,
-					...). Base URL example: <code>http://localhost:11434</code>
-				</p>
-				{/* One consistent save model: these text fields save via the button
-			    (dirty-gated); the toggles above save immediately because they're
-			    explicit single actions. Test always saves what's typed first, so
-			    it can never test a stale endpoint. */}
-				{(() => {
-					// only the edited fields are sent: the backend validates every
-					// key it receives, so re-sending an untouched stale value
-					// would fail the whole save
-					const changedEndpoints = Object.fromEntries(
-						ENDPOINT_KEYS.filter(
-							(key) => (settings[key] ?? "") !== (savedSettings?.[key] ?? "")
-						).map((key) => [key, settings[key]])
-					) as Partial<AiSettingsResponse>;
-					const endpointDirty = Object.keys(changedEndpoints).length > 0;
-
-					const saveEndpoints = (): Promise<void> =>
-						saveAiSettingsApi(changedEndpoints)
-							.then(() => {
-								setSavedSettings((prev) =>
-									prev ? { ...prev, ...changedEndpoints } : prev
-								);
-								refreshModels();
-								openSnackbar(true, "Settings saved");
-							})
-							.catch((e: unknown) => {
-								openSnackbar(false, normalizeApiError(e));
-								throw e;
-							});
-
-					const saveAndTest = (testFn: () => Promise<string>): void => {
-						const runTest = () =>
-							testFn()
-								.then((msg) => openSnackbar(true, msg))
-								.catch((e) => openSnackbar(false, normalizeApiError(e)));
-						if (endpointDirty) {
-							saveEndpoints()
-								.then(runTest)
-								.catch(() => {});
-						} else {
-							runTest();
-						}
-					};
-
-					const endpointFields: {
-						key: "extLlmBaseUrl" | "extLlmModel" | "extSttBaseUrl" | "extSttModel";
-						label: string;
-						placeholder: string;
-					}[] = [
-						{
-							key: "extLlmBaseUrl",
-							label: "LLM base URL",
-							placeholder: "http://localhost:11434"
-						},
-						{ key: "extLlmModel", label: "LLM model", placeholder: "llama3.1:8b" },
-						{
-							key: "extSttBaseUrl",
-							label: "STT base URL",
-							placeholder: "http://localhost:8080"
-						},
-						{ key: "extSttModel", label: "STT model", placeholder: "whisper-1" }
-					];
-
-					return (
-						<>
-							<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-								{endpointFields.map((field) => (
-									<div key={field.key}>
-										<label
-											htmlFor={`endpoint-${field.key}`}
-											className="block mb-1 text-sm font-medium text-stone-900"
-										>
-											{field.label}
-										</label>
-										<input
-											id={`endpoint-${field.key}`}
-											type="text"
-											value={settings[field.key] ?? ""}
-											onChange={updateField(field.key)}
-											className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2"
-											placeholder={field.placeholder}
-										/>
-									</div>
-								))}
-								<div>
-									<label
-										htmlFor="ext-llm-api-key"
-										className="block mb-1 text-sm font-medium text-stone-900"
-									>
-										LLM API key (if needed)
-									</label>
-									<SecretField
-										inputId="ext-llm-api-key"
-										stored={settings.extLlmApiKeySet}
-										hint={settings.extLlmApiKeyHint}
-										placeholder="sk-..."
-										onSave={(value) => saveSecret("extLlmApiKey", value)}
-									/>
-								</div>
-								<div>
-									<label
-										htmlFor="ext-stt-api-key"
-										className="block mb-1 text-sm font-medium text-stone-900"
-									>
-										STT API key (if needed)
-									</label>
-									<SecretField
-										inputId="ext-stt-api-key"
-										stored={settings.extSttApiKeySet}
-										hint={settings.extSttApiKeyHint}
-										placeholder="sk-..."
-										onSave={(value) => saveSecret("extSttApiKey", value)}
-									/>
-								</div>
-							</div>
-							<div className="flex gap-3">
-								<PinkButton
-									disabled={!endpointDirty}
-									onClick={() => saveEndpoints().catch(() => {})}
-								>
-									{endpointDirty ? "Save Endpoints" : "All changes saved"}
-								</PinkButton>
-								<BorderedButton onClick={() => saveAndTest(testLlmEndpointApi)}>
-									Test LLM
-								</BorderedButton>
-								<BorderedButton onClick={() => saveAndTest(testSttEndpointApi)}>
-									Test STT
-								</BorderedButton>
-							</div>
-						</>
-					);
-				})()}
-			</div>
+			<ExternalEndpointsForm
+				settings={settings}
+				savedSettings={savedSettings}
+				setSettings={setSettings}
+				setSavedSettings={setSavedSettings}
+				refreshModels={refreshModels}
+				saveSecret={saveSecret}
+				openSnackbar={openSnackbar}
+			/>
 		</Card>
 	);
 }
