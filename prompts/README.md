@@ -1,5 +1,10 @@
 # Brainstory Prompts (desktop app)
 
+> **Coupled to the frontend:** the interview prompts (`story_interview_*`) describe the first assistant
+> message, which the app sends itself rather than the model. They paraphrase the exact opener strings in
+> `getFirstPrompt` in `app/frontend/src/helpers/chat.ts` (the feedback opener's three options, the daily
+> intent "walk me through your day" question). Change the opener and the matching prompt together.
+
 The Brainstory prompting system, as used by the desktop app.
 
 These are adapted from three sources:
@@ -47,7 +52,6 @@ Unstructured (prose) feedback idea result.
 
 Structured JSON feedback result. Stored as the idea's `structured_result` and rendered as
 comment cards in the UI.
-
 
 ## License
 
