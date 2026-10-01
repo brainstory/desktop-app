@@ -5,6 +5,7 @@ import SecretField from "@ds/SecretField";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useAiModels } from "./useAiModels";
 import { useState } from "react";
+import { useConfirmClick } from "@src/hooks/useTimeout";
 import { normalizeApiError } from "@helpers/helpers";
 import { testLlmEndpointApi, testSttEndpointApi, saveAiSettingsApi } from "@helpers/api/models";
 import type { AiSettingsResponse, ModelStatus } from "@helpers/api/models";
@@ -85,7 +86,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		downloadProgress,
 		appleStt,
 		freeBytes,
-		confirmingDeleteId,
 		externalLlmLabelId,
 		refresh,
 		download,
@@ -94,8 +94,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		saveEndpoint,
 		setSavedSettings,
 		setSettings,
-		setConfirmingDeleteId,
-		scheduleDeleteReset,
 		deleteModel,
 		cancelDownload,
 		activateModel
@@ -120,20 +118,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		const progress = downloadProgress[model.id];
 		const isDownloading = progress !== undefined;
 		const pct = progress === undefined ? null : downloadPercent(progress);
-		const isConfirmingDelete = confirmingDeleteId === model.id;
-		const handleDeleteClick = (): void => {
-			if (!isConfirmingDelete) {
-				setConfirmingDeleteId(model.id);
-				// require a fresh confirmation click; reset if they wander off
-				// (the timer never outlives this card)
-				scheduleDeleteReset(() => {
-					setConfirmingDeleteId((current) => (current === model.id ? null : current));
-				}, 5000);
-				return;
-			}
-			setConfirmingDeleteId(null);
-			deleteModel(model.id);
-		};
 		return (
 			<div
 				key={model.id}
@@ -158,20 +142,10 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							</BorderedButton>
 						)}
 						{model.downloaded && !isDownloading && (
-							<BorderedButton
-								onClick={handleDeleteClick}
-								classes={
-									isConfirmingDelete
-										? "border-red-400 text-red-600 whitespace-nowrap"
-										: ""
-								}
-							>
-								{isConfirmingDelete
-									? model.active
-										? "Really delete the ACTIVE model?"
-										: "Really delete?"
-									: "Delete"}
-							</BorderedButton>
+							<DeleteModelButton
+								isActive={model.active}
+								onConfirm={() => deleteModel(model.id)}
+							/>
 						)}
 						{!model.downloaded && !isDownloading && (
 							<>
@@ -644,6 +618,30 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				})()}
 			</div>
 		</Card>
+	);
+}
+
+/**
+ * Two-click delete with a visible countdown (the shared confirm pattern,
+ * as on draft cards). The active model gets a stronger warning.
+ */
+function DeleteModelButton({ isActive, onConfirm }: { isActive: boolean; onConfirm: () => void }) {
+	const { isConfirming, secondsLeft, confirm } = useConfirmClick();
+	return (
+		<BorderedButton
+			onClick={() => {
+				if (confirm()) onConfirm();
+			}}
+			classes={isConfirming ? "border-red-400 text-red-600 whitespace-nowrap" : ""}
+		>
+			{isConfirming ? (
+				<span aria-live="polite">
+					{`${isActive ? "Really delete the ACTIVE model?" : "Really delete?"} (${secondsLeft ?? 0}s)`}
+				</span>
+			) : (
+				"Delete"
+			)}
+		</BorderedButton>
 	);
 }
 

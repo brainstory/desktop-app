@@ -280,6 +280,37 @@ describe("AiModelsCard", () => {
 		expect(screen.queryByLabelText("Speech language")).not.toBeInTheDocument();
 	});
 
+	it("deleting a model needs a second click within a visible countdown", async () => {
+		const user = userEvent.setup();
+		const inactive = {
+			...models.llm[0]!,
+			id: "minicpm5-2b",
+			label: "MiniCPM5 2B",
+			active: false
+		};
+		mockCard({
+			list_models: () => ({ ...models, llm: [models.llm[0]!, inactive] }),
+			delete_model: () => undefined
+		});
+		renderCard();
+		await screen.findByText("MiniCPM5 2B");
+		const [activeDelete, inactiveDelete] = screen.getAllByRole("button", { name: "Delete" });
+
+		await user.click(inactiveDelete!);
+		expect(inactiveDelete).toHaveTextContent("Really delete? (5s)");
+		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "delete_model")).toBe(false);
+		await user.click(inactiveDelete!);
+		await waitFor(() =>
+			expect(vi.mocked(invoke)).toHaveBeenCalledWith("delete_model", {
+				modelId: "minicpm5-2b"
+			})
+		);
+
+		// the active model keeps its stronger warning
+		await user.click(activeDelete!);
+		expect(activeDelete).toHaveTextContent("Really delete the ACTIVE model? (5s)");
+	});
+
 	it("a progress event updates the download bar; an unknown size is indeterminate", async () => {
 		const handlers = captureListeners();
 		mockCard();

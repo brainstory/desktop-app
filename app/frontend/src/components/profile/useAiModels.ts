@@ -24,7 +24,6 @@ import {
 	type ModelsResponse
 } from "@helpers/api/models";
 import { normalizeApiError } from "@helpers/helpers";
-import { useTimeout } from "@src/hooks/useTimeout";
 
 export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
@@ -38,9 +37,6 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
-	/** model id awaiting a second "really delete?" click */
-	const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
-	const [scheduleDeleteReset] = useTimeout();
 	const externalLlmLabelId = useId();
 
 	const refresh = () => {
@@ -221,7 +217,6 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		downloadProgress,
 		appleStt,
 		freeBytes,
-		confirmingDeleteId,
 		externalLlmLabelId,
 		// actions
 		refresh,
@@ -231,8 +226,6 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		saveEndpoint,
 		deleteModel,
 		cancelDownload,
-		activateModel,
-		setConfirmingDeleteId,
-		scheduleDeleteReset
+		activateModel
 	};
 }
