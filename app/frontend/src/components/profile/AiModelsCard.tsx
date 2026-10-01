@@ -7,6 +7,7 @@ import { useAiModels } from "./useAiModels";
 import { useState } from "react";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 import { normalizeApiError } from "@helpers/helpers";
+import { cn } from "@helpers/cn";
 import { testLlmEndpointApi, testSttEndpointApi, saveAiSettingsApi } from "@helpers/api/models";
 import type { AiSettingsResponse, ModelStatus } from "@helpers/api/models";
 
@@ -424,13 +425,14 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 									title={disabled ? "Requires macOS 26 or newer" : opt.hint}
 									disabled={disabled}
 									onClick={() => save({ sttEngine: opt.id })}
-									className={`text-sm rounded-lg px-3 py-2 border transition-colors ${
+									className={cn(
+										"text-sm rounded-lg px-3 py-2 border transition-colors",
 										selected
-											? "bg-pink-500 border-pink-500 text-white"
+											? "bg-accent-600 border-accent-600 text-white hover:bg-accent-700"
 											: disabled
 												? "border-stone-200 text-stone-300 cursor-not-allowed"
-												: "border-stone-300 text-stone-700 hover:border-pink-400"
-									}`}
+												: "border-stone-300 text-stone-700 hover:border-accent-400"
+									)}
 								>
 									{opt.label}
 								</button>
@@ -463,7 +465,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								id="stt-language-select"
 								value={currentLanguage}
 								onChange={(e) => save({ sttLanguage: e.target.value })}
-								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 bg-white"
+								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
 							>
 								{languageOptions.map((loc) => (
 									<option key={loc} value={loc}>
@@ -570,7 +572,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 											type="text"
 											value={settings[field.key] ?? ""}
 											onChange={updateField(field.key)}
-											className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2"
+											className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2"
 											placeholder={field.placeholder}
 										/>
 									</div>
@@ -697,7 +699,7 @@ function EndpointField({
 				value={value}
 				onChange={(e) => setValue(e.target.value)}
 				placeholder="https://huggingface.co"
-				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 flex-1 min-w-0 p-2"
+				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2"
 			/>
 			<PinkButton disabled={value === (initial ?? "")} onClick={() => onSave(value)}>
 				Save

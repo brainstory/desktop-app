@@ -114,7 +114,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 					id="user-name-input"
 					value={editedName}
 					type="text"
-					className={`border text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full ${
+					className={`border text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full ${
 						errorMessage ? "border-pink-600" : "border-stone-300"
 					}`}
 					onChange={handleNameChange}
@@ -133,7 +133,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 					aria-label="Your timezone"
 					value={selectedTimezone}
 					onChange={handleTimezoneSelect}
-					className="w-full border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 bg-white"
+					className="w-full border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 p-2 bg-white"
 				>
 					<option value="">Detect automatically</option>
 					{(Intl.supportedValuesOf("timeZone") as string[]).map((tz) => (

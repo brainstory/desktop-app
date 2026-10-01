@@ -96,7 +96,7 @@ export default function UpdaterBanner() {
 			</div>
 			{phase === "available" && (
 				<button
-					className="bg-pink-500 hover:bg-pink-600 text-white font-medium rounded-md px-3 py-1.5 shrink-0"
+					className="bg-accent-600 hover:bg-accent-700 text-white font-medium rounded-md px-3 py-1.5 shrink-0"
 					onClick={install}
 				>
 					Restart to update
