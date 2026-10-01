@@ -1,3 +1,14 @@
+import type { CreatorInfo } from "@src/types";
+
+/**
+ * An "own" idea is one without creator attribution: imported ideas and
+ * feedback carry the sender's creatorName, local ones never do. The one
+ * definition shared by the dashboard and the idea page.
+ */
+export function isOwnIdea(idea: Pick<CreatorInfo, "creatorName">): boolean {
+	return !idea.creatorName;
+}
+
 /**
  * Section index of a feedback comment's `oid_heading_text`
  * ("<ordinal>##<heading text>", 1-based per the feedback JSON prompt).

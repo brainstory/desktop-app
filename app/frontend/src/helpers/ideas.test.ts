@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { parseHeadingIndex } from "./ideas";
+import { isOwnIdea, parseHeadingIndex } from "./ideas";
+
+describe("isOwnIdea", () => {
+	it("is own exactly when there is no creatorName", () => {
+		expect(isOwnIdea({})).toBe(true);
+		expect(isOwnIdea({ creatorName: null })).toBe(true);
+		expect(isOwnIdea({ creatorName: "" })).toBe(true);
+		expect(isOwnIdea({ creatorName: "Ada" })).toBe(false);
+	});
+});
 
 describe("parseHeadingIndex", () => {
 	// sections: [title slot, "# Title", "## A", "## B"]

@@ -10,7 +10,7 @@ import IdeaSection from "@components/idea/feedback-aggregation/IdeaSection";
 import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import { getQueryParam } from "@helpers/helpers";
-import { parseHeadingIndex } from "@helpers/ideas";
+import { isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
 import ErrorSection from "../error/ErrorSection";
 
 export default function IdeaResultContent() {
@@ -39,8 +39,8 @@ export default function IdeaResultContent() {
 	// Opening an unread (imported feedback) idea marks it read.
 	useMarkReadApi(ideaId, isUnread);
 
-	// own ideas have no creator attribution; imported ones carry creator info
-	const isOwnIdea = !idea.creatorEmail && !idea.creatorName;
+	// own ideas have no creator attribution (imports carry creatorName)
+	const isOwn = isOwnIdea(idea);
 
 	useEffect(() => {
 		// Event listener to keep track of screen size
@@ -148,7 +148,7 @@ export default function IdeaResultContent() {
 								resultSections={idea.resultJson ?? []}
 								ideaFeedbackChildren={ideaChildren}
 								headingIdxToComments={headingIdxToComments}
-								canShare={isOwnIdea}
+								canShare={isOwn}
 							/>
 						)
 					},
@@ -168,7 +168,7 @@ export default function IdeaResultContent() {
 				content: <IdeaBranches kids={ideaChildren} />
 			});
 		} else {
-			const tooltipText = isOwnIdea
+			const tooltipText = isOwn
 				? "Export your idea and send it to someone for feedback"
 				: "No feedback on this idea yet";
 			tabData.push({
@@ -202,7 +202,7 @@ export default function IdeaResultContent() {
 			<div className="h-full">
 				<IdeaTitleBar
 					idea={idea}
-					isOwnIdea={isOwnIdea}
+					isOwnIdea={isOwn}
 					isFeedbackMissing={!parentIdea}
 					parentId={parentIdea?.id}
 				/>

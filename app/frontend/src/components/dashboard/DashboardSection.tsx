@@ -4,6 +4,7 @@ import { getAllIdeasApi } from "@helpers/api/user";
 import { importShareApi } from "@helpers/api/share";
 import { normalizeApiError } from "@helpers/helpers";
 import { setGettingStartedDone } from "@helpers/storage";
+import { isOwnIdea } from "@helpers/ideas";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
@@ -41,11 +42,11 @@ export default function DashboardSection() {
 
 	// derived during render
 	// An "own" idea is one without creator attribution (imports carry
-	// creatorName) - the same definition the idea page uses. The library
+	// creatorName) - isOwnIdea, shared with the idea page. The library
 	// grid shows whenever ANY idea exists: an imported-only library is a
 	// library too.
 	const userIdeasList = userIdeas ?? [];
-	const hasOwnIdea = userIdeasList.some((idea) => !idea.creatorName);
+	const hasOwnIdea = userIdeasList.some(isOwnIdea);
 	const showGetStarted = userIdeasList.length === 0;
 
 	useEffect(() => {

@@ -79,3 +79,24 @@ describe("IdeaResultContent feedback heading references", () => {
 		expect(console.warn).toHaveBeenCalled();
 	});
 });
+
+describe("IdeaResultContent ownership", () => {
+	it("an idea with only a creatorEmail is still own (no creatorName), so it can be exported", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea({ creator_email: "me@example.com" }),
+			get_idea_children: () => ({ ideas: [] })
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByRole("button", { name: "Export" })).toBeInTheDocument();
+	});
+
+	it("an imported idea (creatorName set) is not own", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea({ creator_name: "Ada" }),
+			get_idea_children: () => ({ ideas: [] })
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByText("Created by Ada")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+	});
+});
