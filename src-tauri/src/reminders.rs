@@ -131,8 +131,25 @@ fn parse_time(time: &str) -> (u32, u32) {
 mod tests {
 	use chrono::TimeZone;
 
-	use super::until_next_due;
+	use super::{parse_time, until_next_due};
+	use crate::commands::settings::parse_hhmm;
 	use std::time::Duration;
+
+	/// The reminder loop and the settings form must agree on what a valid
+	/// time looks like: parse_time accepts exactly what parse_hhmm (the
+	/// form's validator) accepts, and falls back otherwise.
+	#[test]
+	fn parse_time_matches_valid_reminder_time() {
+		let corpus = [
+			"09:00", "9:00", "00:00", "23:59", "24:00", "12:5", "12:60", "", "noon", "12:00:00",
+		];
+		for raw in corpus {
+			match parse_hhmm(raw) {
+				Some(parsed) => assert_eq!(parse_time(raw), parsed, "divergence on {raw:?}"),
+				None => assert_eq!(parse_time(raw), (9, 0), "divergence on {raw:?}"),
+			}
+		}
+	}
 
 	#[test]
 	fn next_due_is_today_before_the_time_and_tomorrow_after() {
