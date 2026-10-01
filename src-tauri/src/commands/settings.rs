@@ -74,23 +74,32 @@ pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSetting
 	})
 }
 
-/// Strictly parse a "HH:MM" reminder time. Single source of truth for
-/// the format: the settings form validates with it and the reminder
-/// loop parses with it, so the two can never disagree on what counts as
-/// a valid time.
+/// Strictly parse a "HH:MM" reminder time, also accepting the
+/// "HH:MM:SS" the settings page's time picker sends (and that early
+/// builds stored verbatim); seconds are validated, then ignored. Single
+/// source of truth for the format: the settings form validates with it
+/// and the reminder loop parses with it, so the two can never disagree
+/// on what counts as a valid time.
 pub(crate) fn parse_hhmm(value: &str) -> Option<(u32, u32)> {
 	let mut parts = value.split(':');
-	let (Some(hours), Some(minutes), None) = (parts.next(), parts.next(), parts.next()) else {
+	let (Some(hours), Some(minutes)) = (parts.next(), parts.next()) else {
 		return None;
 	};
+	match (parts.next(), parts.next()) {
+		(None, _) => {}
+		(Some(seconds), None)
+			if seconds.len() == 2 && seconds.parse::<u32>().is_ok_and(|s| s <= 59) => {}
+		_ => return None,
+	}
 	match (hours.parse::<u32>(), minutes.parse::<u32>()) {
 		(Ok(h), Ok(m)) if h <= 23 && m <= 59 && minutes.len() == 2 => Some((h, m)),
 		_ => None,
 	}
 }
 
-fn valid_reminder_time(value: &str) -> bool {
-	parse_hhmm(value).is_some()
+/// The canonical stored form of a valid reminder time ("HH:MM").
+fn normalize_reminder_time(value: &str) -> Option<String> {
+	parse_hhmm(value).map(|(h, m)| format!("{h:02}:{m:02}"))
 }
 
 /// The validated writes of one save_user_settings call, plus what changed
@@ -156,10 +165,10 @@ fn collect_user_settings(
 			let title = notification["title"].as_str().unwrap_or("");
 			if title == "Daily intention reminder" {
 				if let Some(value) = notification["value"].as_str() {
-					if !valid_reminder_time(value) {
+					let Some(time) = normalize_reminder_time(value) else {
 						return Err(format!("invalid reminder time '{value}' (expected HH:MM)"));
-					}
-					kv.push((keys::setting::REMINDER_TIME, value.to_string()));
+					};
+					kv.push((keys::setting::REMINDER_TIME, time));
 					time_changed = true;
 				}
 				if let Some(enabled) = notification["enabled"].as_bool() {
@@ -496,6 +505,24 @@ mod tests {
 			None,
 			"the name written before the failure is rolled back"
 		);
+	}
+
+	#[test]
+	fn the_time_pickers_hh_mm_ss_value_saves_as_hh_mm() {
+		// NotificationsCard sends `${hour}:00:00`; that is the only shape
+		// the settings page ever produces, so it must save
+		let (db, _path, _dir) = temp_db();
+		persist_user_settings(&db, None, None, Some(&reminder("14:00:00")))
+			.expect("the frontend's own format is valid");
+		assert_eq!(
+			db.get_setting(setting::REMINDER_TIME).as_deref(),
+			Some("14:00"),
+			"stored normalized"
+		);
+		// rows saved that way by early builds keep firing at their hour
+		assert_eq!(super::parse_hhmm("13:00:00"), Some((13, 0)));
+		assert_eq!(super::parse_hhmm("13:00:60"), None);
+		assert_eq!(super::parse_hhmm("13:00:00:00"), None);
 	}
 
 	#[test]
