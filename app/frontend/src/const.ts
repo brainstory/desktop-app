@@ -70,6 +70,23 @@ export const CHAT_TYPE = {
 } as const;
 export type ChatType = (typeof CHAT_TYPE)[keyof typeof CHAT_TYPE];
 
+/**
+ * The fixed set of reactions people can put on an idea's sections and on
+ * feedback comments, in display order. Must match the backend's set
+ * (src-tauri); `name` is the accessible label.
+ */
+export const REACTIONS = [
+	{ emoji: "👍", name: "agree" },
+	{ emoji: "👎", name: "disagree" },
+	{ emoji: "❓", name: "question" },
+	{ emoji: "💡", name: "suggestion" },
+	{ emoji: "😕", name: "confused" },
+	// U+26A0 + U+FE0F (emoji presentation), exactly as the backend stores it
+	{ emoji: "⚠️", name: "error" },
+	{ emoji: "📚", name: "info" },
+	{ emoji: "🚀", name: "action" }
+] as const;
+
 /** Sentinel user message recorded when the user asks for a different
  * question. Transcripts must not display it as a real answer. */
 export const ASK_A_DIFFERENT_QUESTION = "Ask me a different question!";

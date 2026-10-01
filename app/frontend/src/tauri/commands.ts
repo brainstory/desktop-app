@@ -23,6 +23,7 @@ import type {
 	ModelsResponse
 } from "@helpers/api/models";
 import type { ExportIdeaResult, ImportShareResult } from "@helpers/api/share";
+import type { IdeaReactions } from "@helpers/api/reactions";
 import type { ChatType } from "@src/const";
 
 export const COMMANDS = {
@@ -65,7 +66,10 @@ export const COMMANDS = {
 	deleteModel: "delete_model",
 	activateModel: "activate_model",
 	exportIdea: "export_idea",
-	importShare: "import_share"
+	importShare: "import_share",
+	getReactions: "get_reactions",
+	toggleSectionReaction: "toggle_section_reaction",
+	toggleCommentReaction: "toggle_comment_reaction"
 } as const;
 
 export type CommandName = (typeof COMMANDS)[keyof typeof COMMANDS];
@@ -152,6 +156,15 @@ interface CommandSignatures {
 	activateModel: { args: ModelIdArgs; result: void };
 	exportIdea: { args: IdeaIdArgs; result: ExportIdeaResult };
 	importShare: { args: undefined; result: ImportShareResult };
+	getReactions: { args: IdeaIdArgs; result: IdeaReactions };
+	toggleSectionReaction: {
+		args: { ideaId: string; sectionIndex: number; emoji: string };
+		result: boolean;
+	};
+	toggleCommentReaction: {
+		args: { feedbackIdeaId: string; itemIndex: number; emoji: string };
+		result: boolean;
+	};
 }
 
 /** Every command in COMMANDS with its args and result types (a command
