@@ -5,27 +5,39 @@ import { useState } from "react";
 export function TextComposer({
 	value,
 	onChange,
-	onSend
+	onSend,
+	disabled = false
 }: {
 	value: string;
 	onChange: (next: string) => void;
 	onSend: () => void;
+	/** locked while a message is being transcribed or answered */
+	disabled?: boolean;
 }) {
+	const canSend = !disabled && value.trim() !== "";
+	const send = (): void => {
+		if (canSend) onSend();
+	};
 	const handleKeyDown = (event: React.KeyboardEvent): void => {
 		// Enter sends; Shift+Enter inserts a newline (the field is a
 		// multi-line textarea, so users expect both)
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
-			onSend();
+			send();
 		}
 	};
 	return (
 		<div className="flex justify-center items-end w-full">
 			<div className="flex flex-col w-full max-w-[500px]">
+				{/* readOnly/aria-disabled instead of disabled while locked:
+				    focus is in here right after Enter, and disabling would
+				    drop it to <body> */}
 				<textarea
-					className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-accent-500 resize-none md:resize-y"
+					className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-accent-500 resize-none md:resize-y read-only:bg-stone-50 read-only:text-stone-500"
 					placeholder="Type something..."
 					aria-label="Type your response"
+					readOnly={disabled}
+					aria-disabled={disabled}
 					rows={5}
 					value={value}
 					onChange={(e) => onChange(e.target.value)}
@@ -36,10 +48,10 @@ export function TextComposer({
 				</p>
 			</div>
 			<button
-				className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-accent-600 text-white hover:bg-accent-700 focus:outline-none focus:ring focus:border-accent-400 disabled:opacity-40 disabled:cursor-not-allowed"
+				className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-accent-600 text-white hover:bg-accent-700 focus:outline-none focus:ring focus:border-accent-400 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
 				aria-label="Send message"
-				disabled={!value.trim()}
-				onClick={onSend}
+				aria-disabled={!canSend}
+				onClick={send}
 			>
 				<ion-icon class="w-8 h-8 hydrated" name="send" aria-hidden="true"></ion-icon>
 			</button>

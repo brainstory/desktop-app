@@ -109,7 +109,8 @@ function RecordButton({
 
 	function handleTextSend() {
 		const trimmed = userTextInput.trim();
-		if (!trimmed) return;
+		// never overlap generations: one message at a time
+		if (!trimmed || isDisabledOverride) return;
 		onTranscript(trimmed);
 	}
 
@@ -120,6 +121,7 @@ function RecordButton({
 					value={userTextInput}
 					onChange={setUserTextInput}
 					onSend={handleTextSend}
+					disabled={Boolean(isDisabledOverride)}
 				/>
 			) : voice.micPermissionDenied ? (
 				<MicPermissionDenied

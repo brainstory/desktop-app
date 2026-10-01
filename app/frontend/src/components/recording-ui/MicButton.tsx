@@ -64,11 +64,15 @@ export function MicButton({
 						isRecording && "animate-spin"
 					} ${shadowSizing} pointer-events-none group-hover:w-[116px] group-hover:h-[116px] rounded-full absolute bg-gradient-to-r from-pink-500 via-pink-400 to-pink-700 opacity-60 hover:opacity-90 blur transition-all duration-300`}
 				></div>
+				{/* aria-disabled, not disabled: the button is often focused when
+				    it locks (just clicked), and a disabled element drops focus
+				    to <body> */}
 				<button
-					disabled={disabled}
+					aria-disabled={disabled}
 					aria-label={micAriaLabel}
-					className={`${buttonSizing} focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 relative flex items-center justify-center bg-white shadow-xl border-[1px] border-stone-200 text-stone-500 hover:text-stone-700 font-bold rounded-full disabled:opacity-40 disabled:cursor-not-allowed group:hover:scale-105 transform transition-transform hover:bg-stone-100 transition-colors duration-300`}
+					className={`${buttonSizing} focus-visible:ring-4 focus-visible:outline-none focus-visible:ring-pink-300 relative flex items-center justify-center bg-white shadow-xl border-[1px] border-stone-200 text-stone-500 hover:text-stone-700 font-bold rounded-full aria-disabled:opacity-40 aria-disabled:cursor-not-allowed group:hover:scale-105 transform transition-transform hover:bg-stone-100 transition-colors duration-300`}
 					onClick={() => {
+						if (disabled) return;
 						onAnimationTrigger(isRecording ? "idle" : "jump");
 						onToggle();
 					}}

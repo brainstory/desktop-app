@@ -92,6 +92,34 @@ describe("ChatSection", () => {
 			expect(box).toHaveValue("something flagged");
 		});
 
+		it("locks the composer while the coach is answering (no duplicate sends)", async () => {
+			let answer!: (v: unknown) => void;
+			mockInvoke({
+				generate_response: () => new Promise((res) => (answer = res))
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			const box = await sendTyped("first");
+			const send = screen.getByRole("button", { name: "Send message" });
+			expect(send).toHaveAttribute("aria-disabled", "true");
+			expect(box).toHaveAttribute("readonly");
+			// focus stays in the composer (no disabled element drops it)
+			expect(box).toHaveFocus();
+
+			const user = userEvent.setup();
+			await user.keyboard("{Enter}");
+			await user.click(send);
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_response")
+			).toHaveLength(1);
+
+			await act(async () => {
+				answer({ response: "next question" });
+				await Promise.resolve();
+			});
+			expect(await screen.findByText("next question")).toBeInTheDocument();
+			expect(box).not.toHaveAttribute("readonly");
+		});
+
 		it("keeps the text after an AI failure and resends it without duplicating it", async () => {
 			let attempts = 0;
 			mockInvoke({
