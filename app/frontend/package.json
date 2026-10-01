@@ -7,6 +7,7 @@
 	},
 	"scripts": {
 		"vendor": "node scripts/vendor-assets.mjs",
+		"vendor:check": "node scripts/vendor-assets.mjs --check",
 		"dev": "node scripts/vendor-assets.mjs && astro dev --port 5173",
 		"start": "astro dev --port 5173",
 		"build": "node scripts/vendor-assets.mjs && astro build",
