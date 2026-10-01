@@ -71,7 +71,7 @@ export default function IdeaFeedbackCard({
 						labels={labels}
 						creatorEmail={creatorEmail}
 						creatorName={creatorName}
-						isBlue={false}
+						isHighlighted={false}
 						labelsHasBorder={true}
 						style="mr-1"
 					/>

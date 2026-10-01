@@ -7,7 +7,9 @@ interface EmojiItemProps {
 	labels?: { name?: string; emoji: string }[];
 	creatorEmail?: string | null;
 	onReactionClick?: () => void;
-	isBlue?: boolean;
+	/** draw the reaction as an accent-coloured chip (the clickable
+	 * reactions in the list); off inside the feedback card */
+	isHighlighted?: boolean;
 	labelsHasBorder?: boolean;
 	creatorName?: string | null;
 	style?: string;
@@ -17,7 +19,7 @@ export default function EmojiItem({
 	labels = [],
 	creatorEmail,
 	onReactionClick,
-	isBlue = true,
+	isHighlighted = true,
 	labelsHasBorder = false,
 	creatorName = null,
 	style = ""
@@ -40,7 +42,8 @@ export default function EmojiItem({
 				className={cn(
 					"flex items-center",
 					!labelsHasBorder && "p-1",
-					isBlue && "border rounded-md border-accent-400 bg-accent-50 hover:bg-accent-200"
+					isHighlighted &&
+						"border rounded-md border-accent-400 bg-accent-50 hover:bg-accent-200"
 				)}
 			>
 				<Tooltip text={creatorName ?? creatorEmail ?? undefined} position="left">
