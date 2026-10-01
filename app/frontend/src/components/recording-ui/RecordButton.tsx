@@ -103,6 +103,14 @@ function RecordButton({
 			.then((transcript) => {
 				if (!mountedRef.current) return;
 				setAnnouncement("");
+				// silence or noise: there is nothing to send, and an empty
+				// user message would only confuse the coach
+				if (!transcript.trim()) {
+					setIsTranscribing(false);
+					setErrorMessage("No speech was heard. Try again, or type your message.");
+					setWarningType("error");
+					return;
+				}
 				onTranscript(transcript);
 				setIsTranscribing(false);
 			})

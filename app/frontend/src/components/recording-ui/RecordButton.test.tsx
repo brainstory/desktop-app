@@ -108,6 +108,19 @@ describe("RecordButton", () => {
 			expect(callsTo("transcribe")).toHaveLength(1);
 		});
 
+		it("says nothing was heard instead of sending an empty message", async () => {
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav,
+				transcribe: () => ({ transcript: "  " })
+			});
+			const { props } = renderRecorder();
+			await recordAndStop();
+			expect(await screen.findByRole("alert")).toHaveTextContent("No speech was heard.");
+			expect(props.onTranscript).not.toHaveBeenCalled();
+			expect(props.setIsTranscribing).toHaveBeenLastCalledWith(false);
+		});
+
 		it("ignores a transcript that arrives after the recorder unmounted", async () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
