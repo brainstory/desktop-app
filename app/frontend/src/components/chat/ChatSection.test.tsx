@@ -289,6 +289,22 @@ describe("ChatSection", () => {
 		vi.mocked(console.error).mockRestore();
 	});
 
+	it("headlines a failed session save as a save error, not an AI error", async () => {
+		mockChat({
+			create_idea: () => {
+				throw "database is locked";
+			},
+			generate_response: () => ({ response: "and then?" })
+		});
+		render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+		const user = userEvent.setup();
+		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Not saved yet: Could not save this session");
+		expect(alert).not.toHaveTextContent(/AI couldn/);
+	});
+
 	describe("feedback on an idea", () => {
 		async function sendFeedback(parent: Record<string, unknown>) {
 			mockChat({

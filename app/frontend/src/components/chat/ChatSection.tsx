@@ -1,10 +1,10 @@
-import { useState, useRef } from "react";
+import { useCallback, useState, useRef } from "react";
 import { useStore } from "@nanostores/react";
 import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
 import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
 import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
 import type { ChatMessage } from "@src/types";
-import type { ParentIdea } from "@components/chat/types";
+import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import { getIdeaApi } from "@helpers/api/idea";
 import { getQueryParam } from "@helpers/helpers";
 
@@ -51,8 +51,19 @@ export function ChatSection({
 	const [showTranscript, setShowTranscript] = useState(false);
 	/** fatal load failure: an error section replaces the mic ui */
 	const [fatalError, setFatalError] = useState<ChatFatalError | null>(null);
-	/** error from the AI layer that is not the 469 resend case */
-	const [aiError, setAiError] = useState<string | null>(null);
+	/** an AI error (other than the 469 resend case) or a save error */
+	const [chatError, setChatError] = useState<{
+		message: string;
+		source: ChatErrorSource;
+	} | null>(null);
+	const onSessionError = useCallback(
+		(message: string, source: ChatErrorSource = "ai") => setChatError({ message, source }),
+		[]
+	);
+	const onSaveError = useCallback(
+		(message: string) => setChatError({ message, source: "save" }),
+		[]
+	);
 
 	const aiStatus = useStore($aiStatus);
 	const modelAvailability = llmAvailability(aiStatus);
@@ -91,7 +102,7 @@ export function ChatSection({
 		parentIdParam,
 		dailyLogId,
 		minLength: minConversationLenForCreateAndEnd,
-		onError: setAiError,
+		onError: onSaveError,
 		onFatalError: setFatalError,
 		onParentIdea: fetchParentIdea
 	});
@@ -101,7 +112,7 @@ export function ChatSection({
 		parentIdea,
 		ideaId: persistence.ideaId,
 		fromGuideParam,
-		onError: setAiError,
+		onError: onSessionError,
 		conversationEndCallbacks,
 		setSaveState: persistence.setSaveState,
 		saveResult: persistence.saveResult,
@@ -183,8 +194,12 @@ export function ChatSection({
 
 		return (
 			<section>
-				{aiError && (
-					<ChatErrorBanner aiError={aiError} onDismiss={() => setAiError(null)} />
+				{chatError && (
+					<ChatErrorBanner
+						aiError={chatError.message}
+						source={chatError.source}
+						onDismiss={() => setChatError(null)}
+					/>
 				)}
 				<ModelStatusNotice availability={modelAvailability} error={aiStatus.llm.error} />
 				<ChatTopBar

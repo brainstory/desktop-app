@@ -6,7 +6,7 @@
 
 import { useCallback, useReducer, useRef } from "react";
 import type { ChatMessage } from "@src/types";
-import type { ParentIdea } from "@components/chat/types";
+import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import {
 	handleStreamResult,
@@ -34,7 +34,8 @@ export interface ChatSessionOptions {
 	parentIdea?: ParentIdea;
 	ideaId?: string;
 	fromGuideParam?: string | null;
-	onError: (message: string) => void;
+	/** report an error; `source` defaults to "ai" */
+	onError: (message: string, source?: ChatErrorSource) => void;
 	conversationEndCallbacks: () => void;
 	setSaveState: (state: string) => void;
 	/** persist the final result (ordered after in-flight autosaves) */
@@ -270,7 +271,7 @@ export function useChatSession(
 	/** Generate idea summary result */
 	const handleGetResult = () => {
 		if (!ideaId) {
-			onError("Still saving this session - try again in a moment.");
+			onError("Still saving this session - try again in a moment.", "save");
 			return;
 		}
 		conversationEndCallbacks();
