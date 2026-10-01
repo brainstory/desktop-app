@@ -442,10 +442,18 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 }
 
 /// extract_json plus the feedback-document contract: the value must be an
-/// object whose feedback_items (when present) is an array. Anything else
-/// is treated as absent rather than stored broken.
+/// object with a feedback_items key holding an array. Output that is not
+/// JSON, lacks the key, or holds a non-array is logged and treated as
+/// absent (structured_result becomes null) rather than stored broken.
 fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
-	let value = extract_json(text)?;
+	let Some(value) = extract_json(text) else {
+		// length only: the output is the user's own feedback text
+		log::warn!(
+			"structured feedback output is not valid JSON ({} chars); structured_result will be null",
+			text.chars().count()
+		);
+		return None;
+	};
 	let items = value.get("feedback_items");
 	match items {
 		None => {
@@ -516,6 +524,43 @@ mod feedback_json_tests {
 	#[test]
 	fn empty_feedback_items_is_valid() {
 		assert!(extract_feedback_json(r#"{"feedback_items": []}"#).is_some());
+	}
+
+	/// Records every log line so a test can assert a failure was not
+	/// silent. log allows one global logger per process; no other test
+	/// installs one, and lines from concurrent tests are harmless here.
+	struct CaptureLog(std::sync::Mutex<Vec<String>>);
+
+	impl log::Log for CaptureLog {
+		fn enabled(&self, _: &log::Metadata) -> bool {
+			true
+		}
+		fn log(&self, record: &log::Record) {
+			self.0
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.push(format!("{} {}", record.level(), record.args()));
+		}
+		fn flush(&self) {}
+	}
+
+	static CAPTURE: CaptureLog = CaptureLog(std::sync::Mutex::new(Vec::new()));
+
+	#[test]
+	fn unparseable_output_is_logged_not_silent() {
+		let _ = log::set_logger(&CAPTURE);
+		log::set_max_level(log::LevelFilter::Trace);
+		// a distinctive length so the line can't come from another test
+		let broken = "the model forgot the JSON entirely :(";
+		let expected = format!("not valid JSON ({} chars)", broken.chars().count());
+		assert!(extract_feedback_json(broken).is_none());
+		let lines = CAPTURE.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+		assert!(
+			lines
+				.iter()
+				.any(|l| l.starts_with("WARN") && l.contains(&expected)),
+			"parse failure was not logged: {lines:?}"
+		);
 	}
 
 	#[test]
