@@ -181,9 +181,9 @@ pub fn run() {
 			secrets::migrate_from_db(&db);
 			// Persist the speech-engine default for fresh installs once,
 			// here: resolving a settings *read* must never write.
-			if db.get_setting("ai_stt_engine").is_none() {
+			if db.get_setting(keys::setting::AI_STT_ENGINE).is_none() {
 				let default = models::default_stt_engine(&db);
-				if let Err(e) = db.set_setting("ai_stt_engine", default.as_str()) {
+				if let Err(e) = db.set_setting(keys::setting::AI_STT_ENGINE, default.as_str()) {
 					log::warn!("failed to persist default speech engine: {e}");
 				}
 			}
@@ -207,12 +207,12 @@ pub fn run() {
 				let state = app.state::<AppState>();
 				let dock = state
 					.db
-					.get_setting("show_in_dock")
+					.get_setting(keys::setting::SHOW_IN_DOCK)
 					.map(|v| v == "true")
 					.unwrap_or(true);
 				let tray = state
 					.db
-					.get_setting("show_in_tray")
+					.get_setting(keys::setting::SHOW_IN_TRAY)
 					.map(|v| v == "true")
 					.unwrap_or(true);
 				apply_presence(app.handle(), dock, tray);
@@ -338,7 +338,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 	let reminder_enabled = app
 		.state::<AppState>()
 		.db
-		.get_setting("reminder_enabled")
+		.get_setting(keys::setting::REMINDER_ENABLED)
 		.map(|v| v == "true")
 		.unwrap_or(false);
 

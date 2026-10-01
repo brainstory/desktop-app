@@ -226,7 +226,9 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 		.ok_or_else(|| format!("idea {idea_id} not found"))?;
 
 	let idea_type = idea.r#type.clone().unwrap_or_else(|| "original".into());
-	let own_name = db.get_setting("user_name").filter(|s| !s.is_empty());
+	let own_name = db
+		.get_setting(crate::keys::setting::USER_NAME)
+		.filter(|s| !s.is_empty());
 	let author = idea
 		.creator_name
 		.clone()

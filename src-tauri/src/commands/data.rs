@@ -279,14 +279,14 @@ mod tests {
 		// garbage / unknown ids are dropped, real ones kept in stored order
 		state
 			.db
-			.set_setting("enabled_log_question_ids", "[2, 99, 1]")
+			.set_setting(crate::keys::setting::ENABLED_LOG_QUESTION_IDS, "[2, 99, 1]")
 			.expect("set");
 		assert_eq!(enabled_log_ids(&state), vec![2, 1]);
 		// an empty (or all-unknown) selection falls back to all rather
 		// than disabling the daily log entirely
 		state
 			.db
-			.set_setting("enabled_log_question_ids", "[99]")
+			.set_setting(crate::keys::setting::ENABLED_LOG_QUESTION_IDS, "[99]")
 			.expect("set");
 		assert_eq!(
 			enabled_log_ids(&state),
