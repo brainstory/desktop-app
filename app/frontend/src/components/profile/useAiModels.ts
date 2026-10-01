@@ -6,7 +6,7 @@
  * without refetching anything; each action reloads only what it changed.
  */
 
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "@nanostores/react";
 import {
@@ -38,7 +38,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const externalLlmLabelId = useId();
 
 	/** Catalog + downloaded/active flags (downloads, deletes, activation, mode). */
-	const refreshModels = () => {
+	const refreshModels = useCallback(() => {
 		listModelsApi()
 			.then((data) => {
 				setModels(data);
@@ -54,14 +54,14 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 				setDownloadProgress(next);
 			})
 			.catch((e) => console.error("list models failed", e));
-	};
+	}, []);
 
 	/** Free space on the models volume (downloads and deletions change it). */
-	const refreshDiskSpace = () => {
+	const refreshDiskSpace = useCallback(() => {
 		getFreeDiskSpaceApi()
 			.then(setFreeBytes)
 			.catch((e) => console.error("free disk space failed", e));
-	};
+	}, []);
 
 	/** Re-sync only the saved snapshot (the dirty flag's reference);
 	 * `settings` keeps the live form state. */
@@ -127,16 +127,20 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const download = (modelId: string): void => {
-		downloadModelApi(modelId).invokePromise.catch((e) => {
-			// starting a download that's already running is harmless - the
-			// progress bar is already driven by backend events
-			if (!String(e).includes("already downloading")) {
-				openSnackbar(false, normalizeApiError(e));
-			}
-			refreshModels();
-		});
-	};
+	// the per-row actions keep stable identities for the memoised ModelRow
+	const download = useCallback(
+		(modelId: string): void => {
+			downloadModelApi(modelId).invokePromise.catch((e) => {
+				// starting a download that's already running is harmless - the
+				// progress bar is already driven by backend events
+				if (!String(e).includes("already downloading")) {
+					openSnackbar(false, normalizeApiError(e));
+				}
+				refreshModels();
+			});
+		},
+		[openSnackbar, refreshModels]
+	);
 
 	/**
 	 * Immediate single-action save (toggles, engine chips, language).
@@ -190,24 +194,33 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 			.catch((e) => openSnackbar(false, normalizeApiError(e)));
 	};
 
-	const deleteModel = (modelId: string): void => {
-		deleteModelApi(modelId)
-			.then(() => {
-				refreshModels();
-				refreshDiskSpace();
-			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
+	const deleteModel = useCallback(
+		(modelId: string): void => {
+			deleteModelApi(modelId)
+				.then(() => {
+					refreshModels();
+					refreshDiskSpace();
+				})
+				.catch((e) => openSnackbar(false, normalizeApiError(e)));
+		},
+		[openSnackbar, refreshModels, refreshDiskSpace]
+	);
 
-	const cancelDownload = (modelId: string): void => {
-		cancelDownloadApi(modelId).catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
+	const cancelDownload = useCallback(
+		(modelId: string): void => {
+			cancelDownloadApi(modelId).catch((e) => openSnackbar(false, normalizeApiError(e)));
+		},
+		[openSnackbar]
+	);
 
-	const activateModel = (modelId: string): void => {
-		activateModelApi(modelId)
-			.then(refreshModels)
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
-	};
+	const activateModel = useCallback(
+		(modelId: string): void => {
+			activateModelApi(modelId)
+				.then(refreshModels)
+				.catch((e) => openSnackbar(false, normalizeApiError(e)));
+		},
+		[openSnackbar, refreshModels]
+	);
 
 	return {
 		// state
