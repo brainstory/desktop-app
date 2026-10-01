@@ -73,8 +73,12 @@ pub fn store(secret: Secret, value: &str, db: &Db) -> Result<(), String> {
 	};
 	match entry.set_password(value) {
 		Ok(()) => {
-			// migration complete / no duplicate plaintext copy
-			db.delete_setting(secret.db_key());
+			// migration complete / no duplicate plaintext copy. A stale
+			// row left behind is harmless (the keychain value wins on
+			// load), so a failure here is logged, not surfaced.
+			if let Err(e) = db.delete_setting(secret.db_key()) {
+				log::warn!("{e}");
+			}
 			Ok(())
 		}
 		Err(e) => {
@@ -87,16 +91,24 @@ pub fn store(secret: Secret, value: &str, db: &Db) -> Result<(), String> {
 	}
 }
 
-/// Remove a secret from both the keychain and the DB fallback.
-pub fn clear(secret: Secret, db: &Db) {
-	db.delete_setting(secret.db_key());
+/// Remove a secret from both the keychain and the DB fallback. Err means
+/// a copy may survive (the next load would bring the "cleared" secret
+/// back), so callers must not report success.
+pub fn clear(secret: Secret, db: &Db) -> Result<(), String> {
+	db.delete_setting(secret.db_key())?;
+	// No keychain service means nothing was ever stored there.
 	if let Ok(entry) = entry(secret) {
 		match entry.delete_credential() {
-			Ok(()) => {}
-			Err(keyring::Error::NoEntry) => {}
-			Err(e) => log::warn!("keychain delete for {} failed: {e}", secret.account()),
+			Ok(()) | Err(keyring::Error::NoEntry) => {}
+			Err(e) => {
+				return Err(format!(
+					"could not remove {} from the keychain: {e}",
+					secret.account()
+				))
+			}
 		}
 	}
+	Ok(())
 }
 
 /// One-time move of any plaintext secret rows into the keychain. Runs at
@@ -116,7 +128,9 @@ pub fn migrate_from_db(db: &Db) {
 		};
 		match entry.set_password(&value) {
 			Ok(()) => {
-				db.delete_setting(secret.db_key());
+				if let Err(e) = db.delete_setting(secret.db_key()) {
+					log::warn!("{e}");
+				}
 				log::info!("moved {} into the keychain", secret.account());
 			}
 			Err(e) => {

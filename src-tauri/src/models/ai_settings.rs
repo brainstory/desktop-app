@@ -302,7 +302,7 @@ impl AiSettings {
 			}
 			if value.is_empty() {
 				if stored.is_some() {
-					crate::secrets::clear(secret, db);
+					crate::secrets::clear(secret, db)?;
 				}
 				Ok(())
 			} else {
@@ -409,6 +409,36 @@ mod tests {
 		assert!(
 			err.contains("failed to save setting"),
 			"unexpected error: {err}"
+		);
+	}
+
+	#[test]
+	fn clearing_a_secret_that_cannot_be_removed_fails_the_save() {
+		// DB-fallback path only: the row delete fails before any keychain
+		// call, so this never touches the developer's real keychain.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("clear-fail.db");
+		let db = Db::open(&path).expect("open");
+		db.set_setting(setting::secret::HF_TOKEN, "hf_old")
+			.expect("seed fallback row");
+		{
+			let conn = rusqlite::Connection::open(&path).unwrap();
+			conn.execute_batch(
+				"CREATE TRIGGER keep_token BEFORE DELETE ON settings
+				 WHEN OLD.key = 'hf_token'
+				 BEGIN SELECT RAISE(ABORT, 'database is locked'); END;",
+			)
+			.unwrap();
+		}
+		let mut settings = AiSettings::load(&db);
+		settings.hf_token = String::new();
+		let err = settings
+			.save(&db)
+			.expect_err("a secret that survives a clear must not report success");
+		assert!(err.contains("database is locked"), "unexpected: {err}");
+		assert_eq!(
+			db.get_setting(setting::secret::HF_TOKEN).as_deref(),
+			Some("hf_old")
 		);
 	}
 

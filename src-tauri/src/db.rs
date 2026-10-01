@@ -373,14 +373,12 @@ impl Db {
 	}
 
 	/// Remove a setting row entirely (used when secrets move to the
-	/// keychain); a no-op if the row doesn't exist.
-	pub fn delete_setting(&self, key: &str) {
-		if let Err(e) = self
-			.lock()
+	/// keychain or are cleared); Ok if the row doesn't exist.
+	pub fn delete_setting(&self, key: &str) -> Result<(), String> {
+		self.lock()
 			.execute("DELETE FROM settings WHERE key = ?1", params![key])
-		{
-			log::warn!("failed to delete setting '{key}': {e}");
-		}
+			.map_err(|e| format!("failed to delete setting '{key}': {e}"))?;
+		Ok(())
 	}
 
 	// ---- ideas ----
