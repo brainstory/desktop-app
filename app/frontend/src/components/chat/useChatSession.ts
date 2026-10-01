@@ -4,7 +4,7 @@
  * Extracted from ChatSection.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { ChatMessage } from "@src/types";
 import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import {
@@ -72,7 +72,9 @@ export function useChatSession(
 	/** Generate assistant response. NOT for the final outline result.
 	 * Resolves with what happened to the user's message, so the composer
 	 * only clears once the message was actually answered. */
-	const handleGetResponse = async (): Promise<CoachResponseOutcome> => {
+	// stable per conversation: ChatRecorder/RecordButton keep it in memo
+	// and effect dependencies
+	const handleGetResponse = useCallback(async (): Promise<CoachResponseOutcome> => {
 		setConversationState(CONVERSATION_STATE.WaitingForCoach);
 		const apiCall = () =>
 			generateResponseApi(
@@ -115,7 +117,7 @@ export function useChatSession(
 		} finally {
 			setConversationState(CONVERSATION_STATE.Idle);
 		}
-	};
+	}, [currConversation, setCurrConversation, parentIdea, chatType, onError]);
 
 	/** Generate idea summary result */
 	const handleGetResult = () => {

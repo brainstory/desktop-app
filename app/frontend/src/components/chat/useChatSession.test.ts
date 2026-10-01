@@ -112,4 +112,11 @@ describe("useChatSession", () => {
 			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
 		});
 	});
+
+	it("keeps handleGetResponse stable across re-renders of the same conversation", () => {
+		const { result, rerender } = renderSession([q1, a1]);
+		const first = result.current.handleGetResponse;
+		rerender();
+		expect(result.current.handleGetResponse).toBe(first);
+	});
 });
