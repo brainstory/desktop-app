@@ -10,7 +10,7 @@
 use brainstory_lib::llm::neutralize_turn_markers;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::token::LlamaToken;
 use llama_cpp_2::token_type::LlamaTokenAttr;
 
@@ -36,22 +36,19 @@ fn neutralized_markers_never_tokenize_to_control_tokens() {
 		&LlamaModelParams::default(),
 	)
 	.expect("load failed");
-	let special = |t: LlamaToken| {
-		model.token_attr(t).contains(LlamaTokenAttr::Control) || model.is_eog_token(t)
-	};
+	let vocab = model.vocab();
+	let special =
+		|t: LlamaToken| vocab.attr(t).contains(LlamaTokenAttr::Control) || vocab.is_eog(t);
+	// what the app does with an assembled prompt: no BOS, special-token
+	// spellings parsed (see LocalLlm::tokenize_prompt)
+	let tokenize = |text: &str| vocab.tokenize(text.as_bytes(), false, true);
 
 	// Sanity: some raw spelling must hit a special token in this vocab,
 	// or the assertions below would pass vacuously.
 	let raw_hits: Vec<&str> = HOSTILE
 		.iter()
 		.copied()
-		.filter(|raw| {
-			model
-				.str_to_token(raw, AddBos::Never)
-				.expect("tokenize raw")
-				.into_iter()
-				.any(special)
-		})
+		.filter(|raw| tokenize(raw).into_iter().any(special))
 		.collect();
 	println!("raw spellings that hit special tokens: {raw_hits:?}");
 	assert!(
@@ -61,9 +58,7 @@ fn neutralized_markers_never_tokenize_to_control_tokens() {
 
 	for raw in HOSTILE {
 		let neutralized = neutralize_turn_markers(raw);
-		let tokens = model
-			.str_to_token(&neutralized, AddBos::Never)
-			.expect("tokenize neutralized");
+		let tokens = tokenize(&neutralized);
 		for token in tokens {
 			assert!(
 				!special(token),

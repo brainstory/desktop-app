@@ -58,6 +58,14 @@ vulkan = []
 name = "whisper_rs_sys"
 path = "src/lib.rs"
 
+# Brainstory: build whisper.cpp against llama-cpp-sys-2's ggml instead of
+# a second bundled copy. This dependency is what makes cargo hand our build
+# script DEP_LLAMA_GGML_CMAKE_DIR (llama-cpp-sys-2 has `links = "llama"`),
+# and it links that ggml into the program. Keep the version equal to the
+# app's llama-cpp-sys-2 pin.
+[dependencies.llama-cpp-sys-2]
+version = "=0.1.158"
+
 [build-dependencies.bindgen]
 version = "0.72"
 

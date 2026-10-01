@@ -116,6 +116,21 @@ fn main() {
         });
     }
 
+    // Brainstory: whisper.cpp is built against llama-cpp-sys-2's ggml, so the
+    // program contains exactly one ggml. llama-cpp-sys-2 (0.1.157+) installs
+    // a ggml CMake package and exports its location for this purpose; cargo
+    // passes it here because this crate depends on llama-cpp-sys-2.
+    let ggml_cmake_dir = PathBuf::from(env::var("DEP_LLAMA_GGML_CMAKE_DIR").expect(
+        "DEP_LLAMA_GGML_CMAKE_DIR is not set: whisper-rs-sys builds against \
+         llama-cpp-sys-2's ggml and needs llama-cpp-sys-2 >= 0.1.157 as a dependency",
+    ));
+    // <prefix>/lib/cmake -> <prefix>/include
+    let ggml_include = ggml_cmake_dir
+        .parent()
+        .and_then(|lib| lib.parent())
+        .expect("ggml CMake dir is <prefix>/lib/cmake")
+        .join("include");
+
     if env::var("WHISPER_DONT_GENERATE_BINDINGS").is_ok() {
         let _: u64 = std::fs::copy("src/bindings.rs", out.join("bindings.rs"))
             .expect("Failed to copy bindings.rs");
@@ -141,19 +156,19 @@ fn main() {
 
         #[cfg(feature = "metal")]
         {
-            bindings = bindings.header("whisper.cpp/ggml/include/ggml-metal.h");
+            bindings = bindings.header(ggml_include.join("ggml-metal.h").to_string_lossy());
         }
         #[cfg(feature = "vulkan")]
         {
             bindings = bindings
-                .header("whisper.cpp/ggml/include/ggml-vulkan.h")
+                .header(ggml_include.join("ggml-vulkan.h").to_string_lossy())
                 .clang_arg("-DGGML_USE_VULKAN=1");
         }
 
         let bindings = bindings
             .clang_arg("-I./whisper.cpp/")
             .clang_arg("-I./whisper.cpp/include")
-            .clang_arg("-I./whisper.cpp/ggml/include")
+            .clang_arg(format!("-I{}", ggml_include.display()))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate();
 
@@ -182,6 +197,9 @@ fn main() {
 
     config
         .profile("Release")
+        // Brainstory: use llama-cpp-sys-2's ggml (see above), never a bundled one
+        .define("WHISPER_USE_SYSTEM_GGML", "ON")
+        .define("ggml_DIR", ggml_cmake_dir.join("ggml"))
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("WHISPER_ALL_WARNINGS", "OFF")
         .define("WHISPER_ALL_WARNINGS_3RD_PARTY", "OFF")
@@ -309,13 +327,9 @@ fn main() {
         println!("cargo:rustc-link-lib=ggml-base");
         println!("cargo:rustc-link-lib=ggml-cpu");
     } else {
+        // Brainstory: only whisper itself - the ggml libraries are linked
+        // once, by llama-cpp-sys-2
         println!("cargo:rustc-link-lib=static=whisper");
-        println!("cargo:rustc-link-lib=static=ggml");
-        println!("cargo:rustc-link-lib=static=ggml-base");
-        println!("cargo:rustc-link-lib=static=ggml-cpu");
-    }
-    if cfg!(target_os = "macos") || cfg!(feature = "openblas") {
-        println!("cargo:rustc-link-lib=static=ggml-blas");
     }
     if cfg!(feature = "vulkan") {
         if cfg!(feature = "intel-sycl") {
@@ -327,10 +341,6 @@ fn main() {
 
     if cfg!(feature = "hipblas") {
         println!("cargo:rustc-link-lib=static=ggml-hip");
-    }
-
-    if cfg!(feature = "metal") {
-        println!("cargo:rustc-link-lib=static=ggml-metal");
     }
 
     if cfg!(feature = "cuda") {
@@ -382,6 +392,9 @@ fn add_link_search_path(dir: &std::path::Path) -> std::io::Result<()> {
 fn get_whisper_cpp_version(whisper_root: &std::path::Path) -> std::io::Result<Option<String>> {
     let cmake_lists = BufReader::new(File::open(whisper_root.join("CMakeLists.txt"))?);
 
+    // Brainstory: newer whisper.cpp declares the version as
+    // set(WHISPER_VERSION_MAJOR 1) / _MINOR / _PATCH instead of in project()
+    let (mut major, mut minor, mut patch) = (None, None, None);
     for line in cmake_lists.lines() {
         let line = line?;
 
@@ -389,7 +402,18 @@ fn get_whisper_cpp_version(whisper_root: &std::path::Path) -> std::io::Result<Op
             let whisper_cpp_version = suffix.trim_end_matches(')');
             return Ok(Some(whisper_cpp_version.into()));
         }
+        let part = |name: &str| {
+            line.trim()
+                .strip_prefix(&format!("set({name} "))
+                .map(|v| v.trim_end_matches(')').trim().to_string())
+        };
+        major = major.or_else(|| part("WHISPER_VERSION_MAJOR"));
+        minor = minor.or_else(|| part("WHISPER_VERSION_MINOR"));
+        patch = patch.or_else(|| part("WHISPER_VERSION_PATCH"));
     }
 
-    Ok(None)
+    Ok(match (major, minor, patch) {
+        (Some(major), Some(minor), Some(patch)) => Some(format!("{major}.{minor}.{patch}")),
+        _ => None,
+    })
 }

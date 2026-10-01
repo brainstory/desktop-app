@@ -7,7 +7,7 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
+use llama_cpp_2::model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::SeqState;
 
@@ -87,6 +87,25 @@ fn plan_kv_reuse<T: PartialEq>(cached: &[T], prompt: &[T]) -> Option<KvReuse> {
 	Some(KvReuse {
 		decode_from: common.min(prompt.len().saturating_sub(1)),
 	})
+}
+
+/// Decode one token's bytes with a streaming UTF-8 decoder: a multi-byte
+/// character can be split across tokens, so the decoder keeps the
+/// incomplete tail for the next call. Mirrors the decode step llama-cpp-2
+/// did inside LlamaModel::token_to_piece before 0.1.158 moved
+/// detokenization to LlamaVocab, which returns raw bytes.
+fn decode_piece(decoder: &mut encoding_rs::Decoder, bytes: &[u8]) -> Result<String, String> {
+	// decode_to_string never grows its destination; this bound includes
+	// any incomplete sequence held over from the previous token
+	let capacity = decoder
+		.max_utf8_buffer_length(bytes.len())
+		.ok_or("token output is too large to decode")?;
+	let mut out = String::with_capacity(capacity);
+	let (result, read, _) = decoder.decode_to_string(bytes, &mut out, false);
+	if !matches!(result, encoding_rs::CoderResult::InputEmpty) || read != bytes.len() {
+		return Err("UTF-8 decoder did not consume the whole token".into());
+	}
+	Ok(out)
 }
 
 /// A captured KV cache plus the tokens it was built from. Restoring
@@ -243,11 +262,15 @@ impl LocalLlm {
 	}
 
 	fn count_tokens(&self, prompt: &str) -> Result<usize, String> {
-		Ok(self
-			.model
-			.str_to_token(prompt, AddBos::Never)
-			.map_err(|e| e.to_string())?
-			.len())
+		Ok(self.tokenize_prompt(prompt).len())
+	}
+
+	/// Tokenize an assembled prompt: no BOS added (the template writes its
+	/// own), and special-token spellings ARE parsed - the chat scaffolding
+	/// depends on it. User and imported text is made safe for that by
+	/// neutralize_turn_markers before it is assembled into the prompt.
+	fn tokenize_prompt(&self, prompt: &str) -> Vec<llama_cpp_2::token::LlamaToken> {
+		self.model.vocab().tokenize(prompt.as_bytes(), false, true)
 	}
 
 	/// Build the final prompt, dropping older middle messages until it fits
@@ -339,10 +362,7 @@ impl LocalLlm {
 			})
 			.collect();
 		let prompt = self.build_prompt(&system, &messages, max_new)?;
-		let tokens = self
-			.model
-			.str_to_token(&prompt, AddBos::Never)
-			.map_err(|e| e.to_string())?;
+		let tokens = self.tokenize_prompt(&prompt);
 		if tokens.is_empty() {
 			return Err(
 				"the model produced no tokens for this conversation; please try again".into(),
@@ -456,6 +476,7 @@ impl LocalLlm {
 			true,
 		);
 
+		let vocab = self.model.vocab();
 		let mut decoder = encoding_rs::UTF_8.new_decoder();
 		let mut output = String::new();
 		let mut think_filter = ThinkFilter::new();
@@ -481,15 +502,11 @@ impl LocalLlm {
 				return Err(overdue());
 			}
 			let token = sampler.sample(&ctx, -1);
-			if self.model.is_eog_token(token) {
+			if vocab.is_eog(token) {
 				break;
 			}
-			let piece = match self.model.token_to_piece(token, &mut decoder, false, None) {
-				Ok(piece) => piece,
-				// a token with no text piece is not an error; feed it back
-				Err(llama_cpp_2::TokenToStringError::UnknownTokenType) => String::new(),
-				Err(e) => return Err(e.to_string()),
-			};
+			// a token with no text piece yields no bytes; it is still fed back
+			let piece = decode_piece(&mut decoder, &vocab.token_to_piece(token, false, None))?;
 			if !piece.is_empty() {
 				let safe = think_filter.push(&piece);
 				if !safe.is_empty() {
@@ -1079,6 +1096,21 @@ mod tests {
 		assert!(!done, "no [DONE] marker yet");
 		assert_eq!(output, "hello there");
 		assert_eq!(chunks, vec!["hello there".to_string()]);
+	}
+
+	#[test]
+	fn decode_piece_reassembles_characters_split_across_tokens() {
+		let mut decoder = encoding_rs::UTF_8.new_decoder();
+		// a 4-byte character
+		let emoji = "🧠".as_bytes();
+		// the first token carries half the character: nothing to emit yet
+		assert_eq!(super::decode_piece(&mut decoder, &emoji[..2]).unwrap(), "");
+		// the next token completes it, plus plain text
+		let mut rest = emoji[2..].to_vec();
+		rest.extend_from_slice(b" ok");
+		assert_eq!(super::decode_piece(&mut decoder, &rest).unwrap(), "🧠 ok");
+		// a token with no text piece decodes to nothing
+		assert_eq!(super::decode_piece(&mut decoder, &[]).unwrap(), "");
 	}
 
 	#[test]

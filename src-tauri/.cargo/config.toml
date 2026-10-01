@@ -7,12 +7,14 @@
 [env]
 MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
 
-# llama.cpp and whisper.cpp each vendor their own ggml/gguf copy, producing
-# duplicate symbols when both static libs are linked. macOS ld64 only warns
-# about this (see README); MSVC link/lld-link treat it as an error, so the
-# Windows target forces the linker to tolerate it - same tradeoff, verified
-# harmless by engine_smoke on macOS. The repo-root .cargo/config.toml mirrors
-# this section for tauri CLI invocations from the repo root.
+# whisper.cpp now builds against llama-cpp-sys-2's ggml (vendor/VENDORED.md),
+# so the program contains one ggml and links without duplicate symbols on
+# macOS. These tolerance flags date from when each engine bundled its own
+# copy (MSVC link/lld-link and Linux ld hard-error duplicates); they stay as
+# a safety net until the Windows and Linux CI builds confirm the duplicates
+# are gone there too, then they can be removed. The repo-root
+# .cargo/config.toml mirrors this section for tauri CLI invocations from the
+# repo root.
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "link-arg=/FORCE:MULTIPLE",
@@ -21,8 +23,6 @@ rustflags = [
     "-L", "native=windows-xwin-stub",
 ]
 
-# Linux linkers (lld/ld) hard-error the same duplicate ggml symbols that
-# macOS ld64 only warns about (see above and README) - allow them, first
-# definition wins, same tradeoff as /FORCE:MULTIPLE on Windows.
+# Linux counterpart of /FORCE:MULTIPLE (see above): kept as a safety net.
 [target.'cfg(all(unix, not(target_os = "macos")))']
 rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]

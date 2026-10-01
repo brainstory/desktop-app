@@ -48,12 +48,12 @@ tokio = { version = "1", features = ["rt", "fs", "io-util", "sync", "time", "mac
 # Pinned exactly on purpose: the crates vendor their own llama.cpp /
 # whisper.cpp / ggml C++, and the binary's force_exit() workaround depends
 # on that C++'s teardown behavior. Let a deliberate upgrade change it.
-llama-cpp-2 = "=0.1.156"
+llama-cpp-2 = "=0.1.158"
 # The C++ actually lives in the -sys crate, which llama-cpp-2 only asks
 # for as ^0.1.x - pin it too, or a lockfile-only update can swap the
 # vendored llama.cpp/ggml underneath the pin above. Keep it equal to
 # llama-cpp-2's version.
-llama-cpp-sys-2 = "=0.1.156"
+llama-cpp-sys-2 = "=0.1.158"
 hound = "3"
 
 encoding_rs = "0.8"
@@ -91,3 +91,10 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# whisper-rs is vendored so whisper.cpp builds against llama-cpp-sys-2's
+# ggml instead of bundling a second, incompatible copy (see
+# vendor/VENDORED.md). The versions match the pins above.
+[patch.crates-io]
+whisper-rs = { path = "vendor/whisper-rs" }
+whisper-rs-sys = { path = "vendor/whisper-rs-sys" }

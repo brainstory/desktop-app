@@ -2,8 +2,9 @@
 # src-tauri/.cargo/config.toml only applies to direct cargo runs in src-tauri.
 
 [target.x86_64-pc-windows-msvc]
-# llama.cpp and whisper.cpp each vendor ggml/gguf -> duplicate symbols that
-# lld-link treats as errors (macOS ld64 only warns); force tolerance.
+# Safety net from when llama.cpp and whisper.cpp each bundled ggml (duplicate
+# symbols); whisper.cpp now uses llama's ggml - see
+# src-tauri/.cargo/config.toml.
 # -L stub: whisper-rs-sys 0.15 cross-compile quirk (see
 # src-tauri/windows-xwin-stub/README.md).
 rustflags = [
@@ -14,8 +15,6 @@ rustflags = [
 [env]
 MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
 
-# Linux linkers (lld/ld) hard-error the same duplicate ggml symbols that
-# macOS ld64 only warns about (see above and README) - allow them, first
-# definition wins, same tradeoff as /FORCE:MULTIPLE on Windows.
+# Linux counterpart of /FORCE:MULTIPLE (see above): kept as a safety net.
 [target.'cfg(all(unix, not(target_os = "macos")))']
 rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]

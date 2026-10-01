@@ -27,4 +27,25 @@ is MIT (`whisper-rs-sys/whisper.cpp/LICENSE`).
 ## Local changes
 
 Every change to the upstream files is in this repository's git history on
-top of the commit that added them unmodified ("Vendor whisper-rs ...").
+top of the commit that added them unmodified ("Vendor whisper-rs ..."). In
+short, all in `whisper-rs-sys/` (marked `Brainstory:` in the code):
+
+- `Cargo.toml`: depends on `llama-cpp-sys-2` (same exact version as the app's
+  pin). That makes cargo pass `DEP_LLAMA_GGML_CMAKE_DIR`, the ggml CMake
+  package llama-cpp-sys-2 installs and exports for this purpose.
+- `build.rs`: configures whisper.cpp with `WHISPER_USE_SYSTEM_GGML=ON` and
+  `ggml_DIR` pointing at that package (approach from whisper-rs PR #260,
+  using llama's ggml instead of a system-installed one); generates bindings
+  against its headers; links only `libwhisper`, never a `ggml*` library; and
+  reads whisper.cpp's newer `set(WHISPER_VERSION_MAJOR ...)` version format.
+- `wrapper.h`: includes `<ggml.h>` from that package.
+- `src/lib.rs`: `extern crate llama_cpp_sys_2` so rustc links llama's ggml
+  after libwhisper (static archives resolve left to right on Linux).
+
+## Updating
+
+- llama-cpp-2 / llama-cpp-sys-2: bump the app's pins and the version in
+  `whisper-rs-sys/Cargo.toml` together, then pick the whisper.cpp commit whose
+  `ggml/CMakeLists.txt` has the same `GGML_VERSION_*` as llama.cpp's.
+- Run the env-gated engine tests against real models (README, "Manual model
+  tests") before merging: they are the only proof both engines still work.
