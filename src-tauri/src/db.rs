@@ -146,6 +146,11 @@ const BASELINE_SCHEMA: &str = "
 /// Column notes:
 /// - `daily.created_at`: when the day's row was first written (naive UTC,
 ///   like every created_at); rows written before it was populated hold ''.
+/// - `ideas.idea_metadata`: free-form JSON from the creator; read by the
+///   backend only for `imported` (share-file rows, excluded from the
+///   streak and activity queries).
+/// - `ideas.log_id`: the daily log an idea was created from, written for
+///   provenance; nothing reads it yet.
 const SCHEMA_VERSION: i64 = 4;
 
 /// SQL predicate matching idea rows that came from a share file
