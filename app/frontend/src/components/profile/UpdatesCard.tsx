@@ -56,7 +56,7 @@ interface UpdatesCardProps {
 export function UpdatesCard({ enabled, onToggle }: UpdatesCardProps) {
 	const labelId = useId();
 	return (
-		<Card title="Updates" subtitle="How Brainstory keeps itself up to date.">
+		<Card columns={3} title="Updates" subtitle="How Brainstory keeps itself up to date.">
 			<div className="flex justify-between items-center gap-4">
 				<div>
 					<p className="text-sm font-medium text-stone-900" id={labelId}>

@@ -65,6 +65,18 @@ describe("Profile", () => {
 		expect(screen.getByText(/Automatic update checks are off/)).toBeInTheDocument();
 	});
 
+	it("stacks App Presence and Updates as full-width rows, not side by side", async () => {
+		mockInvoke({ get_user_settings: () => userSettings });
+		render(<Profile />);
+		for (const title of ["App Presence", "Updates"]) {
+			const card = (await screen.findByRole("heading", { name: title })).closest(
+				"div.w-full"
+			);
+			// a full-width card in the 3-column grid, one per row
+			expect(card?.className).toContain("lg:col-span-3");
+		}
+	});
+
 	it("shows the updates-off warning above the tabs, on every tab", async () => {
 		const user = userEvent.setup();
 		mockInvoke({

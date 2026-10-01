@@ -47,7 +47,11 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 	};
 
 	return (
-		<Card title="App Presence" subtitle="Where Brainstory shows up on your desktop.">
+		<Card
+			columns={3}
+			title="App Presence"
+			subtitle="Where Brainstory shows up on your desktop."
+		>
 			<div className="flex flex-col gap-4">
 				<div className="flex justify-between items-center gap-4">
 					<div>
