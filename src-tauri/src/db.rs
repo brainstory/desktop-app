@@ -1698,6 +1698,59 @@ mod v4_tests {
 	use super::*;
 
 	#[test]
+	fn every_open_backfills_rows_left_undated_at_v3_and_v4() {
+		// The versioned migrations never run again on a v3/v4 file, so
+		// rows written with an empty local_date (an interrupted write, a
+		// build that missed the column) are only repaired by the
+		// every-open backfill.
+		for version in [3, 4] {
+			let dir = tempfile::tempdir().expect("tempdir");
+			let path = dir.path().join("t.db");
+			{
+				let conn = Connection::open(&path).unwrap();
+				conn.execute_batch(BASELINE_SCHEMA).unwrap();
+				conn.execute_batch(
+					"ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';",
+				)
+				.unwrap();
+				for table in ["ideas", "log_entries", "surveys"] {
+					conn.execute_batch(&format!(
+						"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';"
+					))
+					.unwrap();
+				}
+				conn.execute_batch(
+					"INSERT INTO ideas (id, created_at) VALUES ('i', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));
+					 INSERT INTO log_entries (id, answers, created_at) VALUES ('l', '[]', strftime('%Y-%m-%dT%H:%M:%S', 'now'));
+					 INSERT INTO surveys (id, answers, created_at) VALUES ('s', '{}', strftime('%Y-%m-%dT%H:%M:%S', 'now'));",
+				)
+				.unwrap();
+				conn.pragma_update(None, "user_version", version).unwrap();
+			}
+			let db = Db::open(&path).expect("open");
+			{
+				let conn = db.lock();
+				for table in ["ideas", "log_entries", "surveys"] {
+					let undated: i64 = conn
+						.query_row(
+							&format!("SELECT COUNT(*) FROM {table} WHERE local_date = ''"),
+							[],
+							|r| r.get(0),
+						)
+						.unwrap();
+					assert_eq!(undated, 0, "v{version}: {table} row left undated");
+				}
+			}
+			assert!(db.has_activity_today(), "v{version}: today's log counts");
+			assert_eq!(
+				db.get_daily_status().streak,
+				2,
+				"v{version}: yesterday's idea + today's log"
+			);
+		}
+	}
+
+	#[test]
 	fn migration_v4_adds_local_date_indexes() {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let path = dir.path().join("t.db");

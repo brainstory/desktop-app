@@ -645,6 +645,27 @@ mod tests {
 		assert!(err.contains("original ideas"), "unexpected: {err}");
 	}
 
+	#[test]
+	fn import_caps_the_result_document_at_one_megabyte() {
+		let file = |result: String| {
+			json_string(serde_json::json!({
+				"format": "brainstory-share", "version": 1, "kind": "idea",
+				"idea": { "title": "T", "result": result }
+			}))
+		};
+		let cap = super::MAX_RESULT_BYTES;
+		assert_eq!(cap, 1024 * 1024);
+		parse_share_payload(&file("x".repeat(cap))).expect("exactly at the cap is fine");
+		let err = parse_share_payload(&file("x".repeat(cap + 1))).expect_err("over the cap");
+		assert!(err.contains("result is too large"), "unexpected: {err}");
+		// feedback documents go through the same bound
+		let raw = json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "feedback",
+			"feedback": { "title": "F", "result": "x".repeat(cap + 1) }
+		}));
+		assert!(parse_share_payload(&raw).is_err());
+	}
+
 	fn json_string(value: serde_json::Value) -> String {
 		serde_json::to_string(&value).unwrap()
 	}
