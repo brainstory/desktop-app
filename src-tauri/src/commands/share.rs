@@ -256,7 +256,10 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 			share_id,
 			title: idea.title.clone(),
 			result: idea.result.clone().unwrap_or_default(),
-			idea_type,
+			// Every non-feedback idea travels as "original": a daily
+			// intent is the author's own day plan, meaningless as the
+			// reader's, and the import whitelist only accepts originals.
+			idea_type: "original".into(),
 			created_at: Some(idea.created_at.clone()),
 		}
 	};
@@ -591,6 +594,33 @@ mod tests {
 		let err = import_parsed(&db, feedback_share("ghost", "Twin"))
 			.expect_err("ambiguous title match must refuse");
 		assert!(err.contains("not in your library"), "unexpected: {err}");
+	}
+
+	#[test]
+	fn exported_daily_intent_reimports_as_an_original_idea() {
+		let (author_db, _a) = temp_db("author");
+		author_db
+			.create_daily_intent_idea(
+				"intent",
+				"My Day",
+				"## Plan\nship it",
+				&[],
+				&serde_json::json!({}),
+			)
+			.expect("seed daily intent");
+		let (author, payload) = super::export_share(&author_db, "intent").expect("export");
+		let raw = serde_json::to_string(&build_export_payload(&author, &payload)).unwrap();
+
+		// the strict import whitelist must accept our own export...
+		let parsed = parse_share_payload(&raw).expect("own export must import");
+		let (reader_db, _b) = temp_db("reader");
+		let imported = import_parsed(&reader_db, parsed).expect("import");
+		// ...and the copy is an ordinary idea, never the reader's intent
+		let id = imported["id"].as_str().expect("id");
+		let idea = reader_db.get_idea(id).unwrap().expect("stored");
+		assert_eq!(idea.r#type.as_deref(), Some("original"));
+		assert_eq!(idea.result.as_deref(), Some("## Plan\nship it"));
+		assert_eq!(reader_db.get_daily_status().intent_idea_id, None);
 	}
 
 	#[test]
