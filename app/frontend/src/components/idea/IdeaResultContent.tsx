@@ -22,7 +22,7 @@ export default function IdeaResultContent() {
 	const ideaId = getQueryParam("id") ?? undefined;
 	const [activeTab] = useState<number>(() => {
 		const tab = getQueryParam("tab");
-		return tab ? (tabs[tab] ?? 0) : tabs.summary;
+		return tab ? (tabs[tab] ?? 0) : tabs.summary!;
 	});
 	const [isLoading, setIsLoading] = useState(true);
 	const [idea, setIdea] = useState<IdeaDetail>({ id: "" });
@@ -267,7 +267,7 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 		markIdeaReadApi(id)
 			.then((res) => {
 				if (isCurrent) {
-					console.log("marked idea as read: ", res);
+					console.error("marked idea as read: ", res);
 				}
 			})
 			.catch((err) => {

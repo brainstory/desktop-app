@@ -37,12 +37,12 @@ getUserApi()
 					.then(() => {
 						$userState.setKey("timezone", userBrowserTimezone);
 					})
-					.catch((err) => console.log("unsuccessful at setting timezone", err));
+					.catch((err) => console.error("unsuccessful at setting timezone", err));
 			});
 		}
 	})
 	.catch((err) => {
-		console.log("error getting user data", err);
+		console.error("error getting user data", err);
 		$userState.set({
 			loaded: true,
 			userName: undefined,

@@ -58,7 +58,9 @@ export function normalizeApiError(error: unknown): string {
  * trigger the resend flow.
  */
 export function isModerationError(message: unknown): boolean {
-	return normalizeApiError(message).startsWith(ERROR_MESSAGE_MAP[469]);
+	return normalizeApiError(message).startsWith(
+		ERROR_MESSAGE_MAP[469] ?? "HttpError 469: Inappropriate input"
+	);
 }
 
 export async function callApiWithRetry<T>(

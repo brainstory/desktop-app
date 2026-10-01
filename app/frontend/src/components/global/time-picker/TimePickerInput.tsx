@@ -51,7 +51,7 @@ export default function TimePickerInput({
 	}, [flag]);
 
 	const calculatedHour = getValidHour(String(date.getHours()));
-	// console.log("calculatedHour", calculatedHour);
+	// console.error("calculatedHour", calculatedHour);
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
 		if (e.key === "Tab") return;

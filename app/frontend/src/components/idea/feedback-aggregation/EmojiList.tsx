@@ -44,7 +44,10 @@ export default function EmojiList({ reactions = [], onReactionClick, isFocused }
 						/>
 					))}
 			{reactions && reactions.length > 6 && (
-				<button className="flex items-center" onClick={() => onReactionClick(reactions[6])}>
+				<button
+					className="flex items-center"
+					onClick={() => onReactionClick(reactions[6]!)}
+				>
 					<span className="text-gray-600 w-max">+{reactions.length - 6} more</span>
 				</button>
 			)}

@@ -35,7 +35,7 @@ export default function IdeaSidebar({
 			const hid = sortedHeadingIndices[i];
 			const sectionComments = (headingIdxToComments[Number(hid)] ?? []).reduce(
 				(acc: (FeedbackComment & { hid: string })[], currValue: FeedbackComment) => {
-					acc.push({ hid: hid, ...currValue });
+					acc.push({ hid: hid!, ...currValue });
 					return acc;
 				},
 				[]

@@ -62,7 +62,7 @@ export default function UpdaterBanner() {
 			setPhase("restarting");
 			await relaunch();
 		} catch (err) {
-			console.log("update install failed", err);
+			console.error("update install failed", err);
 			setPhase("error");
 		}
 	};

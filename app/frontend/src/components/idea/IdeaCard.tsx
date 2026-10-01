@@ -105,7 +105,7 @@ function FeedbackStack({ feedback = [] }: FeedbackStackProps) {
 		<>
 			{feedback &&
 				feedback.length > 0 &&
-				feedback.map((feedbackItem: IdeaListItem, index: number) => {
+				feedback.map((_feedbackItem: IdeaListItem, index: number) => {
 					if (index > 2) {
 						return null;
 					}

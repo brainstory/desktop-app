@@ -36,5 +36,5 @@ export function getQuestionOfTheDay(): string {
 	const localDayUtcMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
 	const todayInDays = Math.floor(localDayUtcMs / (1000 * 60 * 60 * 24));
 	const quoteIndex = todayInDays % questionPrompts.length;
-	return questionPrompts[quoteIndex];
+	return questionPrompts[quoteIndex] ?? questionPrompts[0]!;
 }

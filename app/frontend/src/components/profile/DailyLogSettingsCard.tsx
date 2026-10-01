@@ -91,7 +91,7 @@ const renderlogFields = (
 			value: enabledLogQids.includes(field.id)
 		};
 		if (fieldLabels.includes(label)) {
-			labelToFields[label].push(fieldData);
+			labelToFields[label]!.push(fieldData);
 		} else {
 			labelToFields[label] = [fieldData];
 			fieldLabels.push(label);
@@ -105,9 +105,9 @@ const renderlogFields = (
 			<div key={label}>
 				<h3 className="font-medium underline decoration-pink-500 my-1">{label}</h3>
 				<div className="flex flex-col gap-1">
-					{fieldsInLabel.map((field, i) => {
+					{fieldsInLabel!.map((field, i) => {
 						const lineBreak =
-							fieldsInLabel.length == i + 1 ? null : (
+							fieldsInLabel?.length == i + 1 ? null : (
 								<div key={"divider-" + field.id} className="h-[1px] bg-slate-200" />
 							);
 						return [

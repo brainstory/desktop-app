@@ -35,7 +35,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 				setIsLogLoading(false);
 			})
 			.catch((err) => {
-				console.log("Error getting daily log questions", err);
+				console.error("Error getting daily log questions", err);
 				setIsLogLoading(false);
 			});
 	}, []);
@@ -47,7 +47,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 				setLogId(logId);
 			})
 			.catch((err) => {
-				console.log("Error submitting daily log answers", err);
+				console.error("Error submitting daily log answers", err);
 			})
 			.finally(() => setIsSaving(false));
 	};
@@ -81,8 +81,8 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 			if (event.key === "Tab") {
 				const items = focusables();
 				if (items.length === 0) return;
-				const first = items[0];
-				const last = items[items.length - 1];
+				const first = items[0]!;
+				const last = items[items.length - 1]!;
 				if (event.shiftKey && document.activeElement === first) {
 					event.preventDefault();
 					last.focus();

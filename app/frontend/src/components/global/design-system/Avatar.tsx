@@ -20,7 +20,7 @@ export default function Avatar({
 	size?: number | string;
 	style?: string;
 }) {
-	const sizeClasses = SIZE_CLASSES[String(size)] ?? SIZE_CLASSES["10"];
+	const sizeClasses = SIZE_CLASSES[String(size)] ?? SIZE_CLASSES["10"]!;
 	const containerClasses = `${sizeClasses} relative inline-flex items-center justify-center overflow-hidden rounded-full ${style} `;
 
 	return (
@@ -56,5 +56,5 @@ function getColorFromId(id: string): string {
 		hash |= 0; // Convert to 32bit integer
 	}
 	const index = Math.abs(hash) % bgColors.length;
-	return bgColors[index];
+	return bgColors[index]!;
 }

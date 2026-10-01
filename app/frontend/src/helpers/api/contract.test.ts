@@ -30,7 +30,7 @@ function walk(dir: string, files: string[] = []): string[] {
 const COMMANDS_TS = readFileSync(resolve(srcRoot, "tauri/commands.ts"), "utf8");
 const cmdMap = new Map<string, string>();
 for (const m of COMMANDS_TS.matchAll(/(\w+):\s*"([a-z_]+)"/g)) {
-	cmdMap.set(m[1], m[2]);
+	cmdMap.set(m[1]!, m[2]!);
 }
 
 // matches invoke("cmd") and invoke(COMMANDS.camel)
@@ -58,7 +58,7 @@ describe("frontend <-> rust IPC contract", () => {
 		const lib = readFileSync(resolve(repoRoot, "src-tauri/src/lib.rs"), "utf8");
 		const block = lib.match(/generate_handler!\[([^\]]*)\]/)?.[1] ?? "";
 		const registered = new Set(
-			[...block.matchAll(/([a-z_]+)\s*,/g)].map((m) => m[1].split("::").pop()!)
+			[...block.matchAll(/([a-z_]+)\s*,/g)].map((m) => m[1]!.split("::").pop()!)
 		);
 		expect(registered.size).toBeGreaterThan(10);
 

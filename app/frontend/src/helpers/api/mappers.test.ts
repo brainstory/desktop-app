@@ -72,7 +72,7 @@ describe("getIdeaChildrenApi", () => {
 		});
 		const children = await getIdeaChildrenApi("p1");
 		expect(children).toHaveLength(1);
-		expect(children[0].feedbackComments).toEqual([
+		expect(children[0]!.feedbackComments).toEqual([
 			{
 				oidHeadingText: "1##Point one",
 				matchedSpans: [],
@@ -81,7 +81,7 @@ describe("getIdeaChildrenApi", () => {
 			}
 		]);
 		// first line (before \n\n) dropped, leading ## stripped
-		expect(children[0].summaryPreview).toBe("Point one body text");
+		expect(children[0]!.summaryPreview).toBe("Point one body text");
 	});
 });
 
@@ -103,10 +103,10 @@ describe("getAllIdeasApi", () => {
 			})
 		});
 		const ideas = await getAllIdeasApi();
-		expect(ideas[0].isDraft).toBe(true);
-		expect(ideas[0].draftSummary).toBe("last words");
-		expect(ideas[1].isDraft).toBe(false);
-		expect(ideas[1].draftSummary).toBeUndefined();
+		expect(ideas[0]!.isDraft).toBe(true);
+		expect(ideas[0]!.draftSummary).toBe("last words");
+		expect(ideas[1]!.isDraft).toBe(false);
+		expect(ideas[1]!.draftSummary).toBeUndefined();
 	});
 });
 
@@ -114,7 +114,7 @@ describe("saveUserSettingsApi", () => {
 	it("sends only the provided fields", async () => {
 		mockInvoke({ save_user_settings: () => ({ id: "settings" }) });
 		await saveUserSettingsApi({ timezone: "Europe/Berlin" });
-		const call = vi.mocked(invoke).mock.calls[0];
+		const call = vi.mocked(invoke).mock.calls[0]!;
 		expect(call[0]).toBe("save_user_settings");
 		expect(call[1]).toEqual({ user: { timezone: "Europe/Berlin" } });
 	});
@@ -125,7 +125,7 @@ describe("downloadModelApi", () => {
 		mockInvoke({ download_model: () => undefined });
 		const { invokePromise } = downloadModelApi("gemma-4-E2B-qat");
 		await invokePromise.catch(() => {}); // may reject; the arg is what matters
-		const call = vi.mocked(invoke).mock.calls[0];
+		const call = vi.mocked(invoke).mock.calls[0]!;
 		expect(call[0]).toBe("download_model");
 		expect(call[1]).toHaveProperty("modelId", "gemma-4-E2B-qat");
 		expect(call[1]).toHaveProperty("onEvent");

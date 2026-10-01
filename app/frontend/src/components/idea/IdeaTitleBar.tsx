@@ -100,7 +100,7 @@ export default function IdeaTitleBar({
 				}
 			})
 			.catch((err) => {
-				console.log("export failed", err);
+				console.error("export failed", err);
 				setExportState("error");
 				scheduleExportReset(() => setExportState(null), 4000);
 			});
@@ -113,7 +113,7 @@ export default function IdeaTitleBar({
 				window.location.href = "/dashboard";
 			})
 			.catch((err) => {
-				console.log("delete failed", err);
+				console.error("delete failed", err);
 				setSnackbarErrorMessage("Error: Could not delete this idea");
 				setSnackbarErrorOpen(true);
 			});

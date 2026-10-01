@@ -49,7 +49,7 @@ export default function ChatApp() {
 						setDraftId(resp.intentIdeaId);
 					}
 				})
-				.catch((err) => console.log("error getting daily status", err));
+				.catch((err) => console.error("error getting daily status", err));
 		}
 	}, [isDailyIntent]);
 

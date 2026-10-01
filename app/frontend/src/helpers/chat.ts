@@ -128,7 +128,7 @@ export const handleStreamResult = async (
 		}
 		await successCallbacks(message, result?.structured_result ?? null);
 	} catch (err) {
-		console.log("streaming result failed", err);
+		console.error("streaming result failed", err);
 		if (onError) {
 			onError(err);
 		}
@@ -137,7 +137,7 @@ export const handleStreamResult = async (
 
 export function findMostRecentAssistantContent(currConversation: ChatMessage[]): string | null {
 	for (let i = currConversation.length - 1; i >= 0; i--) {
-		const message = currConversation[i];
+		const message = currConversation[i]!;
 		if (message.role === "assistant") {
 			return message.content;
 		}
@@ -147,7 +147,7 @@ export function findMostRecentAssistantContent(currConversation: ChatMessage[]):
 
 export function findMostRecentUserContent(currConversation: ChatMessage[]): string | null {
 	for (let i = currConversation.length - 1; i >= 0; i--) {
-		const message = currConversation[i];
+		const message = currConversation[i]!;
 		if (message.role === "user") {
 			return message.content;
 		}

@@ -163,26 +163,26 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							aria-valuemin={0}
 							aria-valuemax={100}
 							aria-valuenow={
-								downloadProgress[model.id] >= 0
-									? Math.floor(downloadProgress[model.id])
+								(downloadProgress[model.id] ?? 0 >= 0)
+									? Math.floor(downloadProgress[model.id] ?? 0)
 									: undefined
 							}
 							className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden"
 						>
-							{downloadProgress[model.id] < 0 ? (
+							{(downloadProgress[model.id] ?? 0 < 0) ? (
 								// backend couldn't determine the total size
 								<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
 							) : (
 								<div
 									className="bg-pink-500 h-2.5 rounded-full transition-all"
-									style={{ width: `${downloadProgress[model.id] ?? 0}%` }}
+									style={{ width: `${downloadProgress[model.id]! ?? 0}%` }}
 								></div>
 							)}
 						</div>
 						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
-							{downloadProgress[model.id] < 0
+							{(downloadProgress[model.id] ?? 0 < 0)
 								? "…"
-								: `${Math.floor(downloadProgress[model.id] ?? 0)}%`}
+								: `${Math.floor(downloadProgress[model.id]! ?? 0)}%`}
 						</span>
 					</div>
 				)}

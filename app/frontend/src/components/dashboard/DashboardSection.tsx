@@ -33,7 +33,7 @@ export default function DashboardSection() {
 			.catch((err) => {
 				// surface the failure instead of falling through to the
 				// first-run empty state, which would mislead the user
-				console.log("error getting ideas data", err);
+				console.error("error getting ideas data", err);
 				setErrorFound(true);
 			})
 			.finally(() => setIsLoading(false));

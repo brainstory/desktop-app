@@ -58,17 +58,17 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 				}
 				setDownloadProgress(next);
 			})
-			.catch((e) => console.log("list models failed", e));
+			.catch((e) => console.error("list models failed", e));
 		getRuntimeStatusApi()
 			.then(setRuntime)
-			.catch((e) => console.log("status failed", e));
+			.catch((e) => console.error("status failed", e));
 		getAppleSttStatusApi()
 			.then(setAppleStt)
-			.catch((e) => console.log("apple stt status failed", e));
+			.catch((e) => console.error("apple stt status failed", e));
 		// re-checked on every refresh: downloads and deletions change it
 		getFreeDiskSpaceApi()
 			.then(setFreeBytes)
-			.catch((e) => console.log("free disk space failed", e));
+			.catch((e) => console.error("free disk space failed", e));
 	};
 
 	useEffect(() => {
@@ -77,7 +77,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 				setSettings(data);
 				setSavedSettings(data);
 			})
-			.catch((e) => console.log("ai settings failed", e));
+			.catch((e) => console.error("ai settings failed", e));
 		refresh();
 
 		const unlisteners = [

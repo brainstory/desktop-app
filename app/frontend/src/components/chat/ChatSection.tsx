@@ -93,8 +93,8 @@ export function ChatSection({
 		{ role: "assistant", content: firstPrompt }
 	]);
 	const minConversationLenForCreateAndEnd =
-		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ||
-		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT;
+		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ??
+		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT!;
 
 	const fetchParentIdea = (parentId: string): void => {
 		getIdeaApi(parentId)
@@ -108,7 +108,7 @@ export function ChatSection({
 				setParentIdea(ideaContent);
 			})
 			.catch((err) => {
-				console.log("Parent Idea not found with ID", parentId, err);
+				console.error("Parent Idea not found with ID", parentId, err);
 				setErrorComponent(
 					<ErrorSection
 						title="Shared idea not found"
@@ -181,7 +181,7 @@ export function ChatSection({
 					if (seq !== autosaveSeqRef.current) return;
 					// don't show SAVED visual for saving the user message so that
 					// the switch from SAVING to SAVED doesn't happen twice
-					if (currConversation[currConversation.length - 1].role === "assistant") {
+					if (currConversation[currConversation.length - 1]?.role === "assistant") {
 						setSaveState(CHAT_SAVE_STATE.SUCCESS);
 					}
 				})
@@ -229,7 +229,7 @@ export function ChatSection({
 					}
 				})
 				.catch((err) => {
-					console.log("idea not found with ID", ideaId, err);
+					console.error("idea not found with ID", ideaId, err);
 					setErrorComponent(
 						<ErrorSection
 							title="Draft idea not found"

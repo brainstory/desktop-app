@@ -13,7 +13,7 @@ import {
 } from "./chat";
 
 describe("getFirstPrompt", () => {
-	const guide = (n: number) => TOPICS[n].prompt;
+	const guide = (n: number) => TOPICS[n]!.prompt;
 
 	it("uses the default greeting when no topic param is present", () => {
 		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: null })).toBe(
@@ -22,7 +22,7 @@ describe("getFirstPrompt", () => {
 	});
 
 	it("uses the default greeting for an empty or invalid topic param", () => {
-		// "?topic=" used to resolve to Number("") === 0 -> TOPICS[0]
+		// "?topic=" used to resolve to Number("") === 0 -> TOPICS[0]!
 		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "" })).toBe(
 			"Hi, how's it going? What's on your mind?"
 		);
@@ -80,7 +80,7 @@ describe("addConversationMessage", () => {
 
 	it("appends an assistant message when isUser is falsy", () => {
 		const next = addConversationMessage("hey", false, [], () => {});
-		expect(next[0].role).toBe("assistant");
+		expect(next[0]!.role).toBe("assistant");
 	});
 
 	it("does not mutate the previous array", () => {
