@@ -309,6 +309,28 @@ pub async fn download_model(
 	Ok(())
 }
 
+/// Why `spec` cannot be deleted right now, if anything: its download is
+/// still running, or a load of its engine kind is (that load would
+/// re-install the engine right after the deletion).
+fn delete_blocked(state: &AppState, spec: &crate::models::ModelSpec) -> Option<&'static str> {
+	if state
+		.download_progress
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.contains_key(spec.id)
+	{
+		return Some("model is currently downloading");
+	}
+	let loading = match spec.kind {
+		ModelKind::Llm => &state.llm_loading,
+		ModelKind::Stt => &state.stt_loading,
+	};
+	if loading.load(Ordering::SeqCst) {
+		return Some("model is currently loading - try again in a moment");
+	}
+	None
+}
+
 #[tauri::command]
 pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
 	// Dropping the mmapped engine and removing a multi-GB file can stall
@@ -318,28 +340,8 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		let spec = find_model(&model_id, ModelKind::Llm)
 			.or_else(|| find_model(&model_id, ModelKind::Stt))
 			.ok_or_else(|| format!("unknown model {model_id}"))?;
-		{
-			let progress = state
-				.download_progress
-				.lock()
-				.unwrap_or_else(|e| e.into_inner());
-			if progress.contains_key(&model_id) {
-				return Err("model is currently downloading".into());
-			}
-		}
-		// A load of this model running in the background would re-install the
-		// engine right after deletion; refuse until it finishes.
-		match spec.kind {
-			ModelKind::Llm => {
-				if state.llm_loading.load(Ordering::SeqCst) {
-					return Err("model is currently loading - try again in a moment".into());
-				}
-			}
-			ModelKind::Stt => {
-				if state.stt_loading.load(Ordering::SeqCst) {
-					return Err("model is currently loading - try again in a moment".into());
-				}
-			}
+		if let Some(reason) = delete_blocked(&state, spec) {
+			return Err(reason.into());
 		}
 		// Unload the engine BEFORE deleting the files: a loaded engine
 		// mmaps the model, and on Windows an open mmap makes remove_file
@@ -482,6 +484,25 @@ mod tests {
 		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
 		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
 		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	#[test]
+	fn delete_is_blocked_while_downloading_or_loading() {
+		let (state, _dir) = temp_state("blocked");
+		let spec = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		assert_eq!(super::delete_blocked(&state, spec), None);
+
+		register_download(&state, spec.id).expect("register");
+		assert!(super::delete_blocked(&state, spec).is_some(), "downloading");
+		unregister_download(&state, spec.id);
+
+		state.stt_loading.store(true, Ordering::SeqCst);
+		assert!(super::delete_blocked(&state, spec).is_some(), "loading");
+		// a load of the other engine kind does not block
+		state.stt_loading.store(false, Ordering::SeqCst);
+		state.llm_loading.store(true, Ordering::SeqCst);
+		assert_eq!(super::delete_blocked(&state, spec), None);
 	}
 
 	#[test]
