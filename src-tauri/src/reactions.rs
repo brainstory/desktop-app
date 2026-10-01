@@ -33,6 +33,47 @@ pub fn validate_reaction(emoji: &str) -> Result<(), String> {
 	}
 }
 
+/// One section reaction as it travels in a feedback share file (and as it
+/// is handed to the database when such a file is imported).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SharedSectionReaction {
+	/// index into the reacted idea's sections (`Db::result_to_json` order)
+	pub section_index: i64,
+	pub emoji: String,
+}
+
+/// A reaction on one section of an idea, as `get_reactions` returns it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionReaction {
+	pub section_index: i64,
+	pub emoji: String,
+	/// the local user's own reaction (not carried in by a feedback file)
+	pub mine: bool,
+	/// creator name of the imported feedback that carried the reaction;
+	/// None for the user's own reactions or when the name is unknown
+	pub from: Option<String>,
+}
+
+/// The idea author's reaction on one comment (structured feedback item)
+/// of a feedback child idea. Local only, never exported.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentReaction {
+	pub feedback_idea_id: String,
+	/// index into that feedback idea's `structured_result.feedback_items`
+	pub item_index: i64,
+	pub emoji: String,
+}
+
+/// Everything shown on one idea's page: reactions on its sections and on
+/// the comments of its feedback children.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct IdeaReactions {
+	pub sections: Vec<SectionReaction>,
+	pub comments: Vec<CommentReaction>,
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -65,5 +106,30 @@ mod tests {
 			assert!(!is_valid_reaction(other), "{other:?} must be rejected");
 			assert!(validate_reaction(other).is_err());
 		}
+	}
+
+	#[test]
+	fn get_reactions_shape_is_camel_case() {
+		let value = serde_json::to_value(IdeaReactions {
+			sections: vec![SectionReaction {
+				section_index: 2,
+				emoji: "👍".into(),
+				mine: false,
+				from: None,
+			}],
+			comments: vec![CommentReaction {
+				feedback_idea_id: "f".into(),
+				item_index: 0,
+				emoji: "🚀".into(),
+			}],
+		})
+		.unwrap();
+		assert_eq!(
+			value,
+			serde_json::json!({
+				"sections": [{ "sectionIndex": 2, "emoji": "👍", "mine": false, "from": null }],
+				"comments": [{ "feedbackIdeaId": "f", "itemIndex": 0, "emoji": "🚀" }],
+			})
+		);
 	}
 }

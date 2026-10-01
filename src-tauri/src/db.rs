@@ -4,6 +4,9 @@ use std::sync::Mutex;
 use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::reactions::{
+	validate_reaction, CommentReaction, IdeaReactions, SectionReaction, SharedSectionReaction,
+};
 use crate::types::{ChatMessage, DailyStatus, IdeaItem, IdeaType};
 
 pub const DEFAULT_LOG_QUESTIONS: [(i64, &str, &str); 4] = [
@@ -128,6 +131,30 @@ const BASELINE_SCHEMA: &str = "
 		is_completed INTEGER NOT NULL DEFAULT 0
 	);";
 
+/// Schema step 5. One section reaction per (idea, section, emoji, source):
+/// the IFNULL folds every local (NULL-source) reaction into one key, which
+/// a plain UNIQUE constraint would not (NULLs never compare equal).
+const REACTIONS_SCHEMA: &str = "
+	CREATE TABLE IF NOT EXISTS section_reactions (
+		id INTEGER PRIMARY KEY,
+		idea_id TEXT NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+		section_index INTEGER NOT NULL CHECK (section_index >= 0),
+		emoji TEXT NOT NULL,
+		source_idea_id TEXT REFERENCES ideas(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_section_reactions_unique
+		ON section_reactions(idea_id, section_index, emoji, IFNULL(source_idea_id, ''));
+	CREATE INDEX IF NOT EXISTS idx_section_reactions_source ON section_reactions(source_idea_id);
+	CREATE TABLE IF NOT EXISTS comment_reactions (
+		id INTEGER PRIMARY KEY,
+		feedback_idea_id TEXT NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+		item_index INTEGER NOT NULL CHECK (item_index >= 0),
+		emoji TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		UNIQUE (feedback_idea_id, item_index, emoji)
+	);";
+
 /// Schema history, tracked via `PRAGMA user_version`:
 ///   1: baseline tables + one-time strip of legacy trailing-Z timestamps
 ///   2: `daily.created_at` column + lookup indexes
@@ -135,6 +162,8 @@ const BASELINE_SCHEMA: &str = "
 ///      activity's local calendar day at write time
 ///   4: indexes on the local_date columns (streak and activity-today
 ///      queries scan them on every dashboard load)
+///   5: `section_reactions` and `comment_reactions` (emoji reactions
+///      people put on idea sections and feedback comments)
 /// The baseline also gained `ideas.parent_idea_id REFERENCES ideas(id)
 /// ON DELETE CASCADE` before first release; databases from pre-release dev
 /// builds simply don't have the constraint (the app-level recursive delete
@@ -151,7 +180,13 @@ const BASELINE_SCHEMA: &str = "
 ///   streak and activity queries).
 /// - `ideas.log_id`: the daily log an idea was created from, written for
 ///   provenance; nothing reads it yet.
-const SCHEMA_VERSION: i64 = 4;
+/// - `section_reactions.section_index`: index into the idea's sections in
+///   `Db::result_to_json` order. `source_idea_id` NULL = the local user's
+///   own reaction; otherwise the imported feedback idea that carried it
+///   (deleting that feedback deletes its reactions).
+/// - `comment_reactions.item_index`: index into the feedback idea's
+///   `structured_result.feedback_items`; the idea author's, never shared.
+const SCHEMA_VERSION: i64 = 5;
 
 /// SQL predicate matching idea rows that came from a share file
 /// (`idea_metadata.imported = true`). Imported rows never count as the
@@ -190,6 +225,10 @@ pub struct NewIdea<'a> {
 	/// overrides the timestamp (imports keep their original date)
 	pub created_at: Option<&'a str>,
 	pub imported: bool,
+	/// Section reactions this (imported feedback) idea carries onto its
+	/// parent idea; stored in the same transaction, attributed to this
+	/// idea. Requires `parent_idea_id`.
+	pub parent_section_reactions: &'a [SharedSectionReaction],
 }
 
 impl<'a> NewIdea<'a> {
@@ -293,6 +332,15 @@ impl Db {
 				 CREATE INDEX IF NOT EXISTS idx_surveys_local_date ON surveys(local_date);",
 			)?;
 			tx.pragma_update(None, "user_version", 4)?;
+			tx.commit()?;
+		}
+		if version < 5 {
+			// Emoji reactions chosen by people. Both tables cascade with
+			// their ideas (foreign_keys is ON above); the source index
+			// backs the cascade from a deleted imported feedback.
+			let tx = conn.transaction()?;
+			tx.execute_batch(REACTIONS_SCHEMA)?;
+			tx.pragma_update(None, "user_version", 5)?;
 			tx.commit()?;
 		}
 		// Self-healing backfill on every open: any row still carrying an
@@ -534,6 +582,30 @@ impl Db {
 			],
 		)
 		.map_err(|e| format!("failed to save idea: {e}"))?;
+		if !idea.parent_section_reactions.is_empty() {
+			let parent_id = idea
+				.parent_idea_id
+				.ok_or("section reactions need a parent idea to attach to")?;
+			for reaction in idea.parent_section_reactions {
+				validate_reaction(&reaction.emoji)?;
+				if reaction.section_index < 0 {
+					return Err(format!("invalid section index {}", reaction.section_index));
+				}
+				// OR IGNORE: a repeated entry is the same reaction
+				conn.execute(
+					"INSERT OR IGNORE INTO section_reactions (idea_id, section_index, emoji, source_idea_id, created_at)
+					 VALUES (?1, ?2, ?3, ?4, ?5)",
+					params![
+						parent_id,
+						reaction.section_index,
+						reaction.emoji,
+						idea.id,
+						now
+					],
+				)
+				.map_err(|e| format!("failed to save reactions: {e}"))?;
+			}
+		}
 		Ok(())
 	}
 
@@ -853,6 +925,178 @@ impl Db {
 			}
 		}
 		Ok(ideas)
+	}
+
+	// ---- reactions ----
+
+	/// Add the local user's `emoji` on section `section_index` of an idea,
+	/// or remove it if already there. Returns true when it is now on.
+	pub fn toggle_section_reaction(
+		&self,
+		idea_id: &str,
+		section_index: i64,
+		emoji: &str,
+	) -> Result<bool, String> {
+		validate_reaction(emoji)?;
+		if section_index < 0 {
+			return Err(format!("invalid section index {section_index}"));
+		}
+		let mut on = false;
+		self.with_tx(|conn| {
+			let exists: i64 = conn
+				.query_row(
+					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+					params![idea_id],
+					|row| row.get(0),
+				)
+				.map_err(|e| format!("failed to read idea {idea_id}: {e}"))?;
+			if exists == 0 {
+				return Err(format!("idea {idea_id} not found"));
+			}
+			let removed = conn
+				.execute(
+					"DELETE FROM section_reactions
+					 WHERE idea_id = ?1 AND section_index = ?2 AND emoji = ?3 AND source_idea_id IS NULL",
+					params![idea_id, section_index, emoji],
+				)
+				.map_err(|e| format!("failed to save reaction: {e}"))?;
+			if removed == 0 {
+				conn.execute(
+					"INSERT INTO section_reactions (idea_id, section_index, emoji, source_idea_id, created_at)
+					 VALUES (?1, ?2, ?3, NULL, ?4)",
+					params![idea_id, section_index, emoji, now_iso()],
+				)
+				.map_err(|e| format!("failed to save reaction: {e}"))?;
+				on = true;
+			}
+			Ok(())
+		})?;
+		Ok(on)
+	}
+
+	/// Add the idea author's `emoji` on comment `item_index` of a feedback
+	/// idea, or remove it if already there. Returns true when it is now on.
+	pub fn toggle_comment_reaction(
+		&self,
+		feedback_idea_id: &str,
+		item_index: i64,
+		emoji: &str,
+	) -> Result<bool, String> {
+		validate_reaction(emoji)?;
+		if item_index < 0 {
+			return Err(format!("invalid comment index {item_index}"));
+		}
+		let mut on = false;
+		self.with_tx(|conn| {
+			let idea_type: Option<String> = conn
+				.query_row(
+					"SELECT idea_type FROM ideas WHERE id = ?1",
+					params![feedback_idea_id],
+					|row| row.get(0),
+				)
+				.optional()
+				.map_err(|e| format!("failed to read idea {feedback_idea_id}: {e}"))?;
+			match idea_type.as_deref() {
+				None => return Err(format!("idea {feedback_idea_id} not found")),
+				Some(t) if t != IdeaType::Feedback.as_str() => {
+					return Err(format!(
+						"idea {feedback_idea_id} is not feedback; only feedback comments take reactions"
+					))
+				}
+				Some(_) => {}
+			}
+			let removed = conn
+				.execute(
+					"DELETE FROM comment_reactions
+					 WHERE feedback_idea_id = ?1 AND item_index = ?2 AND emoji = ?3",
+					params![feedback_idea_id, item_index, emoji],
+				)
+				.map_err(|e| format!("failed to save reaction: {e}"))?;
+			if removed == 0 {
+				conn.execute(
+					"INSERT INTO comment_reactions (feedback_idea_id, item_index, emoji, created_at)
+					 VALUES (?1, ?2, ?3, ?4)",
+					params![feedback_idea_id, item_index, emoji, now_iso()],
+				)
+				.map_err(|e| format!("failed to save reaction: {e}"))?;
+				on = true;
+			}
+			Ok(())
+		})?;
+		Ok(on)
+	}
+
+	/// Reactions shown on an idea's page: every reaction on its sections
+	/// (the user's own and those carried in by imported feedback), plus
+	/// the author's reactions on the comments of its feedback children.
+	/// An unknown idea simply has none.
+	pub fn get_reactions(&self, idea_id: &str) -> Result<IdeaReactions, String> {
+		let conn = self.lock();
+		let mut stmt = conn
+			.prepare(
+				"SELECT r.section_index, r.emoji, r.source_idea_id IS NULL, s.creator_name
+				 FROM section_reactions r LEFT JOIN ideas s ON s.id = r.source_idea_id
+				 WHERE r.idea_id = ?1
+				 ORDER BY r.section_index, r.id",
+			)
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		let sections = stmt
+			.query_map(params![idea_id], |row| {
+				let mine: bool = row.get(2)?;
+				Ok(SectionReaction {
+					section_index: row.get(0)?,
+					emoji: row.get(1)?,
+					mine,
+					from: if mine { None } else { row.get(3)? },
+				})
+			})
+			.and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		let mut stmt = conn
+			.prepare(
+				"SELECT c.feedback_idea_id, c.item_index, c.emoji
+				 FROM comment_reactions c JOIN ideas f ON f.id = c.feedback_idea_id
+				 WHERE f.parent_idea_id = ?1
+				 ORDER BY c.feedback_idea_id, c.item_index, c.id",
+			)
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		let comments = stmt
+			.query_map(params![idea_id], |row| {
+				Ok(CommentReaction {
+					feedback_idea_id: row.get(0)?,
+					item_index: row.get(1)?,
+					emoji: row.get(2)?,
+				})
+			})
+			.and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		Ok(IdeaReactions { sections, comments })
+	}
+
+	/// The local user's own section reactions on an idea (what a feedback
+	/// export carries about its parent idea).
+	pub fn my_section_reactions(
+		&self,
+		idea_id: &str,
+	) -> Result<Vec<SharedSectionReaction>, String> {
+		let conn = self.lock();
+		let mut stmt = conn
+			.prepare(
+				"SELECT section_index, emoji FROM section_reactions
+				 WHERE idea_id = ?1 AND source_idea_id IS NULL
+				 ORDER BY section_index, id",
+			)
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		let rows = stmt
+			.query_map(params![idea_id], |row| {
+				Ok(SharedSectionReaction {
+					section_index: row.get(0)?,
+					emoji: row.get(1)?,
+				})
+			})
+			.and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+			.map_err(|e| format!("failed to read reactions: {e}"))?;
+		Ok(rows)
 	}
 
 	// ---- logs / surveys / daily ----
@@ -1789,5 +2033,314 @@ mod v4_tests {
 				assert_eq!(has, 1, "{table} local_date index exists");
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod reaction_tests {
+	use super::*;
+	use serde_json::json;
+
+	fn db() -> (Db, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(Db::open(&dir.path().join("r.db")).expect("open"), dir)
+	}
+
+	fn idea(db: &Db, id: &str, idea_type: IdeaType, parent: Option<&str>) {
+		db.insert_idea(NewIdea {
+			id,
+			title: id,
+			idea_type,
+			result: "## A\na\n\n## B\nb",
+			metadata: &json!({}),
+			parent_idea_id: parent,
+			..Default::default()
+		})
+		.expect("insert");
+	}
+
+	fn shared(section_index: i64, emoji: &str) -> SharedSectionReaction {
+		SharedSectionReaction {
+			section_index,
+			emoji: emoji.into(),
+		}
+	}
+
+	fn count(db: &Db, table: &str) -> i64 {
+		db.lock()
+			.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+			.unwrap()
+	}
+
+	#[test]
+	fn migrates_v4_database_to_reaction_tables() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("t.db");
+		// a database exactly as schema version 4 left it
+		{
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(BASELINE_SCHEMA).unwrap();
+			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+				.unwrap();
+			for table in ["ideas", "log_entries", "surveys"] {
+				conn.execute_batch(&format!(
+					"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';
+					 CREATE INDEX idx_{table}_local_date ON {table}(local_date);"
+				))
+				.unwrap();
+			}
+			conn.execute_batch(
+				"INSERT INTO ideas (id, created_at) VALUES ('old', '2026-01-01T00:00:00');",
+			)
+			.unwrap();
+			conn.pragma_update(None, "user_version", 4).unwrap();
+		}
+		let db = Db::open(&path).expect("migrate v4 -> v5");
+		{
+			let conn = db.lock();
+			let version: i64 = conn
+				.query_row("PRAGMA user_version", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(version, 5);
+			assert_eq!(version, SCHEMA_VERSION);
+			for name in [
+				"section_reactions",
+				"comment_reactions",
+				"idx_section_reactions_unique",
+				"idx_section_reactions_source",
+			] {
+				let has: i64 = conn
+					.query_row(
+						"SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
+						params![name],
+						|r| r.get(0),
+					)
+					.unwrap();
+				assert_eq!(has, 1, "{name} exists after the migration");
+			}
+		}
+		// existing rows are untouched and the new tables are usable
+		assert!(db.get_idea("old").unwrap().is_some());
+		assert!(db.toggle_section_reaction("old", 1, "👍").unwrap());
+		drop(db);
+		// reopening a v5 file runs no step again
+		let db = Db::open(&path).expect("reopen v5");
+		assert_eq!(db.get_reactions("old").unwrap().sections.len(), 1);
+	}
+
+	#[test]
+	fn section_reaction_toggles_on_and_off() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		assert!(db.toggle_section_reaction("i", 1, "👍").unwrap(), "now on");
+		assert!(db.toggle_section_reaction("i", 1, "⚠️").unwrap());
+		assert!(db.toggle_section_reaction("i", 2, "👍").unwrap());
+		let mine = |section_index: i64, emoji: &str| SectionReaction {
+			section_index,
+			emoji: emoji.into(),
+			mine: true,
+			from: None,
+		};
+		assert_eq!(
+			db.get_reactions("i").unwrap().sections,
+			vec![mine(1, "👍"), mine(1, "⚠️"), mine(2, "👍")]
+		);
+		assert!(
+			!db.toggle_section_reaction("i", 1, "👍").unwrap(),
+			"now off"
+		);
+		assert_eq!(
+			db.get_reactions("i").unwrap().sections,
+			vec![mine(1, "⚠️"), mine(2, "👍")]
+		);
+	}
+
+	#[test]
+	fn section_reaction_writes_are_validated() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		let err = db.toggle_section_reaction("i", 0, "❤️").unwrap_err();
+		assert!(err.contains("unsupported reaction"), "{err}");
+		// the warning sign without its variation selector is not in the set
+		assert!(db.toggle_section_reaction("i", 0, "\u{26A0}").is_err());
+		let err = db.toggle_section_reaction("i", -1, "👍").unwrap_err();
+		assert!(err.contains("invalid section index"), "{err}");
+		let err = db.toggle_section_reaction("ghost", 0, "👍").unwrap_err();
+		assert!(err.contains("not found"), "{err}");
+		assert_eq!(count(&db, "section_reactions"), 0);
+		// the schema backs the index check even for direct SQL
+		let direct = db.lock().execute(
+			"INSERT INTO section_reactions (idea_id, section_index, emoji, created_at) VALUES ('i', -1, '👍', 'x')",
+			[],
+		);
+		assert!(direct.is_err(), "CHECK rejects a negative index");
+	}
+
+	#[test]
+	fn comment_reactions_need_a_feedback_idea_and_show_on_its_parent() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		idea(&db, "f1", IdeaType::Feedback, Some("i"));
+		idea(&db, "f2", IdeaType::Feedback, Some("i"));
+		idea(&db, "other", IdeaType::Original, None);
+		idea(&db, "f3", IdeaType::Feedback, Some("other"));
+
+		let err = db.toggle_comment_reaction("i", 0, "👍").unwrap_err();
+		assert!(err.contains("not feedback"), "{err}");
+		let err = db.toggle_comment_reaction("ghost", 0, "👍").unwrap_err();
+		assert!(err.contains("not found"), "{err}");
+		let err = db.toggle_comment_reaction("f1", -1, "👍").unwrap_err();
+		assert!(err.contains("invalid comment index"), "{err}");
+		assert!(db.toggle_comment_reaction("f1", 0, "nope").is_err());
+		assert_eq!(count(&db, "comment_reactions"), 0);
+
+		assert!(db.toggle_comment_reaction("f1", 0, "👍").unwrap());
+		assert!(db.toggle_comment_reaction("f1", 3, "🚀").unwrap());
+		assert!(db.toggle_comment_reaction("f2", 0, "❓").unwrap());
+		assert!(db.toggle_comment_reaction("f3", 0, "📚").unwrap());
+		assert!(!db.toggle_comment_reaction("f1", 3, "🚀").unwrap(), "off");
+
+		let comment = |feedback_idea_id: &str, item_index: i64, emoji: &str| CommentReaction {
+			feedback_idea_id: feedback_idea_id.into(),
+			item_index,
+			emoji: emoji.into(),
+		};
+		let reactions = db.get_reactions("i").unwrap();
+		assert!(reactions.sections.is_empty());
+		assert_eq!(
+			reactions.comments,
+			vec![comment("f1", 0, "👍"), comment("f2", 0, "❓")],
+			"only this idea's feedback children"
+		);
+		assert_eq!(
+			db.get_reactions("other").unwrap().comments,
+			vec![comment("f3", 0, "📚")]
+		);
+		assert_eq!(db.get_reactions("ghost").unwrap(), IdeaReactions::default());
+	}
+
+	#[test]
+	fn imported_reactions_are_attributed_to_their_feedback() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		assert!(db.toggle_section_reaction("i", 1, "👍").unwrap());
+		let carried = [shared(1, "👍"), shared(2, "💡"), shared(2, "💡")];
+		db.insert_idea(NewIdea::imported(NewIdea {
+			id: "fb",
+			title: "Feedback",
+			idea_type: IdeaType::Feedback,
+			result: "r",
+			metadata: &json!({ "imported": true }),
+			parent_idea_id: Some("i"),
+			creator_name: Some("Grace"),
+			parent_section_reactions: &carried,
+			..Default::default()
+		}))
+		.expect("insert imported feedback");
+		let grace = |section_index: i64, emoji: &str| SectionReaction {
+			section_index,
+			emoji: emoji.into(),
+			mine: false,
+			from: Some("Grace".into()),
+		};
+		// the same emoji from me and from Grace are separate reactions;
+		// the repeated entry was stored once
+		assert_eq!(
+			db.get_reactions("i").unwrap().sections,
+			vec![
+				SectionReaction {
+					section_index: 1,
+					emoji: "👍".into(),
+					mine: true,
+					from: None,
+				},
+				grace(1, "👍"),
+				grace(2, "💡"),
+			]
+		);
+		// toggling my own reaction never touches the imported one
+		assert!(!db.toggle_section_reaction("i", 1, "👍").unwrap());
+		assert_eq!(
+			db.get_reactions("i").unwrap().sections,
+			vec![grace(1, "👍"), grace(2, "💡")]
+		);
+		// only my own reactions are what an export carries
+		assert!(db.my_section_reactions("i").unwrap().is_empty());
+		assert!(db.toggle_section_reaction("i", 3, "🚀").unwrap());
+		assert_eq!(db.my_section_reactions("i").unwrap(), vec![shared(3, "🚀")]);
+	}
+
+	#[test]
+	fn invalid_carried_reactions_reject_the_whole_insert() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		for bad in [shared(0, "❤️"), shared(-1, "👍")] {
+			let carried = [shared(0, "👍"), bad];
+			db.insert_idea(NewIdea {
+				id: "fb",
+				title: "F",
+				idea_type: IdeaType::Feedback,
+				result: "r",
+				metadata: &json!({}),
+				parent_idea_id: Some("i"),
+				parent_section_reactions: &carried,
+				..Default::default()
+			})
+			.expect_err("invalid reaction must fail the insert");
+			assert!(db.get_idea("fb").unwrap().is_none(), "rolled back");
+			assert_eq!(count(&db, "section_reactions"), 0, "rolled back");
+		}
+		// reactions without a parent to attach to are refused
+		let carried = [shared(0, "👍")];
+		db.insert_idea(NewIdea {
+			id: "lone",
+			title: "L",
+			idea_type: IdeaType::Original,
+			result: "r",
+			metadata: &json!({}),
+			parent_section_reactions: &carried,
+			..Default::default()
+		})
+		.expect_err("no parent to attach to");
+		assert!(db.get_idea("lone").unwrap().is_none());
+	}
+
+	#[test]
+	fn deleting_ideas_cascades_to_their_reactions() {
+		let (db, _dir) = db();
+		idea(&db, "i", IdeaType::Original, None);
+		idea(&db, "mine-fb", IdeaType::Feedback, Some("i"));
+		let carried = [shared(1, "👍")];
+		db.insert_idea(NewIdea {
+			id: "their-fb",
+			title: "F",
+			idea_type: IdeaType::Feedback,
+			result: "r",
+			metadata: &json!({}),
+			parent_idea_id: Some("i"),
+			creator_name: Some("Grace"),
+			parent_section_reactions: &carried,
+			..Default::default()
+		})
+		.unwrap();
+		db.toggle_section_reaction("i", 1, "👍").unwrap();
+		db.toggle_comment_reaction("their-fb", 0, "👍").unwrap();
+		db.toggle_comment_reaction("mine-fb", 0, "❓").unwrap();
+		assert_eq!(count(&db, "section_reactions"), 2);
+		assert_eq!(count(&db, "comment_reactions"), 2);
+
+		// deleting one feedback removes the section reactions it carried
+		// and the comment reactions on it, nothing else
+		assert!(db.delete_idea("their-fb").unwrap());
+		let reactions = db.get_reactions("i").unwrap();
+		assert_eq!(reactions.sections.len(), 1);
+		assert!(reactions.sections[0].mine);
+		assert_eq!(reactions.comments.len(), 1);
+		assert_eq!(reactions.comments[0].feedback_idea_id, "mine-fb");
+
+		// deleting the idea removes everything left
+		assert!(db.delete_idea("i").unwrap());
+		assert_eq!(count(&db, "section_reactions"), 0);
+		assert_eq!(count(&db, "comment_reactions"), 0);
 	}
 }
