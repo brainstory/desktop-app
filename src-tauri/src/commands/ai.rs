@@ -447,8 +447,10 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 /// object with a feedback_items key holding an array. Output that is not
 /// JSON, lacks the key, or holds a non-array is logged and treated as
 /// absent (structured_result becomes null) rather than stored broken.
+/// Items without feedback text, and exact repeats of an earlier item, are
+/// dropped: each item becomes a comment bubble on the idea.
 fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
-	let Some(value) = extract_json(text) else {
+	let Some(mut value) = extract_json(text) else {
 		// length only: the output is the user's own feedback text
 		log::warn!(
 			"structured feedback output is not valid JSON ({} chars); structured_result will be null",
@@ -462,7 +464,23 @@ fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
 			log::warn!("structured feedback JSON has no feedback_items key");
 			None
 		}
-		Some(items) if items.is_array() => Some(value),
+		Some(items) if items.is_array() => {
+			if let Some(items) = value["feedback_items"].as_array_mut() {
+				let mut seen = std::collections::HashSet::new();
+				items.retain(|item| {
+					let text = item["feedback_text"].as_str().unwrap_or_default().trim();
+					!text.is_empty()
+						&& seen.insert((
+							item["oid_heading_text"]
+								.as_str()
+								.unwrap_or_default()
+								.to_owned(),
+							text.to_owned(),
+						))
+				});
+			}
+			Some(value)
+		}
 		Some(_) => {
 			log::warn!("structured feedback JSON has a non-array feedback_items");
 			None
@@ -534,6 +552,33 @@ mod feedback_json_tests {
 		assert!(v["feedback_items"][0].get("labels").is_none());
 		let legacy = r#"{"feedback_items": [{"oid_heading_text": "1## A", "labels": [{"name": "agree", "emoji": "👍"}]}]}"#;
 		assert!(extract_feedback_json(legacy).is_some());
+	}
+
+	#[test]
+	fn drops_items_without_text_and_exact_repeats() {
+		// E2B added an empty-text item for every section H never mentioned
+		let v = extract_feedback_json(
+			r#"{"feedback_items": [
+				{"oid_heading_text": "1## A", "matched_spans": [], "feedback_text": "more ideas"},
+				{"oid_heading_text": "2## B", "matched_spans": [], "feedback_text": ""},
+				{"oid_heading_text": "3## C", "matched_spans": [], "feedback_text": "  "},
+				{"oid_heading_text": "1## A", "matched_spans": ["x"], "feedback_text": "more ideas"},
+				{"oid_heading_text": "3## C", "matched_spans": [], "feedback_text": "more ideas"}
+			]}"#,
+		)
+		.expect("valid");
+		let kept: Vec<(&str, &str)> = v["feedback_items"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|i| {
+				(
+					i["oid_heading_text"].as_str().unwrap(),
+					i["feedback_text"].as_str().unwrap(),
+				)
+			})
+			.collect();
+		assert_eq!(kept, [("1## A", "more ideas"), ("3## C", "more ideas")]);
 	}
 
 	#[test]
