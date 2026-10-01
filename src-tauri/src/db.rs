@@ -142,6 +142,10 @@ const BASELINE_SCHEMA: &str = "
 /// A database created before this framework exists reports version 0 and is
 /// brought forward through every step (the CREATE IF NOT EXISTS statements
 /// make step 1 a no-op for its tables).
+///
+/// Column notes:
+/// - `daily.created_at`: when the day's row was first written (naive UTC,
+///   like every created_at); rows written before it was populated hold ''.
 const SCHEMA_VERSION: i64 = 4;
 
 /// SQL predicate matching idea rows that came from a share file
@@ -551,9 +555,9 @@ impl Db {
 				// A new intent for the day replaces the old one as a fresh
 				// draft: is_completed must reset, or a later empty draft
 				// still shows the day as finished.
-				"INSERT INTO daily (date, intent_idea_id, is_completed) VALUES (?1, ?2, 0)
+				"INSERT INTO daily (date, intent_idea_id, is_completed, created_at) VALUES (?1, ?2, 0, ?3)
 				 ON CONFLICT(date) DO UPDATE SET intent_idea_id = ?2, is_completed = 0",
-				params![today, id],
+				params![today, id, now_iso()],
 			)
 			.map_err(|e| format!("failed to save daily intent: {e}"))?;
 			if mark_completed {
@@ -830,9 +834,9 @@ impl Db {
 			)
 			.map_err(|e| format!("failed to save daily log: {e}"))?;
 			conn.execute(
-				"INSERT INTO daily (date, log_id, is_completed) VALUES (?1, ?2, 0)
+				"INSERT INTO daily (date, log_id, is_completed, created_at) VALUES (?1, ?2, 0, ?3)
 				 ON CONFLICT(date) DO UPDATE SET log_id = ?2",
-				params![today, id],
+				params![today, id, now_iso()],
 			)
 			.map_err(|e| format!("failed to save daily log: {e}"))?;
 			Ok(())
@@ -882,9 +886,9 @@ impl Db {
 			// status card reads it); reflecting on the day is recorded via
 			// survey_id and counts toward the streak on its own.
 			conn.execute(
-				"INSERT INTO daily (date, survey_id) VALUES (?1, ?2)
+				"INSERT INTO daily (date, survey_id, created_at) VALUES (?1, ?2, ?3)
 				 ON CONFLICT(date) DO UPDATE SET survey_id = ?2",
-				params![today, id],
+				params![today, id, now_iso()],
 			)
 			.map_err(|e| format!("failed to save survey: {e}"))?;
 			Ok(())
@@ -1148,6 +1152,42 @@ mod tests {
 			"legacy-backfilled import counted"
 		);
 		assert!(!db.has_activity_today(), "legacy-backfilled import counted");
+	}
+
+	#[test]
+	fn daily_rows_record_when_they_were_created() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let created_at = |db: &Db| -> String {
+			db.lock()
+				.query_row("SELECT created_at FROM daily", [], |r| r.get(0))
+				.unwrap()
+		};
+		db.insert_log("l1", &[]).unwrap();
+		let first = created_at(&db);
+		assert!(
+			chrono::NaiveDateTime::parse_from_str(&first, "%Y-%m-%dT%H:%M:%S").is_ok(),
+			"naive-UTC timestamp like every other created_at, got {first:?}"
+		);
+		// later activity on the same day updates the row, not its birth
+		db.lock()
+			.execute("UPDATE daily SET created_at = '2000-01-01T00:00:00'", [])
+			.unwrap();
+		db.insert_survey("s1", None, &serde_json::json!({}))
+			.unwrap();
+		db.create_daily_intent_idea("i1", "T", "", &[], &serde_json::json!({}))
+			.unwrap();
+		assert_eq!(created_at(&db), "2000-01-01T00:00:00");
+
+		// every statement that can create the row stamps it
+		for create in [
+			|db: &Db| db.insert_survey("s2", None, &serde_json::json!({})),
+			|db: &Db| db.create_daily_intent_idea("i2", "T", "", &[], &serde_json::json!({})),
+		] {
+			db.lock().execute("DELETE FROM daily", []).unwrap();
+			create(&db).unwrap();
+			assert_ne!(created_at(&db), "", "row created without a timestamp");
+		}
 	}
 
 	#[test]
