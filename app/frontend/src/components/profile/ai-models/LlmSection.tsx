@@ -1,43 +1,54 @@
-import { useId, useState } from "react";
-import Button from "@ds/Button";
+import { useId, useState, type Dispatch, type SetStateAction } from "react";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import type { AiSettingsResponse, EngineStatus, ModelStatus } from "@helpers/api/models";
 import { EngineStatusHeader } from "./EngineStatusHeader";
+import { ExternalEndpointFields } from "./ExternalEndpointFields";
 import { ModelList, type ModelListContext } from "./ModelRow";
-import { SecretRow } from "./SecretRow";
 
 interface LlmSectionProps {
 	settings: AiSettingsResponse;
 	savedSettings: AiSettingsResponse | null;
+	setSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
+	setSavedSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
 	status: EngineStatus;
 	models: ModelStatus[];
 	modelList: ModelListContext;
 	save: (updates: Partial<AiSettingsResponse>) => void;
 	saveSecret: (key: string, value: string) => void;
-	saveEndpoint: (value: string) => void;
+	refreshModels: () => void;
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
-/** Language model: status, local/external switch, models, download settings. */
+/** Language model: status, local/external switch, its external endpoint,
+ * and the local models. */
 export function LlmSection({
 	settings,
 	savedSettings,
+	setSettings,
+	setSavedSettings,
 	status,
 	models,
 	modelList,
 	save,
 	saveSecret,
-	saveEndpoint,
+	refreshModels,
 	openSnackbar
 }: LlmSectionProps) {
+	const headingId = useId();
 	const externalLlmLabelId = useId();
 	const usingExternal = settings.llmMode === "external";
+	// the endpoint is where you set things up before switching over, so
+	// start it open whenever it is (or is about to be) relevant
+	const [endpointOpen, setEndpointOpen] = useState(
+		usingExternal || !!savedSettings?.extLlmBaseUrl
+	);
 
 	const toggleExternal = () => {
 		const nextMode = usingExternal ? "local" : "external";
 		// the toggle saves only llmMode, so the URL must already be
 		// persisted - a typed-but-unsaved one doesn't count
 		if (nextMode === "external" && !savedSettings?.extLlmBaseUrl) {
+			setEndpointOpen(true);
 			openSnackbar(
 				false,
 				settings.extLlmBaseUrl
@@ -46,12 +57,17 @@ export function LlmSection({
 			);
 			return;
 		}
+		if (nextMode === "external") setEndpointOpen(true);
 		save({ llmMode: nextMode });
 	};
 
 	return (
-		<div className="flex flex-col gap-3">
-			<EngineStatusHeader title="Language model (brainstorming & writeups)" status={status} />
+		<section aria-labelledby={headingId} className="flex flex-col gap-3">
+			<EngineStatusHeader
+				title="Language model (brainstorming & writeups)"
+				status={status}
+				headingId={headingId}
+			/>
 			<div className="flex gap-2 items-center">
 				<span className="text-sm text-stone-600" id={externalLlmLabelId}>
 					Use external LLM endpoint
@@ -62,74 +78,36 @@ export function LlmSection({
 					onToggle={toggleExternal}
 				/>
 			</div>
-			{!usingExternal && <ModelList models={models} {...modelList} />}
-			{!usingExternal && (
-				<div className="border border-stone-200 rounded-lg p-4 text-sm">
-					<SecretRow
-						inputId="hf-token-input"
-						label="HuggingFace access token (optional)"
-						labelClassName="font-semibold mb-1 block"
-						description={
-							<>
-								Authenticated downloads are faster and never hit HuggingFace&rsquo;s
-								anonymous rate limits. Create a free read token at
-								huggingface.co/settings/tokens.
-							</>
-						}
-						placeholder="hf_..."
-						stored={settings.hfTokenSet}
-						hint={settings.hfTokenHint}
-						saveLabel="Save Token"
-						onSave={(value) => saveSecret("hfToken", value)}
-					/>
-					<label htmlFor="hf-endpoint-input" className="font-semibold mb-1 mt-4 block">
-						HuggingFace download endpoint (mirror, optional)
-					</label>
-					<p className="text-stone-500 mb-2">
-						Leave empty to download from huggingface.co directly, or point at a mirror
-						(e.g. https://hf-mirror.com). Also picks up the HF_ENDPOINT environment
-						variable when launched from a terminal.
-					</p>
-					<EndpointField
-						inputId="hf-endpoint-input"
-						initial={settings.hfEndpoint}
-						onSave={saveEndpoint}
-					/>
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** Plain-text field with its own Save button for a single non-secret
- * setting (the download endpoint/mirror). Sends only its own value. */
-function EndpointField({
-	inputId,
-	initial,
-	onSave
-}: {
-	inputId: string;
-	initial?: string;
-	onSave: (value: string) => void;
-}) {
-	const [value, setValue] = useState(initial ?? "");
-	return (
-		<div className="flex flex-wrap gap-2">
-			<input
-				id={inputId}
-				type="url"
-				value={value}
-				onChange={(e) => setValue(e.target.value)}
-				placeholder="https://huggingface.co"
-				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2"
-			/>
-			<Button
-				variant="pink"
-				disabled={value === (initial ?? "")}
-				onClick={() => onSave(value)}
+			<details
+				open={endpointOpen}
+				onToggle={(e) => setEndpointOpen(e.currentTarget.open)}
+				className="border border-stone-200 rounded-lg p-4 text-sm"
 			>
-				Save
-			</Button>
-		</div>
+				<summary className="font-semibold cursor-pointer">External LLM endpoint</summary>
+				<p className="text-stone-500 mt-2 mb-4">
+					Any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...). Save
+					the URL, then turn on the switch above to use it instead of a model on this
+					computer.
+				</p>
+				<ExternalEndpointFields
+					kind="llm"
+					settings={settings}
+					savedSettings={savedSettings}
+					setSettings={setSettings}
+					setSavedSettings={setSavedSettings}
+					refreshModels={refreshModels}
+					saveSecret={saveSecret}
+					openSnackbar={openSnackbar}
+				/>
+			</details>
+			{!usingExternal && (
+				<>
+					<h4 className="font-semibold text-stone-700 text-sm">
+						Models on this computer
+					</h4>
+					<ModelList models={models} {...modelList} />
+				</>
+			)}
+		</section>
 	);
 }

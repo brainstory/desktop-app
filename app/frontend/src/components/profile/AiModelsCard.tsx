@@ -4,7 +4,7 @@ import type { ModelListContext } from "./ai-models/ModelRow";
 import { localeLabel } from "./ai-models/format";
 import { LlmSection } from "./ai-models/LlmSection";
 import { SttEngineSection } from "./ai-models/SttEngineSection";
-import { ExternalEndpointsForm } from "./ai-models/ExternalEndpointsForm";
+import { ModelDownloadsSection } from "./ai-models/ModelDownloadsSection";
 
 interface AiModelsCardProps {
 	openSnackbar: (isSuccess: boolean, message: string) => void;
@@ -107,7 +107,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					<p>
 						Brainstorming needs an AI brain: download one of the models below
 						(recommended: {smallestLlm ? smallestLlm.label : "the smallest one"}), or
-						point at an external endpoint at the bottom of this page.
+						set up an external LLM endpoint in the language model section.
 					</p>
 				</div>
 			)}
@@ -115,9 +115,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
 					<p className="font-semibold mb-1">No speech-to-text model is set up yet</p>
 					<p>
-						Download a whisper model below (or configure an external STT endpoint) to
-						talk out loud. Until then you can still use Brainstory by typing your
-						responses with the text button in a session.
+						Download a whisper model below (or set up an external STT endpoint in the
+						speech-to-text section) to talk out loud. Until then you can still use
+						Brainstory by typing your responses with the text button in a session.
 					</p>
 				</div>
 			)}
@@ -125,12 +125,14 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			<LlmSection
 				settings={settings}
 				savedSettings={savedSettings}
+				setSettings={setSettings}
+				setSavedSettings={setSavedSettings}
 				status={llmStatus}
 				models={models.llm}
 				modelList={modelList}
 				save={save}
 				saveSecret={saveSecret}
-				saveEndpoint={saveEndpoint}
+				refreshModels={refreshModels}
 				openSnackbar={openSnackbar}
 			/>
 
@@ -144,18 +146,20 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				appleStt={appleStt}
 				appleActive={appleActive}
 				save={save}
+				savedSettings={savedSettings}
+				setSettings={setSettings}
+				setSavedSettings={setSavedSettings}
+				saveSecret={saveSecret}
+				refreshModels={refreshModels}
+				openSnackbar={openSnackbar}
 			/>
 
 			<hr className="my-6 border-stone-200" />
 
-			<ExternalEndpointsForm
+			<ModelDownloadsSection
 				settings={settings}
-				savedSettings={savedSettings}
-				setSettings={setSettings}
-				setSavedSettings={setSavedSettings}
-				refreshModels={refreshModels}
 				saveSecret={saveSecret}
-				openSnackbar={openSnackbar}
+				saveEndpoint={saveEndpoint}
 			/>
 		</Card>
 	);

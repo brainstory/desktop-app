@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "@helpers/cn";
 import type {
 	AiSettingsResponse,
@@ -7,6 +7,7 @@ import type {
 	ModelStatus
 } from "@helpers/api/models";
 import { EngineStatusHeader } from "./EngineStatusHeader";
+import { ExternalEndpointFields } from "./ExternalEndpointFields";
 import { ModelList, type ModelListContext } from "./ModelRow";
 import { localeLabel } from "./format";
 
@@ -64,9 +65,16 @@ interface SttEngineSectionProps {
 	/** Apple Speech is the effective engine (mirrors the backend) */
 	appleActive: boolean;
 	save: (updates: Partial<AiSettingsResponse>) => void;
+	savedSettings: AiSettingsResponse | null;
+	setSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
+	setSavedSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
+	saveSecret: (key: string, value: string) => void;
+	refreshModels: () => void;
+	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
-/** Speech-to-text: status, engine choice, language, whisper models. */
+/** Speech-to-text: status, engine choice, language, whisper models, and
+ * its external endpoint. */
 export function SttEngineSection({
 	settings,
 	status,
@@ -74,9 +82,19 @@ export function SttEngineSection({
 	modelList,
 	appleStt,
 	appleActive,
-	save
+	save,
+	savedSettings,
+	setSettings,
+	setSavedSettings,
+	saveSecret,
+	refreshModels,
+	openSnackbar
 }: SttEngineSectionProps) {
+	const headingId = useId();
 	const appleHintId = useId();
+	// the backend transcribes externally whenever a URL is saved
+	const usingExternal = !!savedSettings?.extSttBaseUrl;
+	const [endpointOpen, setEndpointOpen] = useState(usingExternal);
 
 	// The language reaches Apple Speech and multilingual whisper models
 	// (directly, or as Apple's fallback); English-only builds ignore it.
@@ -106,8 +124,18 @@ export function SttEngineSection({
 				: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
 
 	return (
-		<div className="flex flex-col gap-3">
-			<EngineStatusHeader title="Speech-to-text (transcribes you)" status={status} />
+		<section aria-labelledby={headingId} className="flex flex-col gap-3">
+			<EngineStatusHeader
+				title="Speech-to-text (transcribes you)"
+				status={status}
+				headingId={headingId}
+			/>
+			{usingExternal && (
+				<p className="text-sm bg-stone-100 border border-stone-200 rounded-lg p-3">
+					Transcription uses the external STT endpoint below. Clear its URL to transcribe
+					on this computer with the engine chosen here.
+				</p>
+			)}
 			<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
 				<p className="font-semibold text-stone-900">Engine</p>
 				<div className="flex flex-wrap gap-2">
@@ -189,6 +217,27 @@ export function SttEngineSection({
 				{appleActive ? "Whisper model (fallback)" : "Whisper model"}
 			</h4>
 			<ModelList models={models} {...modelList} />
-		</div>
+			<details
+				open={endpointOpen}
+				onToggle={(e) => setEndpointOpen(e.currentTarget.open)}
+				className="border border-stone-200 rounded-lg p-4 text-sm"
+			>
+				<summary className="font-semibold cursor-pointer">External STT endpoint</summary>
+				<p className="text-stone-500 mt-2 mb-4">
+					Any OpenAI-compatible transcription server (e.g. a whisper.cpp server). When a
+					URL is saved, it is used instead of transcribing on this computer.
+				</p>
+				<ExternalEndpointFields
+					kind="stt"
+					settings={settings}
+					savedSettings={savedSettings}
+					setSettings={setSettings}
+					setSavedSettings={setSavedSettings}
+					refreshModels={refreshModels}
+					saveSecret={saveSecret}
+					openSnackbar={openSnackbar}
+				/>
+			</details>
+		</section>
 	);
 }

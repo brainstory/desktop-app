@@ -214,7 +214,7 @@ describe("AiModelsCard", () => {
 		expect(screen.queryByText(/invalid extLlmBaseUrl/)).not.toBeInTheDocument();
 	});
 
-	it("Save Endpoints sends only the edited endpoint fields", async () => {
+	it("saving an endpoint sends only its own edited fields", async () => {
 		const user = userEvent.setup();
 		mockCard({
 			get_ai_settings: () => ({
@@ -225,14 +225,72 @@ describe("AiModelsCard", () => {
 			})
 		});
 		renderCard();
-		await user.type(await screen.findByLabelText("STT model"), "whisper-1");
-		await user.click(screen.getByRole("button", { name: "Save Endpoints" }));
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		await user.type(within(stt).getByLabelText("STT model"), "whisper-1");
+		await user.click(within(stt).getByRole("button", { name: "Save STT endpoint" }));
 		await waitFor(() => {
 			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
 			expect(call, "save_ai_settings was called").toBeTruthy();
 			expect(call![1]).toEqual({ ai: { extSttModel: "whisper-1" } });
 		});
-		expect(await screen.findByRole("button", { name: "All changes saved" })).toBeDisabled();
+		expect(await within(stt).findByRole("button", { name: "Endpoint saved" })).toBeDisabled();
+	});
+
+	it("each endpoint lives in its own section, downloads in theirs", async () => {
+		mockCard();
+		renderCard();
+		const llm = await screen.findByRole("region", { name: /Language model/ });
+		const stt = screen.getByRole("region", { name: /Speech-to-text/ });
+		const downloads = screen.getByRole("region", { name: "Model downloads" });
+		for (const label of ["LLM base URL", "LLM model", "LLM API key (if needed)"]) {
+			expect(within(llm).getByLabelText(label)).toBeInTheDocument();
+			expect(within(stt).queryByLabelText(label)).not.toBeInTheDocument();
+		}
+		for (const label of ["STT base URL", "STT model", "STT API key (if needed)"]) {
+			expect(within(stt).getByLabelText(label)).toBeInTheDocument();
+			expect(within(llm).queryByLabelText(label)).not.toBeInTheDocument();
+		}
+		expect(within(downloads).getByLabelText(/HuggingFace access token/)).toBeInTheDocument();
+		expect(within(llm).queryByLabelText(/HuggingFace access token/)).not.toBeInTheDocument();
+	});
+
+	it("saving the LLM endpoint leaves a half-typed STT field alone", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const llm = await screen.findByRole("region", { name: /Language model/ });
+		const stt = screen.getByRole("region", { name: /Speech-to-text/ });
+		await user.type(within(stt).getByLabelText("STT base URL"), "localh");
+		await user.type(within(llm).getByLabelText("LLM base URL"), "http://localhost:11434");
+		await user.click(within(llm).getByRole("button", { name: "Save LLM endpoint" }));
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call![1]).toEqual({ ai: { extLlmBaseUrl: "http://localhost:11434" } });
+		});
+		// the STT edit is still pending in its own section
+		expect(within(stt).getByRole("button", { name: "Save STT endpoint" })).toBeEnabled();
+	});
+
+	it("says when transcription goes to the external STT endpoint", async () => {
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, extSttBaseUrl: "http://localhost:8080" })
+		});
+		renderCard();
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		expect(
+			within(stt).getByText(/Transcription uses the external STT endpoint below/)
+		).toBeInTheDocument();
+	});
+
+	it("opens the LLM endpoint settings when enabling external mode without a URL", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const llm = await screen.findByRole("region", { name: /Language model/ });
+		const details = within(llm).getByText("External LLM endpoint").closest("details")!;
+		expect(details).not.toHaveAttribute("open");
+		await user.click(within(llm).getByRole("switch", { name: "Use external LLM endpoint" }));
+		expect(details).toHaveAttribute("open");
 	});
 
 	it("enabling the external LLM needs a saved URL, not just a typed one", async () => {
