@@ -25,6 +25,10 @@ export interface FeedbackComment {
 	oidHeadingText?: string;
 	matchedSpans: unknown[];
 	feedbackText: string;
+	/** Index of this item in its feedback idea's
+	 * structured_result.feedback_items (comment reactions are keyed by
+	 * feedback idea id + this index, so it survives filtering/grouping). */
+	itemIndex: number;
 }
 
 /** Attribution info shared by ideas and feedback cards. */

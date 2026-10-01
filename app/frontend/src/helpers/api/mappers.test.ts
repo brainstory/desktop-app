@@ -78,11 +78,45 @@ describe("getIdeaChildrenApi", () => {
 			{
 				oidHeadingText: "1##Point one",
 				matchedSpans: [],
-				feedbackText: "good point"
+				feedbackText: "good point",
+				itemIndex: 0
 			}
 		]);
 		// first line (before \n\n) dropped, leading ## stripped
 		expect(children[0]!.summaryPreview).toBe("Point one body text");
+	});
+});
+
+describe("getIdeaChildrenApi item index", () => {
+	it("keeps each comment's index in its feedback_items array", async () => {
+		const item = (text: string) => ({
+			oid_heading_text: "1##Point one",
+			matched_spans: [],
+			feedback_text: text
+		});
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "c1",
+						created_at: "",
+						structured_result: { feedback_items: [item("a")] }
+					},
+					{
+						id: "c2",
+						created_at: "",
+						structured_result: { feedback_items: [item("b"), item("c"), item("d")] }
+					}
+				]
+			})
+		});
+		const children = await getIdeaChildrenApi("p1");
+		expect(children[0]!.feedbackComments.map((c) => c.itemIndex)).toEqual([0]);
+		expect(children[1]!.feedbackComments.map((c) => [c.feedbackText, c.itemIndex])).toEqual([
+			["b", 0],
+			["c", 1],
+			["d", 2]
+		]);
 	});
 });
 

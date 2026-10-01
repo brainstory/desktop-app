@@ -76,10 +76,11 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 
 	return response?.ideas.map((idea) => {
 		const feedbackComments = idea?.structured_result?.feedback_items
-			? idea.structured_result.feedback_items.map((feedbackComment) => ({
+			? idea.structured_result.feedback_items.map((feedbackComment, itemIndex) => ({
 					oidHeadingText: feedbackComment.oid_heading_text,
 					matchedSpans: feedbackComment.matched_spans,
-					feedbackText: feedbackComment.feedback_text
+					feedbackText: feedbackComment.feedback_text,
+					itemIndex
 				}))
 			: [];
 		return {
