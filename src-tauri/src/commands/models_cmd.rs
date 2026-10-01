@@ -341,15 +341,9 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 				}
 			}
 		}
-		// The app-managed copy is the only file deletion owns: a model
-		// that lives in the user's HuggingFace hub cache was put there by
-		// another tool, and removing other tools' cache entries is not
-		// ours to do.
 		// Unload the engine BEFORE deleting the files: a loaded engine
 		// mmaps the model, and on Windows an open mmap makes remove_file
 		// fail. Covers the legacy app copy and every cache candidate.
-		// Unload the engine BEFORE deleting the file: the loaded engine mmaps
-		// the model, and on Windows an open mmap makes remove_file fail.
 		let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
 		let llm_gone =
 			runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
