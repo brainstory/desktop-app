@@ -144,6 +144,24 @@ const BASELINE_SCHEMA: &str = "
 /// make step 1 a no-op for its tables).
 const SCHEMA_VERSION: i64 = 4;
 
+/// SQL predicate matching idea rows that came from a share file
+/// (`idea_metadata.imported = true`). Imported rows never count as the
+/// importer's own activity, so the streak/activity queries exclude them
+/// and the local_date backfill leaves them alone. The CASE guards
+/// json_extract, which raises on a malformed metadata string.
+const IMPORTED_IDEA_SQL: &str =
+	"CASE WHEN json_valid(idea_metadata) THEN json_extract(idea_metadata, '$.imported') END IS 1";
+
+/// Extra WHERE clause that keeps imported rows out of activity scans and
+/// the local_date backfill (only `ideas` carries imports).
+fn own_activity_filter(table: &str) -> String {
+	if table == "ideas" {
+		format!(" AND NOT ({IMPORTED_IDEA_SQL})")
+	} else {
+		String::new()
+	}
+}
+
 /// Everything needed to insert one idea row. Replaces a 13-parameter
 /// positional signature where every argument was a bare &str/Option.
 #[derive(Default)]
@@ -249,7 +267,8 @@ impl Db {
 				// code skipped it entirely when the column already existed
 				// from a crash between the two statements.
 				tx.execute_batch(&format!(
-					"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = '';"
+					"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = ''{};",
+					own_activity_filter(table)
 				))?;
 			}
 			tx.pragma_update(None, "user_version", 3)?;
@@ -270,10 +289,12 @@ impl Db {
 		// Self-healing backfill on every open: any row still carrying an
 		// empty local_date (a crash mid-migration, an interrupted write)
 		// is invisible to the streak and has_activity_today queries until
-		// repaired. No-op once everything is backfilled.
+		// repaired. No-op once everything is backfilled. Imported ideas
+		// keep their empty local_date on purpose (see NewIdea::imported).
 		for table in ["ideas", "log_entries", "surveys"] {
 			conn.execute_batch(&format!(
-				"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = '';"
+				"UPDATE {table} SET local_date = COALESCE(NULLIF(date(created_at, 'localtime'), ''), date('now', 'localtime')) WHERE local_date = ''{};",
+				own_activity_filter(table)
 			))?;
 		}
 		Ok(Self {
@@ -901,7 +922,13 @@ impl Db {
 		let today = today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		for table in ["ideas", "log_entries", "surveys"] {
-			let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE local_date = ?1)");
+			// Imports are filtered explicitly, not only through their empty
+			// local_date: older builds let the open-time backfill stamp a
+			// date onto them.
+			let sql = format!(
+				"SELECT EXISTS(SELECT 1 FROM {table} WHERE local_date = ?1{})",
+				own_activity_filter(table)
+			);
 			if let Ok(1) = conn.query_row(&sql, params![today], |row| row.get::<_, i64>(0)) {
 				return true;
 			}
@@ -940,7 +967,10 @@ impl Db {
 		// necessary.
 		let mut raw_days: Vec<String> = Vec::new();
 		for table in ["ideas", "log_entries", "surveys"] {
-			let sql = format!("SELECT DISTINCT local_date FROM {table} WHERE local_date != ''");
+			let sql = format!(
+				"SELECT DISTINCT local_date FROM {table} WHERE local_date != ''{}",
+				own_activity_filter(table)
+			);
 			let mut stmt = match conn.prepare(&sql) {
 				Ok(s) => s,
 				Err(e) => {
@@ -1065,6 +1095,73 @@ mod tests {
 		})
 		.expect("insert local");
 		assert!(db.has_activity_today());
+	}
+
+	#[test]
+	fn imported_ideas_still_do_not_count_after_reopening() {
+		let (path, _dir) = temp_db_path();
+		let now = Utc::now()
+			.naive_utc()
+			.format("%Y-%m-%dT%H:%M:%S")
+			.to_string();
+		let yesterday = (Utc::now().naive_utc() - chrono::Duration::days(1))
+			.format("%Y-%m-%dT%H:%M:%S")
+			.to_string();
+		let meta = serde_json::json!({ "imported": true });
+		{
+			let db = Db::open(&path).expect("open");
+			db.insert_idea(NewIdea::imported(NewIdea {
+				id: "imp-today",
+				title: "Imported today",
+				idea_type: "original",
+				result: "r",
+				metadata: &meta,
+				created_at: Some(&now),
+				..Default::default()
+			}))
+			.expect("insert imported idea");
+			db.insert_idea(NewIdea::imported(NewIdea {
+				id: "imp-feedback",
+				title: "Imported feedback",
+				idea_type: "feedback",
+				result: "r",
+				metadata: &meta,
+				parent_idea_id: Some("imp-today"),
+				created_at: Some(&yesterday),
+				..Default::default()
+			}))
+			.expect("insert imported feedback");
+			assert_eq!(db.get_daily_status().streak, 0);
+			assert!(!db.has_activity_today());
+		}
+		// the every-open backfill must not hand the rows a local date...
+		let db = Db::open(&path).expect("reopen");
+		assert_eq!(
+			db.get_daily_status().streak,
+			0,
+			"import counted after reopen"
+		);
+		assert!(!db.has_activity_today(), "import counted after reopen");
+		{
+			let conn = db.lock();
+			let dated: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM ideas WHERE local_date != ''",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(dated, 0, "imported rows keep their empty local_date");
+			// ...and rows an older build already backfilled still don't count
+			conn.execute("UPDATE ideas SET local_date = date('now', 'localtime')", [])
+				.unwrap();
+		}
+		assert_eq!(
+			db.get_daily_status().streak,
+			0,
+			"legacy-backfilled import counted"
+		);
+		assert!(!db.has_activity_today(), "legacy-backfilled import counted");
 	}
 
 	#[test]
