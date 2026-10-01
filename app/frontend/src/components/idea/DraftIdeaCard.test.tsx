@@ -61,3 +61,13 @@ describe("DraftIdeaCard delete", () => {
 		expect(onDeleted).not.toHaveBeenCalled();
 	});
 });
+
+describe("DraftIdeaCard contrast", () => {
+	it("draft summary text is stone-500 on white (4.8:1), not stone-400 (2.5:1)", () => {
+		mockInvoke({});
+		render(<DraftIdeaCard id="d1" draftSummary="half a thought" />);
+		const summary = screen.getByText("half a thought");
+		expect(summary).toHaveClass("text-stone-500");
+		expect(summary).not.toHaveClass("text-stone-400");
+	});
+});

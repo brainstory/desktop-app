@@ -43,7 +43,7 @@ export default function IdeaCard({
 			className={`relative w-80 sm:w-[275px] ${cardHeight} group cursor-pointer bg-white rounded-lg border border-stone-200 shadow hover:shadow-lg hover:-translate-y-1 transition-transform`}
 		>
 			{isUnread && (
-				<span className="pointer-events-none absolute top-3 right-3 z-10 bg-pink-500 text-white text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full shadow">
+				<span className="pointer-events-none absolute top-3 right-3 z-10 bg-accent-700 text-white text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full shadow">
 					New
 				</span>
 			)}

@@ -62,7 +62,7 @@ export default function DraftIdeaCard({
 						last message
 					</div>
 				</div>
-				<p className="mb-1 text-stone-400 italic break-words line-clamp-5 text-sm">
+				<p className="mb-1 text-stone-500 italic break-words line-clamp-5 text-sm">
 					{draftSummary}
 				</p>
 			</a>

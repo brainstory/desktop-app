@@ -79,7 +79,7 @@ export default function TimePickerInput({
 			id={id || picker}
 			name={name || picker}
 			className={cn(
-				"w-[48px] text-stone-900 text-center font-mono text-sm tabular-nums focus:bg-pink-500 focus:text-white [&::-webkit-inner-spin-button]:appearance-none disabled:bg-stone-200 disabled:text-stone-700",
+				"w-[48px] text-stone-900 text-center font-mono text-sm tabular-nums focus:bg-accent-700 focus:text-white [&::-webkit-inner-spin-button]:appearance-none disabled:bg-stone-200 disabled:text-stone-700",
 				className
 			)}
 			value={value || calculatedHour}

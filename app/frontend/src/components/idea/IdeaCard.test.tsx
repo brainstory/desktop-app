@@ -39,4 +39,11 @@ describe("IdeaCard", () => {
 		expect(link).toHaveAttribute("href", "/idea?id=f1");
 		expect(link).not.toHaveAttribute("target");
 	});
+
+	it("the New badge is white on a dark-enough accent (>= 4.5:1, not pink-500)", () => {
+		render(<IdeaCard id="i1" title="Unread" isUnread />);
+		const badge = screen.getByText("New");
+		expect(badge).toHaveClass("bg-accent-700", "text-white");
+		expect(badge).not.toHaveClass("bg-pink-500");
+	});
 });
