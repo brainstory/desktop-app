@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { NotificationSetting } from "@helpers/api/settings";
 
 import { Card } from "./ProfileCards";
@@ -19,6 +19,7 @@ export function NotificationsCard({
 	const [notificationFields, setNotificationFields] =
 		useState<NotificationSetting[]>(notificationsData);
 	const [hasChanged, setHasChanged] = useState(false);
+	const titleIdBase = useId();
 	// reset local edits whenever the parent passes fresh data (the
 	// documented "adjust state when props change" render-time pattern)
 	const [prevData, setPrevData] = useState(notificationsData);
@@ -57,15 +58,19 @@ export function NotificationsCard({
 			if (field.valueType === "time") {
 				const hourDigit = Number((field.value ?? "00").split(":")[0]);
 				const hourAsDate = new Date(new Date().setHours(hourDigit, 0, 0, 0));
+				const titleId = `${titleIdBase}-title-${i}`;
 
 				return (
 					<div className="flex justify-between" key={i}>
 						<div className="flex flex-col">
-							<h3 className="font-medium mb-1">{field.title}</h3>
+							<h3 className="font-medium mb-1" id={titleId}>
+								{field.title}
+							</h3>
 							<p className="text-sm leading-snug italic">{field.description}</p>
 						</div>
 						<div className="flex flex-wrap gap-1 justify-end">
 							<OnOffToggleButton
+								aria-labelledby={titleId}
 								checked={field.enabled}
 								onToggle={handleEnabledToggle}
 							/>
