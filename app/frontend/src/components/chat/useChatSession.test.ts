@@ -46,6 +46,62 @@ describe("useChatSession", () => {
 		vi.useRealTimers();
 	});
 
+	describe("coach response", () => {
+		it("adds the answer and reports 'sent'", async () => {
+			mockInvoke({ generate_response: () => ({ response: "q2" }) });
+			const { result } = renderSession([q1, a1]);
+			let outcome: string | undefined;
+			await act(async () => {
+				outcome = await result.current.handleGetResponse();
+			});
+			expect(outcome).toBe("sent");
+			expect(result.current.conversation).toEqual([
+				q1,
+				a1,
+				{ role: "assistant", content: "q2" }
+			]);
+			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
+		});
+
+		it("removes the flagged user message on a moderation error", async () => {
+			mockInvoke({
+				generate_response: () => {
+					throw "HttpError 469: Inappropriate input";
+				}
+			});
+			const { result, opts } = renderSession([q1, a1]);
+			let outcome: string | undefined;
+			await act(async () => {
+				outcome = await result.current.handleGetResponse();
+			});
+			expect(outcome).toBe("flagged");
+			expect(result.current.conversation).toEqual([q1]);
+			expect(result.current.isUserResendRequired).toBe(true);
+			expect(result.current.inappropriateUserTranscript).toBe("a1");
+			expect(opts.onError).not.toHaveBeenCalled();
+			expect(callsTo("generate_response")).toHaveLength(1);
+		});
+
+		it("reports other AI errors through onError and keeps the message", async () => {
+			vi.useFakeTimers();
+			mockInvoke({
+				generate_response: () => {
+					throw "endpoint down";
+				}
+			});
+			const { result, opts } = renderSession([q1, a1]);
+			let outcome: string | undefined;
+			await act(async () => {
+				const pending = result.current.handleGetResponse().then((o) => (outcome = o));
+				await vi.advanceTimersByTimeAsync(1000);
+				await pending;
+			});
+			expect(outcome).toBe("failed");
+			expect(opts.onError).toHaveBeenCalledWith("endpoint down");
+			expect(result.current.conversation).toEqual([q1, a1]);
+		});
+	});
+
 	describe("cancelling a coach response", () => {
 		it("does not retry a cancelled generation or show an error", async () => {
 			vi.useFakeTimers();

@@ -283,6 +283,45 @@ describe("handleStreamResult", () => {
 		expect(structured).toEqual([{ items: 1 }]);
 	});
 
+	it("awaits the success callbacks before settling", async () => {
+		const { start, resolve } = makeStream();
+		let release!: () => void;
+		let settled = false;
+		const done = handleStreamResult(
+			start,
+			() => {},
+			() =>
+				new Promise<void>((res) => {
+					release = res;
+				})
+		).then(() => {
+			settled = true;
+		});
+		resolve({ response: "x" });
+		await new Promise((r) => setTimeout(r, 0));
+		// the (async) save is still running: the stream must not settle yet
+		expect(settled).toBe(false);
+		release();
+		await done;
+		expect(settled).toBe(true);
+	});
+
+	it("routes a rejecting success callback to onError", async () => {
+		const { start, resolve } = makeStream();
+		const errors: unknown[] = [];
+		const done = handleStreamResult(
+			start,
+			() => {},
+			async () => {
+				throw new Error("save failed");
+			},
+			(err) => errors.push(err)
+		);
+		resolve({ response: "x" });
+		await done;
+		expect(errors).toHaveLength(1);
+	});
+
 	it("calls onError and skips success when the invoke rejects", async () => {
 		const { start, reject } = makeStream();
 		const errors: unknown[] = [];

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { cleanStores } from "nanostores";
 import { mockInvoke } from "@src/test/mock-tauri";
 import { $aiStatus } from "@components/global/aiStatusStore";
+import { StrictMode } from "react";
 import { ChatSection } from "./ChatSection";
 
 // Rive needs a canvas + WASM runtime that jsdom doesn't have
@@ -222,6 +223,29 @@ describe("ChatSection", () => {
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
 			expect(await screen.findByText(/failed to load: bad gguf/)).toBeInTheDocument();
 		});
+	});
+
+	it("creates the idea exactly once at the minimum length, even under StrictMode", async () => {
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" }),
+			// the draft loader re-reads the idea once it has an id
+			get_idea: () => ({ id: "idea-1", transcript: [] }),
+			generate_response: () => ({ response: "and then?" })
+		});
+		render(
+			<StrictMode>
+				<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />
+			</StrictMode>
+		);
+		const user = userEvent.setup();
+		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(new URLSearchParams(window.location.search).get("id")).toBe("idea-1")
+		);
+		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")).toHaveLength(1);
 	});
 
 	describe("feedback on an idea", () => {
