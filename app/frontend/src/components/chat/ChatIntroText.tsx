@@ -1,4 +1,5 @@
 import { getQueryParam } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 import { cn } from "@helpers/cn";
 import type { ParentIdea } from "@components/chat/types";
 
@@ -8,7 +9,7 @@ interface ChatIntroTextProps {
 }
 
 export default function ChatIntroText({ parentIdea, classes }: ChatIntroTextProps) {
-	const isDailyIntent = getQueryParam("dailyIntent");
+	const isDailyIntent = getQueryParam(QUERY_PARAMS.dailyIntent);
 
 	let title = "New Brainstory";
 	if (parentIdea?.id) {

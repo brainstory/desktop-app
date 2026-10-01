@@ -176,6 +176,8 @@ export const QUERY_PARAMS = {
 	dailyIntent: "dailyIntent"
 } as const;
 
+export type QueryParam = (typeof QUERY_PARAMS)[keyof typeof QUERY_PARAMS];
+
 /** localStorage keys (storage.ts and the index.astro inline script). */
 export const STORAGE_KEYS = {
 	gettingStartedDone: "has_done_getting_started",

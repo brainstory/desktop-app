@@ -5,6 +5,7 @@ import { $userState } from "@components/global/userStore";
 import { getUserSettingsApi, saveUserSettingsApi } from "@helpers/api/settings";
 import type { LogSettingsQuestion, NotificationSetting } from "@helpers/api/settings";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 import { PhotoNameCard, GeneralCard } from "./ProfileCards";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
@@ -30,7 +31,7 @@ export default function Profile() {
 	const { createdAt } = userState;
 
 	const [activeTab] = useState<number>(() => {
-		const tab = getQueryParam("tab");
+		const tab = getQueryParam(QUERY_PARAMS.tab);
 		return tab ? (TAB_MAP[tab] ?? 0) : 0;
 	});
 	const [userName, setUserName] = useState<string>("");

@@ -7,6 +7,7 @@ import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import { getIdeaApi } from "@helpers/api/idea";
 import { getQueryParam } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 import ChatRecorder from "@components/chat/reusable/ChatRecorder";
 import FinishedResultSection from "@components/chat/reusable/FinishedResultSection";
@@ -207,7 +208,9 @@ export function ChatSection({
 					showTranscript={showTranscript}
 					setShowTranscript={setShowTranscript}
 					leftButtonIcon={
-						fromGuideParam && !getQueryParam("id") ? "arrow-back-outline" : null
+						fromGuideParam && !getQueryParam(QUERY_PARAMS.id)
+							? "arrow-back-outline"
+							: null
 					}
 					leftButtonHref="/get-started"
 					saveState={persistence.saveState}

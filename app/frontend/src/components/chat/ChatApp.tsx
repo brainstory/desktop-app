@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
 import { getQueryParam } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 import { CHAT_TYPE } from "@src/const";
 
 import { ChatSection } from "./ChatSection";
@@ -13,8 +14,8 @@ import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
  * scope would read window.location at import time and make the module
  * untestable). */
 function chatTypeFromParams(): string {
-	const parentId = getQueryParam("parentId");
-	if (getQueryParam("dailyIntent") === "true") {
+	const parentId = getQueryParam(QUERY_PARAMS.parentId);
+	if (getQueryParam(QUERY_PARAMS.dailyIntent) === "true") {
 		return CHAT_TYPE.DAILY_INTENT;
 	}
 	if (parentId) {
@@ -24,12 +25,12 @@ function chatTypeFromParams(): string {
 }
 
 export default function ChatApp() {
-	const isDailyIntent = getQueryParam("dailyIntent") === "true";
+	const isDailyIntent = getQueryParam(QUERY_PARAMS.dailyIntent) === "true";
 	const chatType = chatTypeFromParams();
-	const parentId = getQueryParam("parentId");
-	const isFromGuide = getQueryParam("topic");
+	const parentId = getQueryParam(QUERY_PARAMS.parentId);
+	const isFromGuide = getQueryParam(QUERY_PARAMS.topic);
 	const [logId, setLogId] = useState<string | null | undefined>(null);
-	const [draftId, setDraftId] = useState(getQueryParam("id"));
+	const [draftId, setDraftId] = useState(getQueryParam(QUERY_PARAMS.id));
 	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 
 	useEffect(() => {
@@ -44,7 +45,7 @@ export default function ChatApp() {
 						// intent idea draft is found
 						const url = new URL(window.location.href);
 						const params = new URLSearchParams(url.search);
-						params.set("id", resp.intentIdeaId);
+						params.set(QUERY_PARAMS.id, resp.intentIdeaId);
 						history.pushState(null, "", "?" + params.toString());
 						setDraftId(resp.intentIdeaId);
 					}

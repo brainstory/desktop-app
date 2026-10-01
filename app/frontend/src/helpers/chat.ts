@@ -3,6 +3,7 @@ import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 import type { RefObject, Dispatch, SetStateAction } from "react";
 
 export function useIdeaIdFromUrl(
@@ -15,7 +16,7 @@ export function useIdeaIdFromUrl(
 		}
 		// this is for safeguarding against extra idea saves from weird edges cases
 		// related to the ideaId once being in the query parameter but isn't anymore
-		setIdeaId(getQueryParam("id") ?? undefined);
+		setIdeaId(getQueryParam(QUERY_PARAMS.id) ?? undefined);
 		hasMountedRef.current = true;
 	}, [hasMountedRef, setIdeaId]);
 }
@@ -25,7 +26,7 @@ export type FirstPromptParams = Record<"qotd" | "topic", string | null | undefin
 
 /** The params for the current page URL. */
 export function currentQueryParams(): FirstPromptParams {
-	return { qotd: getQueryParam("qotd"), topic: getQueryParam("topic") };
+	return { qotd: getQueryParam(QUERY_PARAMS.qotd), topic: getQueryParam(QUERY_PARAMS.topic) };
 }
 
 /**

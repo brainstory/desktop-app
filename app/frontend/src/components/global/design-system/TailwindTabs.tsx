@@ -7,6 +7,7 @@ import {
 	type ReactNode,
 	type ComponentProps
 } from "react";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /*
 
@@ -60,7 +61,7 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 		const param = tabParams?.[next];
 		if (param) {
 			const url = new URL(window.location.href);
-			url.searchParams.set("tab", param);
+			url.searchParams.set(QUERY_PARAMS.tab, param);
 			history.replaceState(null, "", url);
 		}
 	};

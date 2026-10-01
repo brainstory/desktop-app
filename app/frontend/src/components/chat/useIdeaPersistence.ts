@@ -9,6 +9,7 @@ import type { ChatMessage } from "@src/types";
 import { CHAT_SAVE_STATE } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Load failures that replace the whole chat UI with an error section. */
 export type ChatFatalError = "draft-not-found" | "parent-not-found";
@@ -159,7 +160,7 @@ export function useIdeaPersistence(
 					setIdeaId(createdIdeaId);
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
-					params.set("id", createdIdeaId);
+					params.set(QUERY_PARAMS.id, createdIdeaId);
 					history.pushState(null, "", "?" + params.toString());
 				})
 				.catch((err) => {

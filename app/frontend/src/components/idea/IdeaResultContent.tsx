@@ -10,6 +10,7 @@ import IdeaSection from "@components/idea/feedback-aggregation/IdeaSection";
 import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import { getQueryParam } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 import { isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
@@ -21,9 +22,9 @@ export default function IdeaResultContent() {
 		feedback: 2
 	};
 
-	const ideaId = getQueryParam("id") ?? undefined;
+	const ideaId = getQueryParam(QUERY_PARAMS.id) ?? undefined;
 	const [activeTab] = useState<number>(() => {
-		const tab = getQueryParam("tab");
+		const tab = getQueryParam(QUERY_PARAMS.tab);
 		return tab ? (tabs[tab] ?? 0) : tabs.summary!;
 	});
 	const [isLoading, setIsLoading] = useState(true);

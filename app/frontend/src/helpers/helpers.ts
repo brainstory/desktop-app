@@ -1,6 +1,8 @@
 import { ERROR_MESSAGE_MAP } from "@src/const";
+import type { QueryParam } from "@src/tauri/commands";
 
-export function getQueryParam(name: string): string | null {
+/** A query param of the current page (names come from QUERY_PARAMS). */
+export function getQueryParam(name: QueryParam): string | null {
 	const urlParams = new URLSearchParams(window.location.search);
 	return urlParams.get(name);
 }

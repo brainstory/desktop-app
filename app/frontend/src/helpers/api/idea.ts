@@ -18,6 +18,7 @@ export interface RawIdea {
 }
 
 import { getQueryParam } from "@helpers/helpers";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Get idea */
 export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
@@ -121,7 +122,7 @@ export async function createIdeaApi(
 	logId: string | null = null,
 	ideaMetadata: Record<string, unknown> = {}
 ): Promise<string> {
-	const i = getQueryParam("topic");
+	const i = getQueryParam(QUERY_PARAMS.topic);
 	if (i !== null) {
 		ideaMetadata.suggestion = {
 			index: i,
