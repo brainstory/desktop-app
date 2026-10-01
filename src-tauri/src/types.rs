@@ -5,6 +5,31 @@ pub struct ChatMessage {
 	pub content: String,
 }
 
+/// What kind of idea a row is. Stored in `ideas.idea_type` and sent over
+/// IPC / in share files as the snake_case strings "original",
+/// "feedback" and "daily_intent".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdeaType {
+	/// a brainstorm of the user's own (also every imported idea)
+	#[default]
+	Original,
+	/// a reaction to another idea (`parent_idea_id` is set)
+	Feedback,
+	/// the day's intention
+	DailyIntent,
+}
+
+impl IdeaType {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Original => "original",
+			Self::Feedback => "feedback",
+			Self::DailyIntent => "daily_intent",
+		}
+	}
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct IdeaItem {
@@ -167,4 +192,24 @@ pub struct ModelStatus {
 	pub progress: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub filename: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::IdeaType;
+
+	#[test]
+	fn idea_types_travel_as_the_stored_strings() {
+		for (ty, raw) in [
+			(IdeaType::Original, "original"),
+			(IdeaType::Feedback, "feedback"),
+			(IdeaType::DailyIntent, "daily_intent"),
+		] {
+			assert_eq!(ty.as_str(), raw);
+			assert_eq!(serde_json::to_value(ty).unwrap(), raw);
+			assert_eq!(serde_json::from_value::<IdeaType>(raw.into()).unwrap(), ty);
+		}
+		assert!(serde_json::from_value::<IdeaType>("dailyintent".into()).is_err());
+		assert_eq!(IdeaType::default(), IdeaType::Original);
+	}
 }

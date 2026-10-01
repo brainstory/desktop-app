@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::types::{ChatMessage, DailyStatus, IdeaItem};
+use crate::types::{ChatMessage, DailyStatus, IdeaItem, IdeaType};
 
 pub const DEFAULT_LOG_QUESTIONS: [(i64, &str, &str); 4] = [
 	(1, "Did you set an intention for your day?", "Intention"),
@@ -168,7 +168,7 @@ fn own_activity_filter(table: &str) -> String {
 pub struct NewIdea<'a> {
 	pub id: &'a str,
 	pub title: &'a str,
-	pub idea_type: &'a str,
+	pub idea_type: IdeaType,
 	pub result: &'a str,
 	pub structured_result: Option<&'a serde_json::Value>,
 	pub transcript: &'a [ChatMessage],
@@ -479,7 +479,7 @@ impl Db {
 			params![
 				idea.id,
 				idea.title,
-				idea.idea_type,
+				idea.idea_type.as_str(),
 				idea.result,
 				structured_json,
 				transcript_json,
@@ -540,7 +540,7 @@ impl Db {
 				NewIdea {
 					id,
 					title,
-					idea_type: "daily_intent",
+					idea_type: IdeaType::DailyIntent,
 					result,
 					transcript,
 					metadata,
@@ -1060,7 +1060,7 @@ mod tests {
 		db.insert_idea(NewIdea::imported(NewIdea {
 			id: "imp",
 			title: "Imported",
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			metadata: &serde_json::json!({ "imported": true }),
 			creator_name: Some("Ada"),
@@ -1074,7 +1074,7 @@ mod tests {
 		db.insert_idea(NewIdea {
 			id: "mine",
 			title: "Mine",
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			metadata: &serde_json::json!({}),
 			..Default::default()
@@ -1099,7 +1099,7 @@ mod tests {
 			db.insert_idea(NewIdea::imported(NewIdea {
 				id: "imp-today",
 				title: "Imported today",
-				idea_type: "original",
+				idea_type: IdeaType::Original,
 				result: "r",
 				metadata: &meta,
 				created_at: Some(&now),
@@ -1109,7 +1109,7 @@ mod tests {
 			db.insert_idea(NewIdea::imported(NewIdea {
 				id: "imp-feedback",
 				title: "Imported feedback",
-				idea_type: "feedback",
+				idea_type: IdeaType::Feedback,
 				result: "r",
 				metadata: &meta,
 				parent_idea_id: Some("imp-today"),
@@ -1305,7 +1305,7 @@ mod tests {
 		db.insert_idea(NewIdea {
 			id: "parent",
 			title: "P",
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			transcript: &empty,
 			metadata: &meta,
@@ -1315,7 +1315,7 @@ mod tests {
 		db.insert_idea(NewIdea {
 			id: "child",
 			title: "C",
-			idea_type: "feedback",
+			idea_type: IdeaType::Feedback,
 			result: "r",
 			transcript: &empty,
 			metadata: &meta,
@@ -1328,7 +1328,7 @@ mod tests {
 		db.insert_idea(NewIdea {
 			id: "grandchild",
 			title: "G",
-			idea_type: "feedback",
+			idea_type: IdeaType::Feedback,
 			result: "r",
 			transcript: &empty,
 			metadata: &meta,
@@ -1353,7 +1353,7 @@ mod tests {
 			.insert_idea(NewIdea {
 				id: "kid",
 				title: "K",
-				idea_type: "feedback",
+				idea_type: IdeaType::Feedback,
 				result: "r",
 				metadata: &meta,
 				parent_idea_id: Some("ghost"),
@@ -1407,7 +1407,7 @@ mod tests {
 		db.insert_idea(NewIdea {
 			id: "t1",
 			title: "The Title",
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			metadata: &meta,
 			..Default::default()
@@ -1436,7 +1436,7 @@ mod coverage_tests {
 		db.insert_idea(NewIdea {
 			id,
 			title: id,
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			metadata: &json!({}),
 			created_at: Some(created_at),
@@ -1471,7 +1471,7 @@ mod coverage_tests {
 		db.insert_idea(NewIdea {
 			id: "c1",
 			title: "C1",
-			idea_type: "feedback",
+			idea_type: IdeaType::Feedback,
 			result: "r",
 			metadata: &json!({}),
 			parent_idea_id: Some("old"),
@@ -1482,7 +1482,7 @@ mod coverage_tests {
 		db.insert_idea(NewIdea {
 			id: "c2",
 			title: "C2",
-			idea_type: "feedback",
+			idea_type: IdeaType::Feedback,
 			result: "r",
 			metadata: &json!({}),
 			parent_idea_id: Some("old"),

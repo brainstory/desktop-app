@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::db::{DEFAULT_LOG_QUESTIONS, SURVEY_QUESTIONS};
-use crate::types::{DailyStatus, IdeaItem, LogAnswerItem, LogQuestionItem, UserData};
+use crate::types::{DailyStatus, IdeaItem, IdeaType, LogAnswerItem, LogQuestionItem, UserData};
 use crate::AppState;
 
 fn idea_list(ideas: Vec<IdeaItem>) -> serde_json::Value {
@@ -64,11 +64,11 @@ pub async fn create_idea(
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	parent_idea_id: Option<String>,
 	idea_metadata: Option<serde_json::Value>,
-	idea_type: Option<String>,
+	idea_type: Option<IdeaType>,
 	log_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
 	let id = uuid::Uuid::new_v4().to_string();
-	let idea_type = idea_type.unwrap_or_else(|| "original".into());
+	let idea_type = idea_type.unwrap_or_default();
 	let result = result.unwrap_or_default();
 	let transcript = transcript.unwrap_or_default();
 
@@ -79,7 +79,7 @@ pub async fn create_idea(
 	if !result.is_empty() {
 		title = title_from_result(&result);
 	}
-	if idea_type == "daily_intent" {
+	if idea_type == IdeaType::DailyIntent {
 		state.db.create_daily_intent_idea(
 			&id,
 			&title,
@@ -91,7 +91,7 @@ pub async fn create_idea(
 		state.db.insert_idea(crate::db::NewIdea {
 			id: &id,
 			title: &title,
-			idea_type: &idea_type,
+			idea_type,
 			result: &result,
 			structured_result: None,
 			transcript: &transcript,

@@ -2,6 +2,7 @@ use serde_json::json;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::types::IdeaType;
 use crate::AppState;
 
 // Trust model: share files are plain JSON the user received however they
@@ -35,7 +36,7 @@ pub enum SharePayload {
 		share_id: String,
 		title: String,
 		result: String,
-		idea_type: String,
+		idea_type: IdeaType,
 		created_at: Option<String>,
 	},
 	Feedback {
@@ -156,9 +157,9 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 			let idea = &root["idea"];
 			let title = idea["title"].as_str().unwrap_or("Imported idea");
 			let result = idea["result"].as_str().unwrap_or("");
-			let idea_type = idea["type"].as_str().unwrap_or("original");
+			let idea_type = idea["type"].as_str().unwrap_or(IdeaType::Original.as_str());
 			validate_imported_fields(title, result)?;
-			if idea_type != "original" {
+			if idea_type != IdeaType::Original.as_str() {
 				// A share file can claim any type string; only original
 				// ideas exist in exports, so anything else is a crafted
 				// file trying to smuggle e.g. "daily_intent" into the
@@ -171,7 +172,7 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 				share_id: idea["share_id"].as_str().unwrap_or("").to_string(),
 				title: title.to_string(),
 				result: result.to_string(),
-				idea_type: idea_type.to_string(),
+				idea_type: IdeaType::Original,
 				created_at: parse_created_at(idea["created_at"].as_str()),
 			}
 		}
@@ -225,7 +226,7 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 		.get_idea(idea_id)?
 		.ok_or_else(|| format!("idea {idea_id} not found"))?;
 
-	let idea_type = idea.r#type.clone().unwrap_or_else(|| "original".into());
+	let is_feedback = idea.r#type.as_deref() == Some(IdeaType::Feedback.as_str());
 	let own_name = db
 		.get_setting(crate::keys::setting::USER_NAME)
 		.filter(|s| !s.is_empty());
@@ -235,7 +236,7 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 		.or(own_name)
 		.unwrap_or_else(|| "Anonymous".into());
 
-	let payload = if idea_type == "feedback" {
+	let payload = if is_feedback {
 		let (target_share_id, target_title) = match &idea.parent_idea {
 			Some(parent) => (
 				db.get_share_id(&parent.id)
@@ -261,7 +262,7 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 			// Every non-feedback idea travels as "original": a daily
 			// intent is the author's own day plan, meaningless as the
 			// reader's, and the import whitelist only accepts originals.
-			idea_type: "original".into(),
+			idea_type: IdeaType::Original,
 			created_at: Some(idea.created_at.clone()),
 		}
 	};
@@ -397,7 +398,7 @@ fn import_parsed(
 			db.insert_idea(crate::db::NewIdea::imported(crate::db::NewIdea {
 				id: &id,
 				title: &title,
-				idea_type: &idea_type,
+				idea_type,
 				result: &result,
 				metadata: &json!({ "imported": true }),
 				creator_name: Some(&author),
@@ -480,7 +481,7 @@ fn import_parsed(
 			db.insert_idea(crate::db::NewIdea::imported(crate::db::NewIdea {
 				id: &id,
 				title: &title,
-				idea_type: "feedback",
+				idea_type: IdeaType::Feedback,
 				result: &result,
 				structured_result: structured_result.as_ref(),
 				metadata: &json!({ "imported": true }),
@@ -509,6 +510,7 @@ mod tests {
 		build_export_payload, import_parsed, parse_share_payload, ParsedShare, SharePayload,
 	};
 	use crate::db::Db;
+	use crate::types::IdeaType;
 
 	fn temp_db(name: &str) -> (Db, tempfile::TempDir) {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -523,7 +525,7 @@ mod tests {
 				share_id: share_id.into(),
 				title: title.into(),
 				result: "r".into(),
-				idea_type: "original".into(),
+				idea_type: IdeaType::Original,
 				created_at: None,
 			},
 		}
@@ -547,7 +549,7 @@ mod tests {
 		db.insert_idea(crate::db::NewIdea {
 			id,
 			title,
-			idea_type: "original",
+			idea_type: IdeaType::Original,
 			result: "r",
 			metadata: &serde_json::json!({}),
 			share_id,
@@ -660,7 +662,7 @@ mod tests {
 				share_id: "share-123".into(),
 				title: "My Idea".into(),
 				result: "## Heading\nBody".into(),
-				idea_type: "original".into(),
+				idea_type: IdeaType::Original,
 				created_at: Some("2026-09-15T10:30:00".into()),
 			},
 			"Ada",
@@ -677,7 +679,7 @@ mod tests {
 				assert_eq!(share_id, "share-123");
 				assert_eq!(title, "My Idea");
 				assert_eq!(result, "## Heading\nBody");
-				assert_eq!(idea_type, "original");
+				assert_eq!(idea_type, IdeaType::Original);
 				assert_eq!(created_at.as_deref(), Some("2026-09-15T10:30:00"));
 			}
 			_ => panic!("wrong payload kind"),
@@ -749,7 +751,7 @@ mod tests {
 				..
 			} => {
 				assert_eq!(share_id, "");
-				assert_eq!(idea_type, "original");
+				assert_eq!(idea_type, IdeaType::Original);
 			}
 			_ => panic!("wrong payload kind"),
 		}
