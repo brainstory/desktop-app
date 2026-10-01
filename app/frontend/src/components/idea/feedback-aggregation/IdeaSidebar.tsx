@@ -5,7 +5,6 @@ interface IdeaSidebarProps {
 	headingIdxToComments: Record<number, FeedbackComment[]>;
 	currentFocusedFeedback?: (FeedbackComment & { ideaId: string }) | null;
 	onFeedbackClick: (feedback: FeedbackComment & { hid: string | number }) => void;
-	focusSection?: (feedback: FeedbackComment & { hid: string | number }) => void;
 	canShare: boolean;
 }
 

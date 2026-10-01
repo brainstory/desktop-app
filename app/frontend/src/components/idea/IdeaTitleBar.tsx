@@ -10,17 +10,10 @@ import { Snackbar } from "@ds/Snackbar";
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
 	isOwnIdea: boolean;
-	isFeedbackMissing?: boolean;
-	requestedDraftId?: string;
 	parentId?: string | null;
 }
 
-export default function IdeaTitleBar({
-	idea,
-	isOwnIdea,
-	requestedDraftId,
-	parentId
-}: IdeaTitleBarProps) {
+export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBarProps) {
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
 	const [snackbarErrorMessage, setSnackbarErrorMessage] = useState("Error: Title field is empty");
 	const [exportState, setExportState] = useState<string | null>(null);
@@ -145,10 +138,7 @@ export default function IdeaTitleBar({
 				<PinkButton
 					key="give-feedback"
 					onClick={() => {
-						const feedbackHref = requestedDraftId
-							? `/chat?id=${requestedDraftId}`
-							: `/chat?parentId=${idea.id}`;
-						window.location.href = feedbackHref;
+						window.location.href = `/chat?parentId=${idea.id}`;
 					}}
 				>
 					Give Feedback

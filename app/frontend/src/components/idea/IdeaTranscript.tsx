@@ -1,13 +1,7 @@
 import type { ChatMessage } from "@src/types";
 import { groupTranscript } from "@helpers/chat";
 
-export default function IdeaTranscript({
-	transcript,
-	title: _title
-}: {
-	transcript?: ChatMessage[] | null;
-	title?: string | null;
-}) {
+export default function IdeaTranscript({ transcript }: { transcript?: ChatMessage[] | null }) {
 	const pairs = groupTranscript(transcript ?? []);
 
 	if (pairs.length === 0) {

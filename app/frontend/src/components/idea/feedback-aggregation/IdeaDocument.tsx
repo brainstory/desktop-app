@@ -8,7 +8,6 @@ interface IdeaDocumentProps {
 	headingIdxToComments: Record<number, FeedbackComment[]>;
 	onReactionClick: (reaction: unknown) => void;
 	focusedSection?: string | number | null;
-	currentFocusedFeedback?: (FeedbackComment & { ideaId: string }) | null;
 }
 
 export default function IdeaDocument({

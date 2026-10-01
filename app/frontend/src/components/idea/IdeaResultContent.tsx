@@ -131,7 +131,7 @@ export default function IdeaResultContent() {
 					{
 						label: "Transcript",
 						param: "transcript",
-						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
+						content: <IdeaTranscript transcript={idea.transcript} />
 					}
 				]
 			: [
@@ -141,7 +141,6 @@ export default function IdeaResultContent() {
 						content: (
 							<IdeaSection
 								resultSections={idea.resultJson ?? []}
-								ideaFeedbackChildren={ideaChildren}
 								headingIdxToComments={headingIdxToComments}
 								canShare={isOwn}
 							/>
@@ -150,7 +149,7 @@ export default function IdeaResultContent() {
 					{
 						label: "Transcript",
 						param: "transcript",
-						content: <IdeaTranscript title={idea.title} transcript={idea.transcript} />
+						content: <IdeaTranscript transcript={idea.transcript} />
 					}
 				];
 
@@ -195,16 +194,10 @@ export default function IdeaResultContent() {
 	} else {
 		return (
 			<div className="h-full">
-				<IdeaTitleBar
-					idea={idea}
-					isOwnIdea={isOwn}
-					isFeedbackMissing={!parentIdea}
-					parentId={parentIdea?.id}
-				/>
+				<IdeaTitleBar idea={idea} isOwnIdea={isOwn} parentId={parentIdea?.id} />
 				<TailwindComposedTabs
 					data={tabData}
 					activeTab={activeTab}
-					accentColor="pink"
 					tabParams={tabData.map((tab) => tab.param)}
 				/>
 			</div>

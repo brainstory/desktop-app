@@ -1,4 +1,4 @@
-import type { ResultSection, FeedbackComment, IdeaFeedbackItem } from "@src/types";
+import type { ResultSection, FeedbackComment } from "@src/types";
 import IdeaDocument from "@components/idea/feedback-aggregation/IdeaDocument";
 import IdeaSidebar from "@components/idea/feedback-aggregation/IdeaSidebar";
 import { useState } from "react";
@@ -6,14 +6,12 @@ import { useTimeout } from "@src/hooks/useTimeout";
 
 interface IdeaSectionProps {
 	resultSections: ResultSection[];
-	ideaFeedbackChildren?: IdeaFeedbackItem[] | null;
 	headingIdxToComments: Record<number, FeedbackComment[]>;
 	canShare: boolean;
 }
 
 export default function IdeaSection({
 	resultSections,
-	ideaFeedbackChildren: _ideaFeedbackChildren,
 	headingIdxToComments,
 	canShare
 }: IdeaSectionProps) {
@@ -41,7 +39,6 @@ export default function IdeaSection({
 			<IdeaDocument
 				focusedSection={focusedSection}
 				onReactionClick={onDocumentReactionClick as (reaction: unknown) => void}
-				currentFocusedFeedback={focusedFeedback}
 				resultSections={resultSections}
 				headingIdxToComments={headingIdxToComments}
 			/>

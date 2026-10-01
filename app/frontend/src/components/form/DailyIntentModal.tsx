@@ -9,10 +9,8 @@ import LoadingAnimation from "@components/global/LoadingAnimation";
 import StartLogSection from "./StartLogSection";
 
 interface DailyIntentModalProps {
-	logId?: string | null;
 	setLogId: (id: string) => void;
 	onClose: () => void;
-	isAtStart?: boolean;
 }
 
 export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModalProps) {
