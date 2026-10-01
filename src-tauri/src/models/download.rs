@@ -295,10 +295,23 @@ fn part_path(dest: &Path) -> PathBuf {
 	PathBuf::from(name)
 }
 
+/// Why a streaming download stopped, and whether the staged bytes are
+/// still a valid prefix worth resuming from.
+enum StreamFailure {
+	/// Transient (stall, dropped connection, early end of stream): the
+	/// `.part` holds a correct prefix and is kept for a Range resume -
+	/// even across an app restart.
+	Resumable(String),
+	/// Cancelled by the user, corrupt, oversized or unwritable: the
+	/// staged bytes are worthless (or unwanted) and are removed.
+	Discard(String),
+}
+
 /// Stream a model file to disk, reporting progress through `on_progress`
 /// (percentage 0-100). Verifies the download completed fully and matches
-/// the pinned sha256 before moving it into place; the `.part` file is
-/// removed on any failure.
+/// the pinned sha256 before moving it into place. A transient failure
+/// keeps the `.part` file so the next attempt resumes it; cancellation
+/// and integrity/size failures remove it.
 pub async fn download_model_file(
 	url: &str,
 	dest: &Path,
@@ -424,27 +437,30 @@ pub async fn download_model_file(
 	};
 	use tokio::io::AsyncWriteExt;
 
-	// Every failure path below removes the partial file, so a retry starts
-	// clean instead of leaving gigabytes of junk behind.
+	// A transient failure keeps the staged prefix for a Range resume;
+	// everything else removes it, so a retry never stitches onto junk.
 	let outcome = async {
+		use StreamFailure::{Discard, Resumable};
 		// `downloaded` comes from the outer scope: it is pre-seeded with
 		// the resumed prefix so totals and progress include it.
 		let mut last_report: u64 = downloaded;
 		const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 		loop {
 			if cancel.load(Ordering::Relaxed) {
-				return Err("download cancelled".into());
+				return Err(Discard("download cancelled".into()));
 			}
 			let chunk = match tokio::time::timeout(CHUNK_IDLE_TIMEOUT, stream.next()).await {
-				Err(_) => return Err("download stalled (no data for 60s)".into()),
+				Err(_) => return Err(Resumable("download stalled (no data for 60s)".into())),
 				Ok(Some(Ok(c))) => c,
-				Ok(Some(Err(e))) => return Err(format!("download interrupted: {e}")),
+				Ok(Some(Err(e))) => return Err(Resumable(format!("download interrupted: {e}"))),
 				Ok(None) => break,
 			};
 			if let Some(hasher) = hasher.as_mut() {
 				hasher.update(&chunk);
 			}
-			file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+			file.write_all(&chunk)
+				.await
+				.map_err(|e| Discard(e.to_string()))?;
 			downloaded += chunk.len() as u64;
 			if downloaded - last_report > 2_000_000 || downloaded == total {
 				last_report = downloaded;
@@ -458,17 +474,29 @@ pub async fn download_model_file(
 				on_progress(pct);
 			}
 		}
-		file.flush().await.map_err(|e| e.to_string())?;
+		file.flush().await.map_err(|e| Discard(e.to_string()))?;
 		// The stream can end "cleanly" mid-body; only a full-length file is
 		// a valid model, anything else fails to load with cryptic errors.
+		// A short file is a resumable prefix; a long one is junk.
+		let short_or_junk = |message: String, limit: u64| {
+			if downloaded < limit {
+				Resumable(message)
+			} else {
+				Discard(message)
+			}
+		};
 		if total > 0 && downloaded != total {
-			return Err(format!(
-				"download incomplete (got {downloaded} of {total} bytes) - please retry"
+			return Err(short_or_junk(
+				format!("download incomplete (got {downloaded} of {total} bytes) - please retry"),
+				total,
 			));
 		}
 		if expected_size > 0 && downloaded != expected_size {
-			return Err(format!(
-				"download size mismatch (got {downloaded} bytes, expected {expected_size}) - please retry"
+			return Err(short_or_junk(
+				format!(
+					"download size mismatch (got {downloaded} bytes, expected {expected_size}) - please retry"
+				),
+				expected_size,
 			));
 		}
 		if let Some(hasher) = hasher.take() {
@@ -478,9 +506,9 @@ pub async fn download_model_file(
 				.map(|b| format!("{b:02x}"))
 				.collect();
 			if !actual.eq_ignore_ascii_case(expected_sha256) {
-				return Err(format!(
+				return Err(Discard(format!(
 					"download failed its integrity check (sha256 {actual}) - the file was corrupted in transit or changed upstream; please retry"
-				));
+				)));
 			}
 		}
 		Ok(())
@@ -495,11 +523,25 @@ pub async fn download_model_file(
 				.map_err(|e| e.to_string())?;
 			Ok(())
 		}
-		Err(e) => {
+		Err(StreamFailure::Resumable(e)) => {
+			drop(file);
+			log::info!(
+				"keeping {} bytes of {} for a resume: {e}",
+				downloaded_on_disk(&tmp),
+				dest.display()
+			);
+			Err(e)
+		}
+		Err(StreamFailure::Discard(e)) => {
+			drop(file);
 			let _ = tokio::fs::remove_file(&tmp).await;
 			Err(e)
 		}
 	}
+}
+
+fn downloaded_on_disk(path: &Path) -> u64 {
+	std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 #[cfg(test)]
 mod download_tests {
@@ -783,6 +825,124 @@ mod resume_tests {
 			"file assembled correctly"
 		);
 		let _ = std::fs::remove_file(&dest);
+	}
+
+	/// Promise `body.len()` bytes but hang up after `sent` of them, the way
+	/// a dropped connection or a quit mid-transfer looks to the client.
+	fn serve_cut_off(body: Vec<u8>, sent: usize) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(&body[..sent]);
+				let _ = sock.flush();
+				// dropping the socket closes the connection mid-body
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	#[tokio::test]
+	async fn an_interrupted_download_keeps_its_part_file_and_resumes() {
+		let body: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
+		let digest = sha256_hex(&body);
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		let cancel = Arc::new(AtomicBool::new(false));
+
+		// the connection drops after 1200 bytes: the attempt fails, but the
+		// staged prefix must survive for the next attempt (or launch)
+		let url = serve_cut_off(body.clone(), 1200);
+		let err = download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&digest,
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a cut-off transfer must fail");
+		assert!(
+			err.contains("interrupted") || err.contains("incomplete"),
+			"unexpected error: {err}"
+		);
+		assert!(!dest.exists(), "no final file from a failed transfer");
+		assert_eq!(
+			std::fs::read(&tmp).expect("the .part file is kept"),
+			body[..1200],
+			"the kept prefix is exactly what arrived"
+		);
+
+		// the retry continues from the kept prefix with a Range request
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let url = serve_ranged(body.clone(), saw_range.clone());
+		download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&digest,
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect("resumed download");
+		assert_eq!(saw_range.lock().unwrap().as_deref(), Some("bytes=1200-"));
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+		assert!(!tmp.exists(), "the staging file is consumed on success");
+	}
+
+	#[tokio::test]
+	async fn integrity_failures_and_cancellation_discard_the_part_file() {
+		let body = vec![5u8; 2000];
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let url = serve_ranged(body.clone(), saw_range);
+		let err = download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			"deadbeef",
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("hash mismatch");
+		assert!(err.contains("integrity"), "unexpected error: {err}");
+		assert!(
+			!part_path(&dest).exists(),
+			"corrupt bytes are not resumable"
+		);
+
+		cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let url = serve_ranged(body.clone(), saw_range);
+		let err = download_model_file(
+			&url,
+			&dest,
+			body.len() as u64,
+			&sha256_hex(&body),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("cancelled");
+		assert!(err.contains("cancelled"), "unexpected error: {err}");
+		assert!(
+			!part_path(&dest).exists(),
+			"a user cancel frees the disk space"
+		);
 	}
 
 	#[tokio::test]
