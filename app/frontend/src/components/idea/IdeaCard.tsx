@@ -36,14 +36,14 @@ export default function IdeaCard({
 			: `min-h-[240px]`;
 
 	return (
-		<a
-			href={`/idea?id=${id}`}
-			target={isFeedback ? "_blank" : "_self"}
-			rel={isFeedback ? "noreferrer" : undefined}
+		// One title link stretched over the card (its ::after covers the
+		// card body) plus sibling actions raised above it: no interactive
+		// element is ever nested inside another.
+		<article
 			className={`relative w-80 sm:w-[275px] ${cardHeight} group cursor-pointer bg-white rounded-lg border border-stone-200 shadow hover:shadow-lg hover:-translate-y-1 transition-transform`}
 		>
 			{isUnread && (
-				<span className="absolute top-3 right-3 z-10 bg-pink-500 text-white text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full shadow">
+				<span className="pointer-events-none absolute top-3 right-3 z-10 bg-pink-500 text-white text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full shadow">
 					New
 				</span>
 			)}
@@ -59,7 +59,12 @@ export default function IdeaCard({
 
 						<h3 className="h-[64px] text-xl font-semibold tracking-tight text-stone-900 line-clamp-2 mb-3">
 							<PinkIcon shared={shared} />
-							{title}
+							<a
+								href={`/idea?id=${id}`}
+								className="after:absolute after:inset-0 after:rounded-lg"
+							>
+								{title}
+							</a>
 						</h3>
 
 						<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
@@ -78,21 +83,18 @@ export default function IdeaCard({
 					</div>
 					{!isFeedback && feedbackList.length > 0 && (
 						<div className="flex justify-end mt-4">
-							<button
-								onClick={(e) => {
-									e.preventDefault();
-									window.location.href = `/idea?id=${id}&tab=feedback`;
-								}}
-								className="hover:underline font-bold w-[130px] text-accent-700 uppercase p-1 text-xs rounded-full"
+							<a
+								href={`/idea?id=${id}&tab=feedback`}
+								className="relative z-10 hover:underline font-bold w-[130px] text-center text-accent-700 uppercase p-1 text-xs rounded-full"
 							>
 								{feedbackList.length}{" "}
 								{feedbackList.length > 1 ? "feedback items" : "feedback item"}
-							</button>
+							</a>
 						</div>
 					)}
 				</div>
 			</div>
-		</a>
+		</article>
 	);
 }
 
