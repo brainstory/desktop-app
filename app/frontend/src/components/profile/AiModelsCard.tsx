@@ -16,6 +16,13 @@ const formatSize = (bytes?: number): string => {
 	return `${Math.round(bytes / 1_000_000)} MB`;
 };
 
+/**
+ * Display percentage for a download: null while the backend could not
+ * determine the total size (it reports a negative pct then).
+ */
+const downloadPercent = (pct: number): number | null =>
+	pct < 0 ? null : Math.min(100, Math.floor(pct));
+
 /** Headroom required on top of the model file before we warn about space */
 const DOWNLOAD_SPACE_MARGIN_BYTES = 1_000_000_000;
 
@@ -81,7 +88,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		};
 
 	const renderModelRow = (model: ModelStatus) => {
-		const isDownloading = downloadProgress[model.id] !== undefined;
+		const progress = downloadProgress[model.id];
+		const isDownloading = progress !== undefined;
+		const pct = progress === undefined ? null : downloadPercent(progress);
 		const isConfirmingDelete = confirmingDeleteId === model.id;
 		const handleDeleteClick = (): void => {
 			if (!isConfirmingDelete) {
@@ -162,27 +171,21 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							aria-label={`${model.label} download progress`}
 							aria-valuemin={0}
 							aria-valuemax={100}
-							aria-valuenow={
-								(downloadProgress[model.id] ?? 0 >= 0)
-									? Math.floor(downloadProgress[model.id] ?? 0)
-									: undefined
-							}
+							aria-valuenow={pct ?? undefined}
 							className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden"
 						>
-							{(downloadProgress[model.id] ?? 0 < 0) ? (
+							{pct === null ? (
 								// backend couldn't determine the total size
 								<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
 							) : (
 								<div
 									className="bg-pink-500 h-2.5 rounded-full transition-all"
-									style={{ width: `${downloadProgress[model.id]! ?? 0}%` }}
+									style={{ width: `${pct}%` }}
 								></div>
 							)}
 						</div>
 						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
-							{(downloadProgress[model.id] ?? 0 < 0)
-								? "…"
-								: `${Math.floor(downloadProgress[model.id]! ?? 0)}%`}
+							{pct === null ? "…" : `${pct}%`}
 						</span>
 					</div>
 				)}
