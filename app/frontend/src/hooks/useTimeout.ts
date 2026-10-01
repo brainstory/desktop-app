@@ -34,12 +34,18 @@ export function useTimeout(): readonly [
 	return [schedule, cancel] as const;
 }
 
+export const CONFIRM_RESET_MS = 5000;
+
+/** Screen-reader text for an armed delete: put it in a live region
+ * OUTSIDE the button, once per arming (not per countdown tick). */
+export const CONFIRM_DELETE_ANNOUNCEMENT = `Click again to delete, resets in ${CONFIRM_RESET_MS / 1000} seconds`;
+
 /**
  * Two-click confirmation for destructive actions: the first click arms
  * (and auto-resets after `resetMs`), the second click within the window
  * confirms. The reset timer never survives unmount.
  */
-export function useConfirmClick(resetMs = 5000): {
+export function useConfirmClick(resetMs = CONFIRM_RESET_MS): {
 	isConfirming: boolean;
 	/** Seconds until the confirmation auto-resets (for a visible countdown). */
 	secondsLeft: number | null;
