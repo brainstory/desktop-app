@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import IdeaFeedbackCard from "./IdeaFeedbackCard";
-import EmojiList from "./EmojiList";
+import SectionCommenters from "./SectionCommenters";
 import type { FeedbackComment } from "@src/types";
 
 // `labels` mimics old stored data: the LLM's emoji must not be shown
@@ -51,25 +51,25 @@ describe("IdeaFeedbackCard", () => {
 	});
 });
 
-describe("EmojiList", () => {
-	it("keeps reactions clickable as buttons when a handler is given", async () => {
+describe("SectionCommenters", () => {
+	it("keeps commenters clickable as buttons when a handler is given", async () => {
 		const user = userEvent.setup();
-		const onReactionClick = vi.fn();
-		render(<EmojiList reactions={[comment]} onReactionClick={onReactionClick} />);
+		const onCommentClick = vi.fn();
+		render(<SectionCommenters comments={[comment]} onCommentClick={onCommentClick} />);
 		await user.click(screen.getByRole("button", { name: "Show feedback from Ada" }));
-		expect(onReactionClick).toHaveBeenCalledWith(comment);
+		expect(onCommentClick).toHaveBeenCalledWith(comment);
 	});
 
 	it("shows the commenter, not the LLM label emoji", () => {
 		const { container } = render(
-			<EmojiList reactions={[comment]} onReactionClick={() => {}} />
+			<SectionCommenters comments={[comment]} onCommentClick={() => {}} />
 		);
 		expect(container.textContent).not.toContain("👍");
 	});
 
-	it("highlights reactions with the pink accent ramp, not blue", () => {
+	it("highlights commenters with the pink accent ramp, not blue", () => {
 		const { container } = render(
-			<EmojiList reactions={[comment]} onReactionClick={() => {}} />
+			<SectionCommenters comments={[comment]} onCommentClick={() => {}} />
 		);
 		const chip = container.querySelector(".border.rounded-md");
 		expect(chip).toHaveClass("border-accent-400", "bg-accent-50");

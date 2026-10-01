@@ -15,15 +15,15 @@ export default function IdeaSection({
 	headingIdxToComments,
 	canShare
 }: IdeaSectionProps) {
-	// This should be used to tell the side bar which reaction should be scrolled into view
+	// This should be used to tell the side bar which comment should be scrolled into view
 	type FocusedFeedback = FeedbackComment & { ideaId: string };
 	const [focusedFeedback, setFocusedFeedback] = useState<FocusedFeedback | null>(null);
 	const [focusedSection, setFocusedSection] = useState<string | number | null>(null);
 	const [scheduleFeedbackReset] = useTimeout();
 	const [scheduleSectionReset] = useTimeout();
 
-	function onDocumentReactionClick(reaction: FocusedFeedback): void {
-		setFocusedFeedback(reaction);
+	function onDocumentCommentClick(comment: FocusedFeedback): void {
+		setFocusedFeedback(comment);
 		// reset the highlight after 3 seconds (the timer dies with the section)
 		scheduleFeedbackReset(() => setFocusedFeedback(null), 3000);
 	}
@@ -38,7 +38,7 @@ export default function IdeaSection({
 		<div className="flex h-[calc(100vh-11.5rem)]">
 			<IdeaDocument
 				focusedSection={focusedSection}
-				onReactionClick={onDocumentReactionClick as (reaction: unknown) => void}
+				onCommentClick={onDocumentCommentClick as (comment: unknown) => void}
 				resultSections={resultSections}
 				headingIdxToComments={headingIdxToComments}
 			/>

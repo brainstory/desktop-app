@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 
 import Button from "./Button";
 import LoadingAnimation from "@components/global/LoadingAnimation";
-import EmojiList from "@components/idea/feedback-aggregation/EmojiList";
+import SectionCommenters from "@components/idea/feedback-aggregation/SectionCommenters";
 
 function classTokens(el: Element): string[] {
 	return (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
@@ -59,8 +59,8 @@ describe("conditional classes (cn)", () => {
 		expect(tokens).not.toContain("undefined");
 	});
 
-	it("EmojiList emits no stray false/undefined class tokens when unfocused", () => {
-		const { container } = render(<EmojiList reactions={[]} onReactionClick={() => {}} />);
+	it("SectionCommenters emits no stray false/undefined class tokens when unfocused", () => {
+		const { container } = render(<SectionCommenters comments={[]} onCommentClick={() => {}} />);
 		const tokens = classTokens(container.firstElementChild!);
 		expect(tokens).not.toContain("false");
 		expect(tokens).not.toContain("undefined");

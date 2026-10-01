@@ -1,19 +1,19 @@
 import type { ResultSection, FeedbackComment } from "@src/types";
 import { useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import EmojiList from "@components/idea/feedback-aggregation/EmojiList";
+import SectionCommenters from "@components/idea/feedback-aggregation/SectionCommenters";
 
 interface IdeaDocumentProps {
 	resultSections: ResultSection[];
 	headingIdxToComments: Record<number, FeedbackComment[]>;
-	onReactionClick: (reaction: unknown) => void;
+	onCommentClick: (comment: unknown) => void;
 	focusedSection?: string | number | null;
 }
 
 export default function IdeaDocument({
 	resultSections,
 	headingIdxToComments,
-	onReactionClick,
+	onCommentClick,
 	focusedSection
 }: IdeaDocumentProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -44,9 +44,9 @@ export default function IdeaDocument({
 					<ReactMarkdown>{section.body}</ReactMarkdown>
 					{(headingIdxToComments[outerIndex]?.length ?? 0) > 0 && (
 						<div id={`emojiList-${outerIndex}`}>
-							<EmojiList
-								reactions={headingIdxToComments[outerIndex]}
-								onReactionClick={onReactionClick}
+							<SectionCommenters
+								comments={headingIdxToComments[outerIndex]}
+								onCommentClick={onCommentClick}
 								isFocused={
 									focusedSection != null && Number(focusedSection) === outerIndex
 								}
