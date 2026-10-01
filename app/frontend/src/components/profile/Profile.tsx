@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useStore } from "@nanostores/react";
 import { $userState } from "@components/global/userStore";
 
@@ -44,7 +44,10 @@ export default function Profile() {
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
 
-	const loadSettings = () => {
+	const loadUpdates = updates.load;
+	// stable (setters and the useCallback'd loadUpdates), so the mount
+	// effect below runs once
+	const loadSettings = useCallback(() => {
 		getUserSettingsApi()
 			.then((res) => {
 				setUserName(res.user.name ?? "");
@@ -53,7 +56,7 @@ export default function Profile() {
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);
-				updates.load(res.updates.enabled);
+				loadUpdates(res.updates.enabled);
 			})
 			.catch((e) => {
 				// without this the spinner never ends
@@ -61,7 +64,7 @@ export default function Profile() {
 				setErrorFound(true);
 			})
 			.finally(() => setIsLoading(false));
-	};
+	}, [loadUpdates]);
 
 	/** retry path: re-arm the loading state (a click handler may set state
 	 * synchronously; the mount effect may not) */
@@ -73,7 +76,7 @@ export default function Profile() {
 
 	useEffect(() => {
 		loadSettings();
-	}, []);
+	}, [loadSettings]);
 
 	const handleUserSettingsSave = (newName: string, newTimezone: string): void => {
 		saveUserSettingsApi({ name: newName, timezone: newTimezone })
