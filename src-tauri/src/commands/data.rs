@@ -23,9 +23,7 @@ pub async fn get_user(state: State<'_, AppState>) -> Result<UserData, String> {
 		.get_setting(crate::keys::setting::CREATED_AT)
 		.unwrap_or_else(|| "1970-01-01T00:00:00".into());
 	Ok(UserData {
-		email: None,
 		name,
-		mail_verified: true,
 		timezone,
 		created_at,
 	})

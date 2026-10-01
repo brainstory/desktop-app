@@ -63,9 +63,7 @@ pub struct IdeaItem {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UserData {
-	pub email: Option<String>,
 	pub name: Option<String>,
-	pub mail_verified: bool,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub timezone: Option<String>,
 	pub created_at: String,
