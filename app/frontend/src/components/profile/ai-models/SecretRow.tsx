@@ -27,7 +27,7 @@ export function SecretRow({
 			<label htmlFor={inputId} className={labelClassName}>
 				{label}
 			</label>
-			{description && <p className="text-stone-500 mb-2">{description}</p>}
+			{!!description && <p className="text-stone-500 mb-2">{description}</p>}
 			<SecretField inputId={inputId} {...field} />
 		</div>
 	);

@@ -4,6 +4,13 @@ import { useState } from "react";
 
 import { Snackbar, useSnackbar } from "./Snackbar";
 
+/** Re-renders itself once, 2s in (past the midway point of the countdown). */
+function RerenderingHost({ onClose }: { onClose: () => void }) {
+	const [, setTick] = useState(0);
+	setTimeout(() => setTick((t) => t + 1), 2000);
+	return <Snackbar isSuccess={false} message="first" onClose={onClose} />;
+}
+
 // a failing assertion must not leak fake timers into the next test
 afterEach(() => {
 	vi.useRealTimers();
@@ -49,13 +56,7 @@ describe("Snackbar", () => {
 	it("a parent re-render does not restart the countdown", () => {
 		vi.useFakeTimers();
 		const onClose = vi.fn();
-		function Host() {
-			const [, setTick] = useState(0);
-			// re-render after 2s (past the midway point of the countdown)
-			setTimeout(() => setTick((t) => t + 1), 2000);
-			return <Snackbar isSuccess={false} message="first" onClose={onClose} />;
-		}
-		render(<Host />);
+		render(<RerenderingHost onClose={onClose} />);
 		act(() => {
 			vi.advanceTimersByTime(2000); // parent re-render happens here
 		});

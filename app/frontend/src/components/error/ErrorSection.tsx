@@ -28,7 +28,7 @@ export default function ErrorSection({
 				})}
 				{showRestartHint && <p>If you keep seeing this page, try restarting the app.</p>}
 			</div>
-			{(action || !hideDashboardLink) && (
+			{(!!action || !hideDashboardLink) && (
 				<div className="flex flex-wrap gap-3 mt-8">
 					{action}
 					{!hideDashboardLink && (
