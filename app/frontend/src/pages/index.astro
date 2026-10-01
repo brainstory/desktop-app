@@ -1,24 +1,26 @@
 ---
 import BaseLayout from "@layouts/BaseLayout.astro";
+import { STORAGE_KEYS } from "@src/tauri/commands";
 ---
 
 <BaseLayout title="Brainstory">
-	<script is:inline>
+	<script is:inline define:vars={{ keys: STORAGE_KEYS }}>
 		// First-run onboarding runs before first paint: everyone goes through
 		// the guide once, then straight to the dashboard. Inline script = no
-		// React mount, no blank flash (localStorage mirrors storage.ts flags).
+		// React mount, no blank flash. define:vars inlines STORAGE_KEYS (the
+		// keys storage.ts uses) as `keys`; the script itself stays unbundled.
 		(function () {
 			var done = false;
 			var seen = false;
 			try {
-				done = localStorage.getItem("has_done_getting_started") !== null;
-				seen = localStorage.getItem("has_seen_index") !== null;
+				done = localStorage.getItem(keys.gettingStartedDone) !== null;
+				seen = localStorage.getItem(keys.indexSeen) !== null;
 			} catch (e) {
 				/* storage unavailable - default to the dashboard */
 			}
 			if (!done && !seen) {
 				try {
-					localStorage.setItem("has_seen_index", "true");
+					localStorage.setItem(keys.indexSeen, "true");
 				} catch (e) {}
 				location.replace("/get-started");
 			} else {

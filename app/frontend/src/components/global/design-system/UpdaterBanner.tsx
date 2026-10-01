@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getUpdatesEnabledApi } from "@helpers/api/settings";
+import { STORAGE_KEYS } from "@src/tauri/commands";
 
 /**
  * Update check + install banner. Only active inside the Tauri webview
@@ -12,7 +13,7 @@ import { getUpdatesEnabledApi } from "@helpers/api/settings";
  */
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const THROTTLE_KEY = "last_update_check_ms";
+const THROTTLE_KEY = STORAGE_KEYS.lastUpdateCheckMs;
 const THROTTLE_MS = 6 * 60 * 60 * 1000;
 
 type Phase = "available" | "downloading" | "restarting" | "error";

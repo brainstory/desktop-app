@@ -2,6 +2,8 @@
 // unreliable in the Tauri webview (custom scheme + Secure cookies), so
 // local storage is the durable mechanism in the desktop app.
 
+import { STORAGE_KEYS } from "@src/tauri/commands";
+
 const getFlag = (name: string): string | null => {
 	try {
 		return localStorage.getItem(name);
@@ -18,12 +20,13 @@ const setFlag = (name: string, value = "true"): void => {
 	}
 };
 
-export const hasDoneGettingStarted = (): boolean => getFlag("has_done_getting_started") !== null;
-export const markGettingStartedDone = (): void => setFlag("has_done_getting_started");
+export const hasDoneGettingStarted = (): boolean =>
+	getFlag(STORAGE_KEYS.gettingStartedDone) !== null;
+export const markGettingStartedDone = (): void => setFlag(STORAGE_KEYS.gettingStartedDone);
 export const setGettingStartedDone = (done: boolean): void => {
 	// Monotonic: once the flag is set it is never cleared - deleting
 	// your ideas must not resurrect onboarding.
 	if (done) {
-		setFlag("has_done_getting_started");
+		setFlag(STORAGE_KEYS.gettingStartedDone);
 	}
 };
