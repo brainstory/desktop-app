@@ -44,7 +44,9 @@ missing goes in. Then return the document.
 
 The main document above must contain only what H said. The sections below are the one exception: they are your
 synthesis, clearly derived from the session - label them for what they are and never present them as H's words.
-After the main document, append them separated by a horizontal rule (`---`):
+After the main document, append them separated by a horizontal rule (`---`). Directly under each of these `##`
+headings, put a one-line italic note marking the section as your synthesis, such as `*(Assistant's synthesis)*`,
+written in H's language. Keep the headings themselves as listed (translated into H's language when needed):
 
 ## Core Thesis
 A 1-2 sentence distillation of the central idea. This should capture the essence in H's own framing.
