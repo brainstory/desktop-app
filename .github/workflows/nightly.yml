@@ -78,10 +78,12 @@ jobs:
           "
 
       # Nightly artifacts are never published to the update feed, so they
-      # are not signed at all (no updater artifacts are produced).
+      # are not signed at all: src-tauri/tauri.nightly.conf.json turns off
+      # updater artifacts. A file, not inline JSON, because pwsh (the
+      # Windows default shell) can strip the quotes from a JSON argument.
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm tauri build --bundles app --config src-tauri/tauri.nightly.conf.json
 
       - name: Package DMG (macOS)
         if: runner.os == 'macOS'
@@ -89,11 +91,11 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm tauri build --bundles nsis --config src-tauri/tauri.nightly.conf.json
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config src-tauri/tauri.nightly.conf.json
 
       # The engine smoke test is the only guard that whisper.cpp and
       # llama.cpp actually RUN together in one process (the duplicate
