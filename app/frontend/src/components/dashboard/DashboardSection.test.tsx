@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
 import DashboardSection from "./DashboardSection";
+import { hasDoneGettingStarted, markGettingStartedDone } from "@helpers/storage";
 
 const emptyStatus = { llm: { state: "ready" }, stt: { state: "ready" } };
 const emptyModels = {
@@ -121,4 +122,45 @@ describe("DashboardSection", () => {
 			).toBeGreaterThanOrEqual(2)
 		);
 	});
+});
+
+describe("DashboardSection onboarding flag", () => {
+	afterEach(() => {
+		localStorage.clear();
+	});
+
+	it("sets the getting-started flag once an own idea exists", async () => {
+		mockBase({
+			get_all_ideas: () => ({
+				ideas: [{ id: "own1", title: "Mine", result: "summary", feedback: [] }]
+			})
+		});
+		render(<DashboardSection />);
+		expect(await screen.findByText("Mine")).toBeInTheDocument();
+		expect(hasDoneGettingStarted()).toBe(true);
+	});
+
+	it.each([
+		["an empty library", []],
+		[
+			"an imported-only library",
+			[{ id: "imp1", title: "Imported", result: "s", creator_name: "Ada", feedback: [] }]
+		]
+	])(
+		"deleting every own idea (%s) does not unset it - onboarding stays done",
+		async (_label, ideas) => {
+			markGettingStartedDone();
+			mockBase({ get_all_ideas: () => ({ ideas }) });
+			render(<DashboardSection />);
+			await waitFor(() =>
+				expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "get_all_ideas")).toBe(
+					true
+				)
+			);
+			// let the post-load effects run
+			await screen.findByRole("heading", { name: "Dashboard" });
+			await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+			expect(hasDoneGettingStarted()).toBe(true);
+		}
+	);
 });
