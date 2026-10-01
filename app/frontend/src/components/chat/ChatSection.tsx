@@ -140,7 +140,6 @@ export function ChatSection({
 			<FinishedResultSection
 				ideaId={persistence.ideaId}
 				result={result}
-				parentSummary={parentIdea?.summary}
 				readyForFinish={session.readyToSave}
 				isComplete={session.resultComplete}
 			/>

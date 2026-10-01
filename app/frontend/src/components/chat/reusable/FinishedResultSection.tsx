@@ -7,7 +7,6 @@ interface FinishedResultSectionProps {
 	/** the summary stream finished (render it as markdown) */
 	isComplete: boolean;
 	ideaId: string | undefined;
-	parentSummary?: string | null;
 }
 
 export default function FinishedResultSection({
