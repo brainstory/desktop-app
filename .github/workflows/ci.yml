@@ -54,6 +54,11 @@ jobs:
       - name: Test
         run: pnpm -C app/frontend test
 
+      # build scripts (scripts/*.test.mjs) run under plain node:test
+      - name: Test build scripts
+        working-directory: app/frontend
+        run: node --test scripts/
+
       - name: Build
         run: pnpm -C app/frontend build
 

@@ -3,13 +3,18 @@
 // Rive WASM engine. Fonts are handled by @fontsource-variable/inter, which
 // Vite bundles directly.
 //
-// Run automatically by `pnpm dev` / `pnpm build`.
+// Run automatically by `pnpm dev` / `pnpm build`. Everything is written to a
+// staging directory first and swapped into public/vendor/ only once complete,
+// so a failed run (e.g. node_modules missing a package) leaves the previous
+// assets in place instead of an empty or half-filled public/vendor/.
 import {
 	cpSync,
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync
 } from "node:fs";
@@ -20,15 +25,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// The ionicons ESM loader resolves its chunks and icon SVGs relative to its
-// own URL, so serving the whole set from public/vendor/ionicons/ keeps every
-// runtime request local.
-const ioniconsDir = join(root, "node_modules", "ionicons", "dist", "ionicons");
-const svgDir = join(root, "node_modules", "ionicons", "dist", "svg");
-
 /** Copy the ionicons loader chunks + every SVG into `outDir`. */
-function vendorIonicons(outDir) {
-	rmSync(outDir, { recursive: true, force: true });
+function vendorIonicons(frontendRoot, outDir) {
+	// The ionicons ESM loader resolves its chunks and icon SVGs relative to
+	// its own URL, so serving the whole set from public/vendor/ionicons/
+	// keeps every runtime request local.
+	const ioniconsDir = join(frontendRoot, "node_modules", "ionicons", "dist", "ionicons");
+	const svgDir = join(frontendRoot, "node_modules", "ionicons", "dist", "svg");
 	mkdirSync(outDir, { recursive: true });
 
 	// Loader chunks the ESM path can request (skip the systemjs/nomodule builds).
@@ -53,8 +56,8 @@ function vendorIonicons(outDir) {
 }
 
 /** Typo guard: literal icon names in the source that have no matching SVG. */
-function suspiciousIconNames(outDir) {
-	const srcDir = join(root, "src");
+function suspiciousIconNames(frontendRoot, outDir) {
+	const srcDir = join(frontendRoot, "src");
 	const names = new Set();
 	const walk = (dir) => {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -104,7 +107,6 @@ function vendorRive(riveOut) {
 	if (!riveCanvasDir) {
 		throw new Error("could not resolve @rive-app/canvas - run pnpm install first");
 	}
-	rmSync(riveOut, { recursive: true, force: true });
 	mkdirSync(riveOut, { recursive: true });
 	for (const file of ["rive.wasm", "rive_fallback.wasm"]) {
 		const src = join(riveCanvasDir, file);
@@ -116,19 +118,48 @@ function vendorRive(riveOut) {
 	console.log("vendored rive: rive.wasm + rive_fallback.wasm -> public/vendor/rive");
 }
 
-function main() {
-	const ioniconsOut = join(root, "public", "vendor", "ionicons");
-	vendorIonicons(ioniconsOut);
-	const suspicious = suspiciousIconNames(ioniconsOut);
-	if (suspicious.length) {
-		console.warn(
-			`warning: possible icon names without a matching svg: ${suspicious.join(", ")}`
-		);
+/**
+ * Put the complete directory `src` at `dest`, replacing whatever was there.
+ * Both renames stay on one filesystem (src is created next to the frontend
+ * root), and a failed swap puts the previous `dest` back.
+ */
+export function replaceDir(src, dest) {
+	const old = `${src}.old`;
+	rmSync(old, { recursive: true, force: true });
+	const hadDest = existsSync(dest);
+	if (hadDest) renameSync(dest, old);
+	try {
+		mkdirSync(dirname(dest), { recursive: true });
+		renameSync(src, dest);
+	} catch (err) {
+		if (hadDest) renameSync(old, dest);
+		throw err;
 	}
-	vendorRive(join(root, "public", "vendor", "rive"));
+	rmSync(old, { recursive: true, force: true });
+}
+
+/** Vendor every asset into `<frontendRoot>/public/vendor/`, all or nothing. */
+export function vendorAssets(frontendRoot = root) {
+	// staging lives in the frontend root, not public/, so a crash can never
+	// leave a half-written copy where astro would serve or bundle it
+	const staging = mkdtempSync(join(frontendRoot, ".vendor-staging-"));
+	try {
+		const ioniconsOut = join(staging, "ionicons");
+		vendorIonicons(frontendRoot, ioniconsOut);
+		const suspicious = suspiciousIconNames(frontendRoot, ioniconsOut);
+		if (suspicious.length) {
+			console.warn(
+				`warning: possible icon names without a matching svg: ${suspicious.join(", ")}`
+			);
+		}
+		vendorRive(join(staging, "rive"));
+		replaceDir(staging, join(frontendRoot, "public", "vendor"));
+	} finally {
+		rmSync(staging, { recursive: true, force: true });
+	}
 }
 
 // importable (for tests) without vendoring anything
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-	main();
+	vendorAssets();
 }

@@ -2,8 +2,10 @@
 dist/
 .astro/
 
-# generated vendored assets (see scripts/vendor-assets.mjs)
+# generated vendored assets (see scripts/vendor-assets.mjs) and the
+# staging dir it builds them in (only left behind if the process is killed)
 public/vendor/
+.vendor-staging-*/
 
 # dependencies
 node_modules/
