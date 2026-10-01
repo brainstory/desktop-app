@@ -147,19 +147,22 @@ pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 		return Err("WAV contains no samples".into());
 	}
 
-	// fold channels to mono (divide each frame by its own length: a
-	// truncated file can end mid-frame, and dividing a short frame by the
-	// full channel count would produce a spurious volume dip)
-	let mono: Vec<f32> = if channels > 1 {
-		samples
-			.chunks(channels)
-			.map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-			.collect()
-	} else {
-		samples
-	};
+	resample_to_16k(fold_to_mono(samples, channels), sample_rate)
+}
 
-	resample_to_16k(mono, sample_rate)
+/// Fold interleaved multi-channel samples to mono by averaging each
+/// frame. Each frame is divided by its own length: a truncated file or
+/// capture can end mid-frame, and dividing a short frame by the full
+/// channel count would produce a spurious volume dip. Shared by WAV
+/// decoding and microphone capture.
+pub(crate) fn fold_to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
+	if channels <= 1 {
+		return samples;
+	}
+	samples
+		.chunks(channels)
+		.map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+		.collect()
 }
 
 /// Naive linear resampling to 16 kHz.

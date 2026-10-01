@@ -167,25 +167,17 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 	let samples = std::mem::take(&mut *samples_guard);
 	drop(samples_guard);
 	drop(guard);
+	capture_to_wav(samples, capture.channels, capture.sample_rate)
+}
+
+/// Turn the raw interleaved capture buffer into a 16 kHz mono WAV: fold
+/// the channels to mono, resample, encode.
+fn capture_to_wav(samples: Vec<f32>, channels: u16, sample_rate: u32) -> Result<Vec<u8>, String> {
 	if samples.is_empty() {
 		return Err("no audio captured".into());
 	}
-
-	// fold interleaved channels to mono, then resample to 16 kHz
-	let channels = capture.channels.max(1) as usize;
-	let mono: Vec<f32> = if channels > 1 {
-		// divide by the frame's own length (matching stt.rs): a truncated
-		// final frame must not get a spurious volume dip from dividing by
-		// the full channel count
-		samples
-			.chunks(channels)
-			.map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-			.collect()
-	} else {
-		samples
-	};
-	let mono = crate::stt::resample_to_16k(mono, capture.sample_rate)?;
-
+	let mono = crate::stt::fold_to_mono(samples, channels.max(1) as usize);
+	let mono = crate::stt::resample_to_16k(mono, sample_rate)?;
 	encode_wav_16k(&mono)
 }
 
@@ -214,6 +206,24 @@ pub(crate) fn encode_wav_16k(samples: &[f32]) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod wav_tests {
+	#[test]
+	fn capture_folds_stereo_including_a_truncated_final_frame() {
+		// L/R pairs, then a lone left sample: a capture stopped mid-frame
+		let interleaved = vec![0.5, -0.5, 0.2, 0.4, 0.6];
+		let wav = super::capture_to_wav(interleaved, 2, 16_000).expect("encode");
+		let mono = crate::stt::wav_to_samples(&wav).expect("decode");
+		assert_eq!(mono.len(), 3, "one sample per (possibly partial) frame");
+		assert!(mono[0].abs() < 1e-3, "opposite channels cancel");
+		assert!((mono[1] - 0.3).abs() < 1e-3, "frames are averaged");
+		// the partial frame is its own average, not 0.6 / 2
+		assert!((mono[2] - 0.6).abs() < 1e-3, "got {}", mono[2]);
+	}
+
+	#[test]
+	fn capture_rejects_an_empty_buffer() {
+		assert!(super::capture_to_wav(Vec::new(), 1, 48_000).is_err());
+	}
+
 	#[test]
 	fn encode_wav_16k_roundtrips_through_wav_to_samples() {
 		let samples: Vec<f32> = vec![0.0, 0.5, -0.5, 0.99, -1.0];
