@@ -109,6 +109,12 @@ jobs:
     name: Dependency audit (cargo + pnpm)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      # audit-check reports through a check run on push/PR...
+      checks: write
+      # ...and opens an issue per advisory on the weekly schedule
+      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -116,6 +122,8 @@ jobs:
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Cargo.lock lives in src-tauri/, not the repo root
+          working-directory: src-tauri
 
       # pnpm version: the packageManager field in package.json (a
       # `version:` input here too makes the action fail on mismatch)

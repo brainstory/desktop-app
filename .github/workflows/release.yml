@@ -18,6 +18,12 @@ jobs:
     # a bad tag must fail the checks, not ship to every installed client
     # (the updater points at releases/latest/download/latest.json)
     uses: ./.github/workflows/ci.yml
+    # a called workflow can only narrow the caller's token: ci.yml's
+    # audit job needs these, so the call must grant them
+    permissions:
+      contents: read
+      checks: write
+      issues: write
 
   build:
     name: Build (${{ matrix.name }})
