@@ -282,6 +282,40 @@ mod contract_tests {
 	}
 
 	#[test]
+	fn no_prompt_repeats_a_rule_bullet() {
+		// a duplicated `- **Rule.**` bullet is an editing slip that
+		// doubles the rule's weight for the model
+		for (name, text) in [
+			("story_interview", STORY_INTERVIEW_SYSTEM),
+			("story_interview_context", STORY_INTERVIEW_CONTEXT_SYSTEM),
+			("story_interview_react", STORY_INTERVIEW_REACT_SYSTEM),
+			("story_result", STORY_RESULT_SYSTEM),
+			("feedback_result", FEEDBACK_RESULT_SYSTEM),
+			("feedback_json_result", FEEDBACK_JSON_RESULT_SYSTEM),
+		] {
+			let mut seen = std::collections::HashSet::new();
+			for line in text.lines().filter(|l| l.starts_with("- **")) {
+				let label = line.split("**").nth(1).unwrap_or_default();
+				assert!(
+					seen.insert(label),
+					"prompts/{name}_system_message.txt repeats the {label:?} bullet"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn story_result_prompt_only_describes_the_transcript_tag() {
+		// the story result call receives only <t> (see user_messages);
+		// mentioning <oid> there describes input that never arrives
+		assert!(STORY_RESULT_SYSTEM.contains("<t>"));
+		assert!(
+			!STORY_RESULT_SYSTEM.contains("<oid"),
+			"story_result prompt references an <oid> input it never receives"
+		);
+	}
+
+	#[test]
 	fn feedback_prompts_carry_the_documented_tags() {
 		// the react prompt appends <idea author="..." is_current_user="...">
 		let mut react = request(ChatType::Feedback, false);
