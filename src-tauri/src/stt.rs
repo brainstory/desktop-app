@@ -25,12 +25,7 @@ impl SttEngine {
 		let mut state = self.ctx.create_state().map_err(|e| e.to_string())?;
 		let mut params =
 			whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
-		let language = if self.model_id.ends_with("-en") {
-			// English-only models reject any other language
-			"en".to_string()
-		} else {
-			primary_subtag(language)
-		};
+		let language = whisper_language(language, self.model_id.ends_with("-en"));
 		params.set_language(Some(&language));
 		params.set_n_threads(whisper_threads());
 		params.set_translate(false);
@@ -63,15 +58,40 @@ fn whisper_threads() -> i32 {
 	num_cpus::get_physical().clamp(1, i32::MAX as usize) as i32
 }
 
-/// The whisper language id for a BCP-47 tag: the primary subtag
-/// ("de-DE" -> "de", "zh_Hans" -> "zh"), lowercased; "en" for anything
-/// without one.
-fn primary_subtag(language: &str) -> String {
-	language
+/// The whisper language for a BCP-47 locale ("de-DE" -> "de",
+/// "zh_Hans" -> "zh"). English-only models (the `*.en` builds) always get
+/// "en". Primary subtags whisper spells differently are mapped
+/// ("nb" -> "no", ...); anything whisper does not know becomes "auto"
+/// (detect from the audio) instead of reaching whisper.cpp, which fails
+/// the whole transcription on an unknown language.
+fn whisper_language(locale: &str, english_only: bool) -> String {
+	if english_only {
+		return "en".into();
+	}
+	let primary = locale
 		.split(['-', '_'])
-		.find(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphabetic()))
-		.unwrap_or("en")
-		.to_ascii_lowercase()
+		.find(|s| !s.is_empty())
+		.unwrap_or("")
+		.to_ascii_lowercase();
+	let code = match primary.as_str() {
+		"nb" => "no",  // Norwegian Bokmal: whisper only has "no" (and "nn")
+		"fil" => "tl", // Filipino: whisper calls it Tagalog
+		"iw" => "he",  // deprecated ISO 639 codes some platforms still emit
+		"in" => "id",
+		"ji" => "yi",
+		"jw" => "jv",
+		other => other,
+	};
+	// A primary language subtag is 2-3 letters; the length check also
+	// keeps full names ("german"), which whisper_lang_id accepts too, out.
+	let known = (2..=3).contains(&code.len())
+		&& code.bytes().all(|b| b.is_ascii_lowercase())
+		&& whisper_rs::get_lang_id(code).is_some();
+	if known {
+		code.to_string()
+	} else {
+		"auto".into()
+	}
 }
 
 /// Decode a WAV file into 16 kHz mono f32 samples suitable for whisper.
@@ -235,18 +255,37 @@ pub async fn transcribe_external(
 
 #[cfg(test)]
 mod tests {
-	use super::{primary_subtag, resample_to_16k, wav_to_samples};
+	use super::{resample_to_16k, wav_to_samples, whisper_language};
 
 	#[test]
-	fn primary_subtag_extracts_the_whisper_language() {
-		assert_eq!(primary_subtag("de-DE"), "de");
-		assert_eq!(primary_subtag("en-US"), "en");
-		assert_eq!(primary_subtag("zh_Hans"), "zh");
-		assert_eq!(primary_subtag("fr"), "fr");
-		// garbage/empty falls back to English instead of rejecting at
-		// whisper's language table
-		assert_eq!(primary_subtag(""), "en");
-		assert_eq!(primary_subtag("-FR"), "fr");
+	fn whisper_language_uses_the_primary_subtag() {
+		let f = |locale| whisper_language(locale, false);
+		assert_eq!(f("de-DE"), "de");
+		assert_eq!(f("en-US"), "en");
+		assert_eq!(f("zh_Hans"), "zh");
+		assert_eq!(f("fr"), "fr");
+		assert_eq!(f("-FR"), "fr");
+		assert_eq!(f("PT-br"), "pt");
+	}
+
+	#[test]
+	fn whisper_language_maps_aliases_and_auto_detects_the_unknown() {
+		let f = |locale| whisper_language(locale, false);
+		// BCP-47 codes whisper spells differently
+		assert_eq!(f("nb-NO"), "no", "Norwegian Bokmal");
+		assert_eq!(f("fil-PH"), "tl", "Filipino");
+		assert_eq!(f("iw-IL"), "he", "deprecated Hebrew code");
+		assert_eq!(f("in-ID"), "id", "deprecated Indonesian code");
+		// codes whisper does not know must not reach it (whisper.cpp
+		// rejects an unknown language and the transcription fails):
+		// fall back to auto-detection instead
+		assert_eq!(f("tlh-QO"), "auto", "Klingon is not in whisper's table");
+		assert_eq!(f("xx-YY"), "auto");
+		assert_eq!(f(""), "auto");
+		assert_eq!(f("german"), "auto", "a full name is not a subtag");
+		// English-only models stay pinned to English whatever the locale
+		assert_eq!(whisper_language("de-DE", true), "en");
+		assert_eq!(whisper_language("xx-YY", true), "en");
 	}
 
 	fn wav_bytes(spec: hound::WavSpec, samples: &[i16]) -> Vec<u8> {
