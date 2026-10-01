@@ -22,7 +22,8 @@ const userSettings = {
 	user: { name: "Ada", timezone: "Europe/Berlin" },
 	log: [],
 	notifications: [],
-	presence: { dock: true, tray: true }
+	presence: { dock: true, tray: true },
+	updates: { enabled: true }
 };
 
 describe("Profile", () => {
@@ -43,6 +44,17 @@ describe("Profile", () => {
 		expect(await screen.findByText("General Information")).toBeInTheDocument();
 		expect(screen.queryByText("Couldn't load your settings")).not.toBeInTheDocument();
 		expect(calls).toBe(2);
+	});
+
+	it("shows the Updates card with the stored opt-out", async () => {
+		mockInvoke({
+			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })
+		});
+		render(<Profile />);
+		expect(
+			await screen.findByRole("checkbox", { name: "Check for updates automatically" })
+		).not.toBeChecked();
+		expect(screen.getByText(/Automatic update checks are off/)).toBeInTheDocument();
 	});
 
 	it("saves daily log ids sorted numerically without touching the child's array", async () => {

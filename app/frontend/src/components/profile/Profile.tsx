@@ -11,6 +11,7 @@ import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
 import AppPresenceCard from "./AppPresenceCard";
+import UpdatesCard from "./UpdatesCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
@@ -37,6 +38,7 @@ export default function Profile() {
 	const [notifications, setNotifications] = useState<NotificationSetting[]>([]);
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
+	const [updatesEnabled, setUpdatesEnabled] = useState(true);
 	const [snackbarSuccessOpen, setSnackbarSuccessOpen] = useState(false);
 	const [snackbarSuccessMessage, setSnackbarSuccessMessage] = useState(SUCCESS_COPY.DEFAULT);
 	const [snackbarErrorOpen, setSnackbarErrorOpen] = useState(false);
@@ -52,6 +54,7 @@ export default function Profile() {
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);
+				setUpdatesEnabled(res.updates.enabled);
 			})
 			.catch((e) => {
 				// without this the spinner never ends
@@ -141,6 +144,7 @@ export default function Profile() {
 						saveSettings={handleNotificationsSave}
 					/>
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
+					<UpdatesCard enabled={updatesEnabled} openSnackbar={openSnackbar} />
 				</div>
 			)
 		},
