@@ -109,6 +109,9 @@ pub fn run() {
 			commands::models_cmd::activate_model,
 			commands::share::export_idea,
 			commands::share::import_share,
+			commands::reactions::get_reactions,
+			commands::reactions::toggle_section_reaction,
+			commands::reactions::toggle_comment_reaction,
 		])
 		.on_page_load(|webview, payload| {
 			match payload.event() {
