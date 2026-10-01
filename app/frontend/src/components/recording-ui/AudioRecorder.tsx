@@ -27,6 +27,8 @@ function useTimer(isRunning: boolean, setTime: Dispatch<SetStateAction<number>>)
 
 interface AudioRecorderProps {
 	isDisabled?: boolean;
+	/** the language model is still loading: mic and Send wait for it */
+	modelLoading?: boolean;
 	currConversation?: ChatMessage[];
 	conversationState: string;
 	getCoachResponse: () => Promise<CoachResponseOutcome>;
@@ -38,6 +40,7 @@ interface AudioRecorderProps {
 
 const AudioRecorder = ({
 	isDisabled,
+	modelLoading = false,
 	conversationState,
 	getCoachResponse,
 	onTranscript,
@@ -81,6 +84,7 @@ const AudioRecorder = ({
 						conversationState === CONVERSATION_STATE.WaitingForCoach ||
 						conversationState === CONVERSATION_STATE.TranscribingUser
 					}
+					modelLoading={modelLoading}
 					conversationState={conversationState}
 					setIsRecording={setIsRunning}
 					setIsTranscribing={setIsTranscribing}

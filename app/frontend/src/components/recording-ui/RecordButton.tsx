@@ -13,6 +13,9 @@ import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 interface RecordButtonProps {
 	isRecording: boolean;
 	isDisabledOverride?: boolean;
+	/** the language model is still loading: recording and sending would
+	 * only fail, typing is fine */
+	modelLoading?: boolean;
 	conversationState: string;
 	setIsRecording: (recording: boolean) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
@@ -26,6 +29,7 @@ interface RecordButtonProps {
 function RecordButton({
 	isRecording,
 	isDisabledOverride,
+	modelLoading = false,
 	conversationState,
 	setIsRecording,
 	setIsTranscribing,
@@ -110,7 +114,7 @@ function RecordButton({
 	function handleTextSend() {
 		const trimmed = userTextInput.trim();
 		// never overlap generations: one message at a time
-		if (!trimmed || isDisabledOverride) return;
+		if (!trimmed || isDisabledOverride || modelLoading) return;
 		onTranscript(trimmed);
 	}
 
@@ -122,6 +126,7 @@ function RecordButton({
 					onChange={setUserTextInput}
 					onSend={handleTextSend}
 					disabled={Boolean(isDisabledOverride)}
+					sendLockedReason={modelLoading ? "Loading model…" : undefined}
 				/>
 			) : voice.micPermissionDenied ? (
 				<MicPermissionDenied
@@ -132,11 +137,11 @@ function RecordButton({
 			) : (
 				<MicButton
 					isRecording={isRecording}
-					isDisabled={Boolean(isDisabledOverride)}
+					isDisabled={Boolean(isDisabledOverride) || (modelLoading && !isRecording)}
 					micStarting={voice.micStarting}
 					conversationState={conversationState}
 					elapsedSeconds={time}
-					status={voice.status}
+					status={modelLoading && !isRecording ? "Loading model…" : voice.status}
 					onToggle={() => void voice.toggleRecording()}
 					onAnimationTrigger={context.setSludgeman}
 					isCompressed={isCompressed}

@@ -19,6 +19,8 @@ interface ChatRecorderProps {
 	setCurrConversation: Dispatch<SetStateAction<ChatMessage[]>>;
 	setSaveState: (state: string) => void;
 	handleGetResponse: () => Promise<CoachResponseOutcome>;
+	/** the language model is still loading: no recording or sending yet */
+	modelLoading?: boolean;
 	isCompressed?: boolean | string | null;
 }
 
@@ -29,6 +31,7 @@ export default function ChatRecorder({
 	setCurrConversation,
 	setSaveState,
 	handleGetResponse,
+	modelLoading = false,
 	isCompressed
 }: ChatRecorderProps) {
 	/** if the max content is met, disable further addition to conversation */
@@ -91,6 +94,7 @@ export default function ChatRecorder({
 			<AudioRecorder
 				isCompressed={isCompressed}
 				isDisabled={forceFinish}
+				modelLoading={modelLoading}
 				conversationState={conversationState}
 				currConversation={currConversation}
 				setIsTranscribing={handleIsTranscribing}

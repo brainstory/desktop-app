@@ -182,6 +182,36 @@ describe("ChatSection", () => {
 			expect(await screen.findByText(/Loading the AI model/)).toBeInTheDocument();
 		});
 
+		it("locks the mic and Send (not typing) while the model loads", async () => {
+			mockInvoke({
+				get_runtime_status: () => ({ llm: { state: "loading" }, stt: { state: "ready" } })
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			await screen.findByText(/Loading the AI model/);
+			const mic = screen.getByRole("button", { name: "Start recording" });
+			expect(mic).toHaveAttribute("aria-disabled", "true");
+			expect(screen.getByText("Loading model…")).toBeInTheDocument();
+
+			const user = userEvent.setup();
+			await user.click(mic);
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "start_voice_capture")
+			).toHaveLength(0);
+
+			await user.click(screen.getByText("Not in a place to talk out-loud?"));
+			const box = screen.getByLabelText("Type your response");
+			await user.type(box, "typed while loading");
+			expect(box).toHaveValue("typed while loading");
+			const send = screen.getByRole("button", { name: "Send message" });
+			expect(send).toHaveAttribute("aria-disabled", "true");
+			await user.keyboard("{Enter}");
+			await user.click(send);
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_response")
+			).toHaveLength(0);
+			expect(box).toHaveValue("typed while loading");
+		});
+
 		it("explains a failed model load", async () => {
 			mockInvoke({
 				get_runtime_status: () => ({

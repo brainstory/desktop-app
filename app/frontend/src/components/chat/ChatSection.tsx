@@ -180,6 +180,7 @@ export function ChatSection({
 				setCurrConversation={setCurrConversation}
 				setSaveState={persistence.setSaveState}
 				handleGetResponse={session.handleGetResponse}
+				modelLoading={modelAvailability === "loading"}
 			/>
 		];
 

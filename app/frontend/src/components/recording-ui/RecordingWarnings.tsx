@@ -6,15 +6,18 @@ export function TextComposer({
 	value,
 	onChange,
 	onSend,
-	disabled = false
+	disabled = false,
+	sendLockedReason
 }: {
 	value: string;
 	onChange: (next: string) => void;
 	onSend: () => void;
 	/** locked while a message is being transcribed or answered */
 	disabled?: boolean;
+	/** typing stays allowed, sending waits (e.g. "Loading model…") */
+	sendLockedReason?: string;
 }) {
-	const canSend = !disabled && value.trim() !== "";
+	const canSend = !disabled && !sendLockedReason && value.trim() !== "";
 	const send = (): void => {
 		if (canSend) onSend();
 	};
@@ -44,7 +47,7 @@ export function TextComposer({
 					onKeyDown={handleKeyDown}
 				></textarea>
 				<p className="w-full max-w-[500px] text-xs text-stone-500 text-left mt-1">
-					Enter to send &middot; Shift+Enter for a new line
+					{sendLockedReason ?? <>Enter to send &middot; Shift+Enter for a new line</>}
 				</p>
 			</div>
 			<button
