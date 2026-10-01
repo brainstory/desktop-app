@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getUpdatesEnabledApi } from "@helpers/api/settings";
 
 /**
  * Update check + install banner. Only active inside the Tauri webview
  * (the astro build also runs as plain web pages, where the plugin APIs
  * don't exist). Checks are throttled to once per 6 hours via localStorage
- * to stay well clear of anonymous GitHub rate limits.
+ * to stay well clear of anonymous GitHub rate limits, and skipped
+ * entirely when the user turned automatic checks off in Settings.
  */
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -30,24 +32,33 @@ export default function UpdaterBanner() {
 			// storage unavailable: fall through and check unthrottled
 		}
 		if (Date.now() - last < THROTTLE_MS) return;
-		check()
-			.then((u) => {
-				// Throttle only after a check completed: writing the key
-				// before check() meant an offline failure suppressed update
-				// checks for the next 6 hours.
-				try {
-					localStorage.setItem(THROTTLE_KEY, String(Date.now()));
-				} catch {
-					// ignore
-				}
-				if (u) {
-					setUpdate(u);
-					// entering the "available" phase is what makes the banner
-					// render at all - without this the update is never shown
-					setPhase("available");
-				}
-			})
-			.catch((err) => console.error("update check failed", err));
+		const run = async () => {
+			let enabled = true;
+			try {
+				enabled = await getUpdatesEnabledApi();
+			} catch (err) {
+				// the backend defaults to on; an unreadable setting keeps that default
+				console.error("reading the update setting failed", err);
+			}
+			// opted out in Settings > Updates: never contact the update server
+			if (!enabled) return;
+			const u = await check();
+			// Throttle only after a check completed: writing the key
+			// before check() meant an offline failure suppressed update
+			// checks for the next 6 hours.
+			try {
+				localStorage.setItem(THROTTLE_KEY, String(Date.now()));
+			} catch {
+				// ignore
+			}
+			if (u) {
+				setUpdate(u);
+				// entering the "available" phase is what makes the banner
+				// render at all - without this the update is never shown
+				setPhase("available");
+			}
+		};
+		run().catch((err) => console.error("update check failed", err));
 	}, []);
 
 	if (!isTauri || !update || phase === null) return null;
