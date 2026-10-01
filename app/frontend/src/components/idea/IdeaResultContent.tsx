@@ -14,6 +14,8 @@ import { QUERY_PARAMS } from "@src/tauri/commands";
 import { isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
+import { useSnackbar } from "@ds/Snackbar";
+import { useIdeaReactions } from "./reactions/useIdeaReactions";
 
 export default function IdeaResultContent() {
 	const tabs: Record<string, number> = {
@@ -39,6 +41,10 @@ export default function IdeaResultContent() {
 	// crossed (not a re-render on every resize event)
 	const isMdSizeOrLess = useMediaQuery("(max-width: 768px)");
 	const [isUnread, setIsUnread] = useState(false);
+	const { openSnackbar, snackbars } = useSnackbar();
+	const { sectionReactions, toggleSectionReaction } = useIdeaReactions(ideaId, (message) =>
+		openSnackbar(false, message)
+	);
 
 	// Opening an unread (imported feedback) idea marks it read.
 	useMarkReadApi(ideaId, isUnread);
@@ -139,6 +145,8 @@ export default function IdeaResultContent() {
 								resultSections={idea.resultJson ?? []}
 								headingIdxToComments={headingIdxToComments}
 								canShare={isOwn}
+								sectionReactions={sectionReactions}
+								onToggleSectionReaction={toggleSectionReaction}
 							/>
 						)
 					},
@@ -190,6 +198,7 @@ export default function IdeaResultContent() {
 	} else {
 		return (
 			<div className="h-full">
+				{snackbars}
 				<IdeaTitleBar idea={idea} isOwnIdea={isOwn} parentId={parentIdea?.id} />
 				<TailwindComposedTabs
 					data={tabData}
