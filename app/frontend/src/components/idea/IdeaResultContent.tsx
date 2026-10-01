@@ -11,7 +11,7 @@ import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import { getQueryParam } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
-import { isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
+import { finishedFeedback, isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
 import { useSnackbar } from "@ds/Snackbar";
@@ -159,8 +159,11 @@ export default function IdeaResultContent() {
 				];
 
 	if (!parentIdea) {
+		// The tab opens for any child, an unfinished draft included (the
+		// tab is where that draft is resumed from), but the count is only
+		// the finished feedback.
 		if (ideaChildren && ideaChildren.length > 0) {
-			const feedbackCount = ideaChildren.length;
+			const feedbackCount = finishedFeedback(ideaChildren).length;
 			tabData.push({
 				label: feedbackCount > 0 ? `Feedback (${feedbackCount})` : "Feedback",
 				param: "feedback",

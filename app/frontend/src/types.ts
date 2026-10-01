@@ -67,8 +67,11 @@ export interface IdeaFeedbackItem extends CreatorInfo {
 	id: string;
 	title?: string | null;
 	summaryPreview: string;
+	/** true while the feedback session has no generated result yet */
+	isDraft?: boolean;
 	isUnread?: boolean | null;
 	feedbackComments: FeedbackComment[];
+	draftSummary?: string | null;
 }
 
 export interface DailyStatus {

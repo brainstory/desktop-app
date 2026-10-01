@@ -84,6 +84,32 @@ describe("getIdeaChildrenApi", () => {
 		]);
 		// first line (before \n\n) dropped, leading ## stripped
 		expect(children[0]!.summaryPreview).toBe("Point one body text");
+		expect(children[0]!.isDraft).toBe(false);
+	});
+
+	it("flags an unfinished feedback session as a draft with its last user message", async () => {
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "fd1",
+						title: "",
+						result: "",
+						created_at: "2026-09-15T10:30:00",
+						transcript: [
+							{ role: "assistant", content: "What do you think?" },
+							{ role: "user", content: "invite the neighbours" },
+							{ role: "assistant", content: "Why?" }
+						],
+						structured_result: null
+					}
+				]
+			})
+		});
+		const [draft] = await getIdeaChildrenApi("p1");
+		expect(draft!.isDraft).toBe(true);
+		expect(draft!.draftSummary).toBe("invite the neighbours");
+		expect(draft!.feedbackComments).toEqual([]);
 	});
 });
 
@@ -142,6 +168,58 @@ describe("getAllIdeasApi", () => {
 		expect(ideas[0]!.draftSummary).toBe("last words");
 		expect(ideas[1]!.isDraft).toBe(false);
 		expect(ideas[1]!.draftSummary).toBeUndefined();
+	});
+
+	it("maps nested feedback like top-level ideas, flagging unfinished drafts", async () => {
+		mockInvoke({
+			get_all_ideas: () => ({
+				ideas: [
+					{
+						id: "p1",
+						title: "Party",
+						result: "## Summary",
+						created_at: "2026-09-01T10:00:00",
+						feedback: [
+							{
+								id: "fd1",
+								title: "",
+								result: "",
+								type: "feedback",
+								created_at: "2026-09-02T10:00:00",
+								transcript: [
+									{ role: "assistant", content: "What do you think?" },
+									{ role: "user", content: "invite the neighbours" }
+								]
+							},
+							{
+								id: "f1",
+								title: "Feedback",
+								result: "## Thoughts",
+								type: "feedback",
+								created_at: "2026-09-01T11:00:00",
+								creator_name: "Ada"
+							}
+						]
+					}
+				]
+			})
+		});
+		const [idea] = await getAllIdeasApi();
+		expect(idea!.feedback).toEqual([
+			expect.objectContaining({
+				id: "fd1",
+				isDraft: true,
+				createdAt: "2026-09-02T10:00:00",
+				draftSummary: "invite the neighbours"
+			}),
+			expect.objectContaining({
+				id: "f1",
+				isDraft: false,
+				createdAt: "2026-09-01T11:00:00",
+				creatorName: "Ada",
+				draftSummary: undefined
+			})
+		]);
 	});
 });
 

@@ -75,3 +75,25 @@ export function stripResultPreview(str: unknown): string {
 	// only append the ellipsis when something was actually cut off
 	return trimmed.length > 100 ? trimmed.substring(0, 100).trim() + "..." : trimmed;
 }
+
+/**
+ * Preview line for an unfinished (draft) session: its last non-empty user
+ * message. `undefined` for a finished idea (non-empty result) or a draft
+ * with nothing said yet.
+ */
+export function draftSummaryOf(
+	result: string | null | undefined,
+	transcript: { role: string; content: string }[] | null | undefined
+): string | undefined {
+	if (result) return undefined;
+	return transcript?.filter((message) => message.role === "user" && message.content !== "").pop()
+		?.content;
+}
+
+/** The finished feedback (it has a result): what feedback counts and
+ * stacks show. Unfinished drafts are listed on their own, as drafts. */
+export function finishedFeedback<T extends { isDraft?: boolean | null }>(
+	feedback: T[] | null | undefined
+): T[] {
+	return (feedback ?? []).filter((item) => !item.isDraft);
+}

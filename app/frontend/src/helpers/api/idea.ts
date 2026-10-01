@@ -18,7 +18,7 @@ export interface RawIdea {
 }
 
 import { getQueryParam } from "@helpers/helpers";
-import { stripResultPreview } from "@helpers/ideas";
+import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Get idea */
@@ -59,6 +59,7 @@ export interface RawFeedbackChild {
 	creator_email?: string;
 	creator_name?: string;
 	is_unread?: boolean;
+	transcript?: ChatMessage[];
 	structured_result?: {
 		feedback_items?: {
 			oid_heading_text: string;
@@ -87,11 +88,14 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 			id: idea.id,
 			title: idea?.title,
 			summaryPreview: stripResultPreview(idea?.result),
+			// an unfinished feedback session (no result yet)
+			isDraft: !idea?.result,
 			createdAt: idea?.created_at,
 			creatorEmail: idea?.creator_email,
 			creatorName: idea?.creator_name,
 			isUnread: idea?.is_unread,
-			feedbackComments: feedbackComments
+			feedbackComments: feedbackComments,
+			draftSummary: draftSummaryOf(idea?.result, idea?.transcript)
 		};
 	});
 }

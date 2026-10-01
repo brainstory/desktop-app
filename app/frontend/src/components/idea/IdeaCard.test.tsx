@@ -33,6 +33,36 @@ describe("IdeaCard", () => {
 		expect(titleLink).not.toContainElement(feedbackLink);
 	});
 
+	it("counts and stacks only finished feedback, never an unfinished draft", () => {
+		const { container, rerender } = render(
+			<IdeaCard
+				id="i1"
+				title="My idea"
+				feedback={[
+					{ id: "f1", summaryPreview: "", isDraft: false },
+					{ id: "fd1", summaryPreview: "", isDraft: true }
+				]}
+			/>
+		);
+		expect(screen.getByRole("link", { name: "1 feedback item" })).toBeInTheDocument();
+		expect(container.querySelectorAll('[aria-hidden="true"].pointer-events-none')).toHaveLength(
+			1
+		);
+
+		// only a draft: no feedback link and no stack at all
+		rerender(
+			<IdeaCard
+				id="i1"
+				title="My idea"
+				feedback={[{ id: "fd1", summaryPreview: "", isDraft: true }]}
+			/>
+		);
+		expect(screen.queryByRole("link", { name: /feedback item/ })).not.toBeInTheDocument();
+		expect(container.querySelectorAll('[aria-hidden="true"].pointer-events-none')).toHaveLength(
+			0
+		);
+	});
+
 	it("feedback cards open in the same window (no target=_blank in the desktop app)", () => {
 		render(<IdeaCard id="f1" title="Some feedback" isFeedback shared />);
 		const link = screen.getByRole("link", { name: /Some feedback/ });

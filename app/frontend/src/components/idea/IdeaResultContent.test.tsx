@@ -137,6 +137,50 @@ describe("IdeaResultContent ownership", () => {
 	});
 });
 
+/** a feedback child as get_idea_children sends it */
+function feedbackChild(id: string, result: string, overrides: Record<string, unknown> = {}) {
+	return {
+		id,
+		title: result ? "Feedback" : "",
+		result,
+		type: "feedback",
+		created_at: "2026-09-01T10:00:00",
+		transcript: [
+			{ role: "assistant", content: "What do you think?" },
+			{ role: "user", content: `said in ${id}` }
+		],
+		structured_result: null,
+		...overrides
+	};
+}
+
+describe("IdeaResultContent feedback tab", () => {
+	it("counts only finished feedback, not an unfinished draft", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({
+				ideas: [feedbackChild("fd1", ""), feedbackChild("f1", "## Thoughts")]
+			})
+		});
+		render(<IdeaResultContent />);
+		const tab = await screen.findByRole("tab", { name: "Feedback (1)" });
+		expect(tab).toBeEnabled();
+	});
+
+	it("stays open (uncounted) when the only child is a draft, so it can be resumed", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({ ideas: [feedbackChild("fd1", "")] })
+		});
+		render(<IdeaResultContent />);
+		const tab = await screen.findByRole("tab", { name: "Feedback" });
+		expect(tab).toBeEnabled();
+		expect(screen.queryByRole("tab", { name: /Feedback \(/ })).not.toBeInTheDocument();
+	});
+});
+
 describe("IdeaResultContent layout", () => {
 	beforeEach(() => {
 		mockInvoke({

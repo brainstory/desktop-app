@@ -1,5 +1,5 @@
 import { invokeCommand } from "@src/tauri/invoke";
-import { stripResultPreview } from "@helpers/ideas";
+import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
 import type { DailyStatus, IdeaListItem } from "@src/types";
 
 export interface CurrentUser {
@@ -59,25 +59,13 @@ export interface RawIdeaItem {
 	is_unread?: boolean;
 	transcript?: { role: string; content: string }[];
 	shared_with_users?: string[];
-	feedback?: IdeaListItem[];
+	/** feedback children, same row shape (the list sends a transcript
+	 * only for drafts); only top-level ideas carry this */
+	feedback?: RawIdeaItem[];
 }
 
-/** Get all ideas that the user created */
-export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
-	const response = await invokeCommand("getAllIdeas");
-
-	const displayDraftSummary = (idea: RawIdeaItem): string | undefined => {
-		if (idea?.result === "") {
-			// return the last idea transcript where the role is "user"
-			// and the content is not empty
-			return idea?.transcript
-				?.filter((transcript) => transcript.role === "user" && transcript.content !== "")
-				?.pop()?.content;
-		}
-		return undefined;
-	};
-
-	return response?.ideas.map((idea) => ({
+function toIdeaListItem(idea: RawIdeaItem): IdeaListItem {
+	return {
 		id: idea.id,
 		title: idea?.title,
 		summaryPreview: stripResultPreview(idea?.result),
@@ -88,7 +76,14 @@ export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
 		creatorEmail: idea?.creator_email,
 		creatorName: idea?.creator_name,
 		isUnread: idea?.is_unread,
-		feedback: idea?.feedback,
-		draftSummary: displayDraftSummary(idea)
-	}));
+		// mapped like their parents, so a feedback draft is flagged as one
+		feedback: idea?.feedback?.map(toIdeaListItem),
+		draftSummary: draftSummaryOf(idea?.result, idea?.transcript)
+	};
+}
+
+/** Get all ideas that the user created */
+export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
+	const response = await invokeCommand("getAllIdeas");
+	return response?.ideas.map(toIdeaListItem);
 }
