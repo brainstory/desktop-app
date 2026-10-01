@@ -12,9 +12,14 @@ use crate::models::AppState;
 static REMINDER_SETTINGS_CHANGED: std::sync::LazyLock<tokio::sync::Notify> =
 	std::sync::LazyLock::new(tokio::sync::Notify::new);
 
-/// Wake the reminder loop because its settings changed.
+/// Wake the reminder loop because its settings changed. notify_one, not
+/// notify_waiters: the latter only wakes a task already waiting, so a
+/// change landing while the loop runs tick() was lost and the loop slept
+/// until its old deadline (up to 15 minutes). notify_one stores a permit
+/// that the next wait consumes immediately; the single loop is the only
+/// waiter.
 pub fn notify_settings_changed() {
-	REMINDER_SETTINGS_CHANGED.notify_waiters();
+	REMINDER_SETTINGS_CHANGED.notify_one();
 }
 
 /// The loop's maximum sleep even when nothing is due: settings can be
@@ -185,6 +190,20 @@ mod tests {
 			.unwrap();
 		let until = until_next_due(exact, 9, 0);
 		assert_eq!(until.as_secs(), 24 * 3600, "due now -> tomorrow");
+	}
+
+	#[tokio::test]
+	async fn a_change_during_a_tick_still_wakes_the_next_wait() {
+		// the loop is busy in tick() (not waiting) when the settings
+		// change; its next wait must return right away instead of
+		// sleeping until the old deadline
+		super::notify_settings_changed();
+		let woke = tokio::time::timeout(
+			Duration::from_millis(200),
+			super::REMINDER_SETTINGS_CHANGED.notified(),
+		)
+		.await;
+		assert!(woke.is_ok(), "the wake-up was lost");
 	}
 
 	#[test]
