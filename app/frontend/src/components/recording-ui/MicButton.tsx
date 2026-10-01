@@ -2,6 +2,7 @@
 
 import { ICON } from "./RecordIcons";
 import { CONVERSATION_STATE } from "@src/const";
+import { cn } from "@helpers/cn";
 
 interface MicButtonProps {
 	isRecording: boolean;
@@ -60,9 +61,11 @@ export function MicButton({
 		<div>
 			<div className="w-[244px] group relative flex justify-center items-center my-4">
 				<div
-					className={`${
-						isRecording && "animate-spin"
-					} ${shadowSizing} pointer-events-none group-hover:w-[116px] group-hover:h-[116px] rounded-full absolute bg-gradient-to-r from-pink-500 via-pink-400 to-pink-700 opacity-60 hover:opacity-90 blur transition-all duration-300`}
+					className={cn(
+						isRecording && "animate-spin",
+						shadowSizing,
+						"pointer-events-none group-hover:w-[116px] group-hover:h-[116px] rounded-full absolute bg-gradient-to-r from-pink-500 via-pink-400 to-pink-700 opacity-60 hover:opacity-90 blur transition-all duration-300"
+					)}
 				></div>
 				{/* aria-disabled, not disabled: the button is often focused when
 				    it locks (just clicked), and a disabled element drops focus

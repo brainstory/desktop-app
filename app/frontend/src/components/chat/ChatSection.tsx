@@ -193,7 +193,7 @@ export function ChatSection({
 		];
 
 		return (
-			<section className="wow">
+			<section>
 				{aiError && (
 					<ChatErrorBanner aiError={aiError} onDismiss={() => setAiError(null)} />
 				)}

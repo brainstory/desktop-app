@@ -21,11 +21,12 @@ export function AssistantResponseText({
 }: AssistantResponseTextProps) {
 	const { sludgeman } = useAppContext();
 
-	const assistantTextStyle = `tracking-tight text-black whitespace-pre-wrap ${
+	const assistantTextStyle = cn(
+		"tracking-tight text-black whitespace-pre-wrap",
 		styleSetting === "feedback"
 			? "font-medium text-base md:text-lg leading-tight md:leading-snug mr-1 md:my-0"
 			: "font-semibold text-xl md:text-2xl max-w-2xl"
-	}`;
+	);
 
 	const renderText = () => {
 		if (didFailToSend) {
@@ -59,7 +60,7 @@ export function AssistantResponseText({
 				<TransparentButton
 					icon="refresh"
 					title="Ask a different question"
-					classes={`${cn(!enableSkip && "cursor-not-allowed")}`}
+					classes={cn(!enableSkip && "cursor-not-allowed")}
 					onClick={handleSkipQuestion}
 					disabled={!enableSkip}
 				/>

@@ -1,7 +1,7 @@
-import type { ChatMessage } from "@src/types";
 import { useState, useEffect, useCallback } from "react";
 import { CONVERSATION_STATE } from "../../const";
 import RecordButton from "./RecordButton";
+import { cn } from "@helpers/cn";
 import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 
 import ChatStateNotification from "@components/chat/reusable/ChatStateNotification";
@@ -29,7 +29,6 @@ interface AudioRecorderProps {
 	isDisabled?: boolean;
 	/** the language model is still loading: mic and Send wait for it */
 	modelLoading?: boolean;
-	currConversation?: ChatMessage[];
 	conversationState: string;
 	getCoachResponse: () => Promise<CoachResponseOutcome>;
 	onTranscript: (transcript: string) => void;
@@ -69,9 +68,10 @@ const AudioRecorder = ({
 				<ChatStateNotification conversationState={conversationState} />
 			</div>
 			<div
-				className={`${
-					isCompressed ? "gap-3" : "gap-8"
-				} text-sm text-stone-600 flex justify-between flex-col items-center mb-2`}
+				className={cn(
+					isCompressed ? "gap-3" : "gap-8",
+					"text-sm text-stone-600 flex justify-between flex-col items-center mb-2"
+				)}
 			>
 				<RecordButton
 					isCompressed={isCompressed}

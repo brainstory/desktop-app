@@ -96,7 +96,6 @@ export default function ChatRecorder({
 				isDisabled={forceFinish}
 				modelLoading={modelLoading}
 				conversationState={conversationState}
-				currConversation={currConversation}
 				setIsTranscribing={handleIsTranscribing}
 				onTranscript={handleTranscript}
 				getCoachResponse={handleCoachResponse}

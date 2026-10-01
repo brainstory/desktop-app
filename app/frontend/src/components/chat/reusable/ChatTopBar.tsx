@@ -64,12 +64,15 @@ export default function ChatTopBar({
 
 	return (
 		<div
-			className={`flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg ${cn(!parentIdea && "sm:grid sm:grid-cols-3")}`}
+			className={cn(
+				"flex justify-between z-10 w-full p-4 bg-white border-b border-stone-200 rounded-t-lg",
+				!parentIdea && "sm:grid sm:grid-cols-3"
+			)}
 		>
 			{renderLeftComponent()}
 			<ChatIntroText
 				parentIdea={parentIdea}
-				classes={`sm:block ${(!parentIdea || saveIconName) && "hidden"} text-center grow`}
+				classes={cn("sm:block text-center grow", (!parentIdea || saveIconName) && "hidden")}
 			/>
 			{!parentIdea && (
 				<TransparentButton
