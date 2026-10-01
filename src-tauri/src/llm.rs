@@ -628,6 +628,9 @@ impl ExternalLlm {
 	const CHUNK_IDLE_TIMEOUT_SECS: u64 = 90;
 	/// Overall budget for reading a (display-only) error body.
 	const ERROR_BODY_TIMEOUT_SECS: u64 = 30;
+	/// Overall budget for reading a non-streamed JSON completion (the
+	/// server has already generated it when the headers arrive).
+	const JSON_BODY_TIMEOUT_SECS: u64 = 120;
 	/// SSE events are tiny; a bigger buffer means the endpoint isn't
 	/// speaking SSE (e.g. CRLF-averse parser deadlock or an HTML error page).
 	const MAX_SSE_BUFFER: usize = 1_000_000;
@@ -717,6 +720,25 @@ impl ExternalLlm {
 			.and_then(|v| v.to_str().ok())
 			.unwrap_or("")
 			.to_ascii_lowercase();
+		if content_type.contains("application/json") {
+			// A server that ignores "stream": true answers with one plain
+			// chat.completion object; take it as a single chunk.
+			let body = read_body_capped(
+				response,
+				Self::MAX_SSE_BUFFER,
+				Self::CHUNK_IDLE_TIMEOUT_SECS,
+				Self::JSON_BODY_TIMEOUT_SECS,
+			)
+			.await;
+			if cancel.load(Ordering::Relaxed) {
+				return Err("generation cancelled".into());
+			}
+			let content = json_completion_content(&body)?;
+			if !content.is_empty() {
+				on_chunk(content.clone());
+			}
+			return Ok((content, None));
+		}
 		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
 			let body = read_body_capped(
 				response,
@@ -811,6 +833,31 @@ pub(crate) async fn read_body_capped(
 		body.extend_from_slice(&chunk[..room.min(chunk.len())]);
 	}
 	String::from_utf8_lossy(&body).into_owned()
+}
+
+/// The assistant text of a non-streamed chat.completion body
+/// (`choices[0].message.content`). A provider error object surfaces as
+/// its message; anything else is a descriptive error, never silently
+/// empty output.
+fn json_completion_content(body: &str) -> Result<String, String> {
+	let value: serde_json::Value = serde_json::from_str(body).map_err(|e| {
+		format!(
+			"endpoint returned invalid JSON ({e}): {}",
+			truncate_body(body)
+		)
+	})?;
+	if let Some(err) = value["error"]["message"].as_str() {
+		return Err(map_provider_error(0, err));
+	}
+	value["choices"][0]["message"]["content"]
+		.as_str()
+		.map(str::to_string)
+		.ok_or_else(|| {
+			format!(
+				"endpoint returned JSON with no completion (choices[0].message.content): {}",
+				truncate_body(body)
+			)
+		})
 }
 
 /// Parse one SSE event's `data:` lines, appending content deltas. Returns
@@ -1231,6 +1278,12 @@ mod external_stream_tests {
 	/// Minimal loopback SSE server: writes the given events after the
 	/// request head, keeps the socket open briefly.
 	fn serve_sse(events: Vec<String>) -> String {
+		serve_typed("text/event-stream", events.concat())
+	}
+
+	/// Loopback server answering one request with `body` as
+	/// `content_type`.
+	fn serve_typed(content_type: &'static str, body: String) -> String {
 		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
 		let addr = listener.local_addr().expect("addr");
 		std::thread::spawn(move || {
@@ -1247,9 +1300,8 @@ mod external_stream_tests {
 						break;
 					}
 				}
-				let body: String = events.concat();
 				let head = format!(
-					"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+					"HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
 					body.len()
 				);
 				let _ = sock.write_all(head.as_bytes());
@@ -1285,35 +1337,14 @@ mod external_stream_tests {
 
 	#[tokio::test]
 	async fn external_generate_rejects_non_sse_responses() {
-		// plain JSON content type: must produce a descriptive error, and
-		// the capped reader must bound the body
-		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-		let addr = listener.local_addr().expect("addr");
-		std::thread::spawn(move || {
-			if let Ok((mut sock, _)) = listener.accept() {
-				use std::io::{Read, Write};
-				let mut byte = [0u8; 1];
-				let mut request = String::new();
-				loop {
-					if sock.read(&mut byte).unwrap_or(0) == 0 {
-						break;
-					}
-					request.push(byte[0] as char);
-					if request.ends_with("\r\n\r\n") {
-						break;
-					}
-				}
-				let body = "{\"not\":\"sse\"}";
-				let head = format!(
-					"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-					body.len()
-				);
-				let _ = sock.write_all(head.as_bytes());
-				let _ = sock.write_all(body.as_bytes());
-				std::thread::sleep(std::time::Duration::from_millis(400));
-			}
-		});
-		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		// neither SSE nor a JSON completion (a proxy's HTML error page):
+		// must produce a descriptive error, and the capped reader must
+		// bound the body
+		let url = serve_typed(
+			"text/html; charset=utf-8",
+			"<html><body>Bad gateway</body></html>".into(),
+		);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], &cancel, 8, |_| {})
@@ -1323,6 +1354,53 @@ mod external_stream_tests {
 			err.contains("did not return an SSE stream"),
 			"unexpected: {err}"
 		);
+		assert!(err.contains("Bad gateway"), "the body is shown: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_accepts_a_server_that_ignores_stream_true() {
+		// llama.cpp server builds, some proxies and vLLM configs answer a
+		// streaming request with one plain chat.completion object
+		let url = serve_typed(
+			"application/json; charset=utf-8",
+			r#"{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi there"}}]}"#.into(),
+		);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let mut chunks = Vec::new();
+		let (output, _) = client
+			.generate("", &[], &cancel, 8, |c| chunks.push(c))
+			.await
+			.expect("a plain JSON completion is a valid reply");
+		assert_eq!(output, "Hi there");
+		assert_eq!(
+			chunks,
+			vec!["Hi there".to_string()],
+			"delivered as one chunk"
+		);
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_json_without_a_completion() {
+		let url = serve_typed("application/json", r#"{"not":"a completion"}"#.into());
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("JSON without choices[0].message.content must fail");
+		assert!(err.contains("no completion"), "unexpected: {err}");
+
+		let url = serve_typed(
+			"application/json",
+			r#"{"error":{"message":"model not loaded"}}"#.into(),
+		);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("an error object must surface");
+		assert!(err.contains("model not loaded"), "unexpected: {err}");
 	}
 
 	// keep the capped reader honest alongside the stream tests
