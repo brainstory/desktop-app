@@ -142,6 +142,7 @@ export function ChatSection({
 				result={result}
 				parentSummary={parentIdea?.summary}
 				readyForFinish={session.readyToSave}
+				isComplete={session.resultComplete}
 			/>
 		);
 	} else if (fatalError === "draft-not-found") {

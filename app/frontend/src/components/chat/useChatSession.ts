@@ -68,6 +68,8 @@ export function useChatSession(
 		null
 	);
 	const [readyToSave, setReadyToSave] = useState(false);
+	/** the summary stream finished: the result text is final */
+	const [resultComplete, setResultComplete] = useState(false);
 
 	/** Generate assistant response. NOT for the final outline result.
 	 * Resolves with what happened to the user's message, so the composer
@@ -127,10 +129,12 @@ export function useChatSession(
 		}
 		conversationEndCallbacks();
 		setConversationState(CONVERSATION_STATE.FinishWithResult);
+		setResultComplete(false);
 		const resultFinishedCallbacks = async (
 			result: string,
 			structuredResult: unknown
 		): Promise<void> => {
+			setResultComplete(true);
 			try {
 				await saveResult(ideaId, currConversation, result, structuredResult);
 				setReadyToSave(true);
@@ -159,6 +163,7 @@ export function useChatSession(
 				// drop any partial summary: while a result is set the
 				// finished-result view replaces the chat (and its banner)
 				setResult("");
+				setResultComplete(false);
 				if (!isGenerationCancelled(err)) {
 					onError(normalizeApiError(err));
 				}
@@ -184,6 +189,7 @@ export function useChatSession(
 		isUserResendRequired,
 		inappropriateUserTranscript,
 		readyToSave,
+		resultComplete,
 		handleGetResponse,
 		handleGetResult,
 		askADifferentQuestion

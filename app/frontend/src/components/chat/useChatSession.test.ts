@@ -67,6 +67,30 @@ describe("useChatSession", () => {
 		});
 	});
 
+	describe("final summary", () => {
+		it("saves the result, then marks it complete and ready", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			const saveResult = vi.fn(async () => {});
+			const { result, opts } = renderSession([q1, a1], { saveResult });
+			act(() => result.current.handleGetResult());
+			act(() => streamChannel().onmessage({ type: "chunk", content: "# Sum" }));
+			expect(result.current.resultComplete).toBe(false);
+			expect(result.current.readyToSave).toBe(false);
+
+			await act(async () => {
+				finish({ response: "# Summary", structured_result: null });
+				await Promise.resolve();
+			});
+			expect(opts.setResult).toHaveBeenLastCalledWith("# Summary");
+			expect(saveResult).toHaveBeenCalledWith("idea-1", [q1, a1], "# Summary", null);
+			expect(result.current.resultComplete).toBe(true);
+			expect(result.current.readyToSave).toBe(true);
+		});
+	});
+
 	describe("cancelling the final summary", () => {
 		it("returns to the chat without an error banner", async () => {
 			let rejectStream!: (e: unknown) => void;
