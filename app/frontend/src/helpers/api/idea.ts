@@ -1,10 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { invokeCommand } from "@src/tauri/invoke";
 import { TOPICS } from "@src/const";
 import type { ChatMessage, IdeaDetail, IdeaFeedbackItem } from "@src/types";
 
 /** Raw idea as serialized by the backend (snake_case). */
-interface RawIdea {
+export interface RawIdea {
 	id: string;
 	title?: string;
 	type?: string;
@@ -22,7 +21,7 @@ import { getQueryParam } from "@helpers/helpers";
 
 /** Get idea */
 export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
-	const response = await invoke<RawIdea>(COMMANDS.getIdea, { ideaId: idea_id });
+	const response = await invokeCommand("getIdea", { ideaId: idea_id });
 
 	const parentIdea = response?.parent_idea
 		? {
@@ -50,7 +49,7 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 	};
 }
 
-interface RawFeedbackChild {
+export interface RawFeedbackChild {
 	id: string;
 	title?: string;
 	result?: string;
@@ -70,9 +69,7 @@ interface RawFeedbackChild {
 
 /** Get idea's children (ideas that branched off from idea_id) */
 export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackItem[]> {
-	const response = await invoke<{ ideas: RawFeedbackChild[] }>(COMMANDS.getIdeaChildren, {
-		ideaId: idea_id
-	});
+	const response = await invokeCommand("getIdeaChildren", { ideaId: idea_id });
 
 	const strip = (str: unknown): string => {
 		// remove the first line before the first \n\n,
@@ -132,7 +129,7 @@ export async function createIdeaApi(
 		};
 	}
 
-	const response = await invoke<{ id: string }>(COMMANDS.createIdea, {
+	const response = await invokeCommand("createIdea", {
 		result,
 		transcript,
 		parentIdeaId,
@@ -153,7 +150,7 @@ export async function updateIdeaApi(
 	result = "",
 	structuredResult: unknown = null
 ): Promise<string> {
-	const response = await invoke<{ id: string }>(COMMANDS.updateIdea, {
+	const response = await invokeCommand("updateIdea", {
 		id: ideaId,
 		transcript,
 		result,
@@ -167,7 +164,7 @@ export async function updateIdeaApi(
  * @returns created idea's uuid
  */
 export async function updateIdeaTitleApi(ideaId: string, title: string): Promise<string> {
-	const response = await invoke<{ id: string }>(COMMANDS.updateIdea, {
+	const response = await invokeCommand("updateIdea", {
 		id: ideaId,
 		title
 	});
@@ -176,13 +173,13 @@ export async function updateIdeaTitleApi(ideaId: string, title: string): Promise
 
 /** Mark idea read by user. Only applies to ideas imported from others. */
 export async function markIdeaReadApi(idea_id: string): Promise<unknown> {
-	const response = await invoke(COMMANDS.markIdeaRead, { ideaId: idea_id });
+	const response = await invokeCommand("markIdeaRead", { ideaId: idea_id });
 	return response;
 }
 
 /** Permanently delete an idea (and its feedback children). */
 export function deleteIdeaApi(idea_id: string): Promise<unknown> {
-	return invoke(COMMANDS.deleteIdea, { ideaId: idea_id });
+	return invokeCommand("deleteIdea", { ideaId: idea_id });
 }
 
 export default {

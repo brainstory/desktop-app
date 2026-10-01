@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { COMMANDS } from "@src/tauri/commands";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "@src/tauri/invoke";
 
 /**
  * Rust-side voice capture lifecycle: start/stop cpal, the max-duration
@@ -66,13 +65,13 @@ export function useVoiceCapture(options: {
 				clearTimeout(timerRef.current);
 			}
 			if (activeRecordingRef.current) {
-				invoke(COMMANDS.stopVoiceCapture).catch(() => {});
+				invokeCommand("stopVoiceCapture").catch(() => {});
 			}
 		};
 	}, []);
 
 	const stopWavCapture = useCallback(async (): Promise<void> => {
-		const wav = await invoke<ArrayBuffer>(COMMANDS.stopVoiceCapture);
+		const wav = await invokeCommand("stopVoiceCapture");
 		// Only clear the flag once the Rust side has actually stopped:
 		// clearing first would make the unmount cleanup skip the stop and
 		// leave cpal capturing forever.
@@ -111,12 +110,12 @@ export function useVoiceCapture(options: {
 			setIsRecording(true);
 			setMicStarting(true);
 			try {
-				await invoke(COMMANDS.startVoiceCapture);
+				await invokeCommand("startVoiceCapture");
 				if (!mountedRef.current) {
 					// unmounted while the start was in flight: the cleanup
 					// already ran and saw no active recording, so release
 					// the mic now instead of arming the 4-minute timer
-					invoke(COMMANDS.stopVoiceCapture).catch(() => {});
+					invokeCommand("stopVoiceCapture").catch(() => {});
 					return;
 				}
 				activeRecordingRef.current = true;

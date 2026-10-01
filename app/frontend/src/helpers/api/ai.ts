@@ -1,5 +1,5 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { Channel } from "@tauri-apps/api/core";
+import { invokeCommand } from "@src/tauri/invoke";
 import type { ChatMessage } from "@src/types";
 import type { GenerationResult } from "@helpers/chat";
 
@@ -9,7 +9,7 @@ import type { GenerationResult } from "@helpers/chat";
  */
 export async function transcribeApi(blob: Blob): Promise<string> {
 	const bytes = new Uint8Array(await blob.arrayBuffer());
-	const response = await invoke<{ transcript: string }>(COMMANDS.transcribe, bytes);
+	const response = await invokeCommand("transcribe", bytes);
 	return response.transcript;
 }
 
@@ -45,7 +45,7 @@ export function generateResponseStreamApi({
 	invokePromise: Promise<GenerationResult>;
 } {
 	const channel = new Channel();
-	const invokePromise = invoke<GenerationResult>(COMMANDS.generateStreamingResponse, {
+	const invokePromise = invokeCommand("generateStreamingResponse", {
 		messages,
 		summarize,
 		reactTo,
@@ -68,7 +68,7 @@ export async function generateResponseApi({
 	reactToIsCurrentUser = false,
 	chatType = null
 }: GenerateOptions): Promise<string> {
-	const response = await invoke<GenerationResult>(COMMANDS.generateResponse, {
+	const response = await invokeCommand("generateResponse", {
 		messages,
 		reactTo,
 		reactToAuthor,
@@ -83,5 +83,5 @@ export async function generateResponseApi({
  * chunks, so the invoke rejects with "generation cancelled" shortly after.
  */
 export function cancelGenerationApi(): Promise<void> {
-	return invoke(COMMANDS.cancelGeneration);
+	return invokeCommand("cancelGeneration");
 }

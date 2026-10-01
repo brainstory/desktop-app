@@ -1,5 +1,5 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { Channel } from "@tauri-apps/api/core";
+import { invokeCommand } from "@src/tauri/invoke";
 
 export interface ModelStatus {
 	id: string;
@@ -57,22 +57,22 @@ export interface AppleSttStatus {
 
 /** List the known local models with download/active status */
 export function listModelsApi(): Promise<ModelsResponse> {
-	return invoke(COMMANDS.listModels);
+	return invokeCommand("listModels");
 }
 
 /** Get the status of the local inference engines (llm + stt) */
 export function getRuntimeStatusApi(): Promise<{ llm: EngineStatus; stt: EngineStatus }> {
-	return invoke(COMMANDS.getRuntimeStatus);
+	return invokeCommand("getRuntimeStatus");
 }
 
 /** Availability + locale support of the built-in Apple Speech engine */
 export function getAppleSttStatusApi(): Promise<AppleSttStatus> {
-	return invoke(COMMANDS.getAppleSttStatus);
+	return invokeCommand("getAppleSttStatus");
 }
 
 /** Free bytes on the volume holding the models directory (warn-only UI) */
 export function getFreeDiskSpaceApi(): Promise<number> {
-	return invoke(COMMANDS.getFreeDiskSpace);
+	return invokeCommand("getFreeDiskSpace");
 }
 
 export interface DownloadEvent {
@@ -92,7 +92,7 @@ export function downloadModelApi(modelId: string): {
 	invokePromise: Promise<void>;
 } {
 	const channel = new Channel<DownloadEvent>();
-	const invokePromise = invoke<void>(COMMANDS.downloadModel, {
+	const invokePromise = invokeCommand("downloadModel", {
 		modelId,
 		onEvent: channel
 	});
@@ -100,31 +100,31 @@ export function downloadModelApi(modelId: string): {
 }
 
 export async function deleteModelApi(modelId: string): Promise<void> {
-	await invoke(COMMANDS.deleteModel, { modelId });
+	await invokeCommand("deleteModel", { modelId });
 }
 
 /** Cancel an in-flight download; the backend removes its .part file. */
 export async function cancelDownloadApi(modelId: string): Promise<void> {
-	return invoke(COMMANDS.cancelDownload, { modelId });
+	return invokeCommand("cancelDownload", { modelId });
 }
 
 /** Activate a downloaded model (sets it active and loads it) */
 export async function activateModelApi(modelId: string): Promise<void> {
-	await invoke(COMMANDS.activateModel, { modelId });
+	await invokeCommand("activateModel", { modelId });
 }
 
 export function getAiSettingsApi(): Promise<AiSettingsResponse> {
-	return invoke(COMMANDS.getAiSettings);
+	return invokeCommand("getAiSettings");
 }
 
 export async function saveAiSettingsApi(ai: object): Promise<void> {
-	return invoke(COMMANDS.saveAiSettings, { ai });
+	return invokeCommand("saveAiSettings", { ai });
 }
 
 export function testLlmEndpointApi(): Promise<string> {
-	return invoke(COMMANDS.testLlmEndpoint);
+	return invokeCommand("testLlmEndpoint");
 }
 
 export function testSttEndpointApi(): Promise<string> {
-	return invoke(COMMANDS.testSttEndpoint);
+	return invokeCommand("testSttEndpoint");
 }

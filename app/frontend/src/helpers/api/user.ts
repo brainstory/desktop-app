@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { invokeCommand } from "@src/tauri/invoke";
 import type { DailyStatus, IdeaListItem } from "@src/types";
 
 export interface CurrentUser {
@@ -10,15 +9,18 @@ export interface CurrentUser {
 	createdAt?: string;
 }
 
+/** The local user as serialized by the backend (snake_case). */
+export interface RawUser {
+	email: null;
+	name?: string;
+	mail_verified: boolean;
+	timezone?: string;
+	created_at: string;
+}
+
 /** Get user name, timezone and account creation date (all local) */
 export async function getUserApi(): Promise<CurrentUser> {
-	const response = await invoke<{
-		email: null;
-		name?: string;
-		mail_verified: boolean;
-		timezone?: string;
-		created_at: string;
-	}>(COMMANDS.getUser);
+	const response = await invokeCommand("getUser");
 	return {
 		email: response.email,
 		name: response?.name,
@@ -28,14 +30,17 @@ export async function getUserApi(): Promise<CurrentUser> {
 	};
 }
 
+/** Today's log/intent status as serialized by the backend. */
+export interface RawDailyStatus {
+	log_id: string | null;
+	intent_idea_id: string | null;
+	survey_id: string | null;
+	is_completed: boolean;
+	streak: number;
+}
+
 export async function getUserDailyStatusApi(): Promise<DailyStatus> {
-	const response = await invoke<{
-		log_id: string | null;
-		intent_idea_id: string | null;
-		survey_id: string | null;
-		is_completed: boolean;
-		streak: number;
-	}>(COMMANDS.getDailyStatus);
+	const response = await invokeCommand("getDailyStatus");
 	return {
 		logId: response.log_id,
 		intentIdeaId: response.intent_idea_id,
@@ -65,7 +70,7 @@ export function stripResultPreview(str: unknown): string {
 }
 
 /** Raw idea row as serialized by the backend (snake_case). */
-interface RawIdeaItem {
+export interface RawIdeaItem {
 	id: string;
 	title: string;
 	result?: string;
@@ -81,7 +86,7 @@ interface RawIdeaItem {
 
 /** Get all ideas that the user created */
 export async function getAllIdeasApi(): Promise<IdeaListItem[]> {
-	const response = await invoke<{ ideas: RawIdeaItem[] }>(COMMANDS.getAllIdeas);
+	const response = await invokeCommand("getAllIdeas");
 
 	const displayDraftSummary = (idea: RawIdeaItem): string | undefined => {
 		if (idea?.result === "") {

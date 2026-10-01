@@ -33,8 +33,9 @@ for (const m of COMMANDS_TS.matchAll(/(\w+):\s*"([a-z_]+)"/g)) {
 	cmdMap.set(m[1]!, m[2]!);
 }
 
-// matches invoke("cmd") and invoke(COMMANDS.camel)
-const INVOKE_RE = /invoke(?:<[^>]*>)?\(\s*(?:"([a-z_]+)"|COMMANDS\.(\w+))/g;
+// matches invoke("cmd"), invoke(COMMANDS.camel) and invokeCommand("camel")
+const INVOKE_RE =
+	/invoke(?:<[^>]*>)?\(\s*(?:"([a-z_]+)"|COMMANDS\.(\w+))|invokeCommand(?:<[^>]*>)?\(\s*"(\w+)"/g;
 
 describe("frontend <-> rust IPC contract", () => {
 	it("every invoked command is registered in generate_handler!", () => {
@@ -47,7 +48,7 @@ describe("frontend <-> rust IPC contract", () => {
 		for (const file of files) {
 			const source = readFileSync(file, "utf8");
 			for (const match of source.matchAll(INVOKE_RE)) {
-				const resolved = match[1] ?? cmdMap.get(match[2] ?? "");
+				const resolved = match[1] ?? cmdMap.get(match[2] ?? match[3] ?? "");
 				if (resolved) {
 					used.add(resolved);
 				}

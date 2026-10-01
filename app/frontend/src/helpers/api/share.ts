@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { invokeCommand } from "@src/tauri/invoke";
 
 export interface ExportIdeaResult {
 	cancelled: boolean;
@@ -22,10 +21,10 @@ export interface ImportShareResult {
  * dialog; the user sends the file to the other person however they like.
  */
 export function exportIdeaApi(ideaId: string): Promise<ExportIdeaResult> {
-	return invoke(COMMANDS.exportIdea, { ideaId });
+	return invokeCommand("exportIdea", { ideaId });
 }
 
 /** Import a shared idea or feedback JSON file. Opens a file dialog. */
 export function importShareApi(): Promise<ImportShareResult> {
-	return invoke(COMMANDS.importShare);
+	return invokeCommand("importShare");
 }

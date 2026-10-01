@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { COMMANDS } from "@src/tauri/commands";
+import { invokeCommand } from "@src/tauri/invoke";
 
 export interface DailyLogQuestion {
 	id: number;
@@ -49,21 +48,24 @@ export interface UserSettingsResponse {
 	};
 }
 
+/** User settings as serialized by the backend (snake_case). */
+export interface RawUserSettings {
+	user: { name?: string; timezone?: string };
+	log: { id: number; label: string; text: string; enabled: boolean }[];
+	notifications: {
+		title: string;
+		description?: string;
+		value?: string;
+		value_type: string;
+		enabled: boolean;
+	}[];
+	presence: { dock: boolean; tray: boolean };
+	updates?: { enabled: boolean };
+}
+
 /** Get user settings */
 export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
-	const response = await invoke<{
-		user: { name?: string; timezone?: string };
-		log: { id: number; label: string; text: string; enabled: boolean }[];
-		notifications: {
-			title: string;
-			description?: string;
-			value?: string;
-			value_type: string;
-			enabled: boolean;
-		}[];
-		presence: { dock: boolean; tray: boolean };
-		updates?: { enabled: boolean };
-	}>(COMMANDS.getUserSettings);
+	const response = await invokeCommand("getUserSettings");
 
 	const user = {
 		name: response.user?.name,
@@ -101,17 +103,17 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 
 /** Toggle dock / menu-bar (tray) icon visibility */
 export function setAppPresenceApi(dock: boolean, tray: boolean): Promise<void> {
-	return invoke(COMMANDS.setAppPresence, { dock, tray });
+	return invokeCommand("setAppPresence", { dock, tray });
 }
 
 /** Whether automatic update checks are on (default true). */
 export function getUpdatesEnabledApi(): Promise<boolean> {
-	return invoke(COMMANDS.getUpdatesEnabled);
+	return invokeCommand("getUpdatesEnabled");
 }
 
 /** Opt in to / out of automatic update checks. */
 export function setUpdatesEnabledApi(enabled: boolean): Promise<void> {
-	return invoke(COMMANDS.setUpdatesEnabled, { enabled });
+	return invokeCommand("setUpdatesEnabled", { enabled });
 }
 
 /** Save user settings */
@@ -142,6 +144,6 @@ export async function saveUserSettingsApi({
 	if (notifications) {
 		body.notifications = notifications;
 	}
-	const response = await invoke<{ id: string }>(COMMANDS.saveUserSettings, body);
+	const response = await invokeCommand("saveUserSettings", body);
 	return response;
 }
