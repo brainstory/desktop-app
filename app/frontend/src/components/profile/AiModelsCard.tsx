@@ -87,7 +87,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		appleStt,
 		freeBytes,
 		externalLlmLabelId,
-		refresh,
+		refreshModels,
 		download,
 		save,
 		saveSecret,
@@ -196,8 +196,8 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		);
 	};
 
-	const llmStatus = runtime.llm ?? {};
-	const sttStatus = runtime.stt ?? {};
+	const llmStatus = runtime.llm;
+	const sttStatus = runtime.stt;
 	// recommendation straight from the catalog, so copy never drifts
 	const smallestLlm = models.llm.reduce<(typeof models)["llm"][number] | null>(
 		(smallest, m) => (!smallest || m.sizeBytes < smallest.sizeBytes ? m : smallest),
@@ -513,7 +513,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 								setSavedSettings((prev) =>
 									prev ? { ...prev, ...changedEndpoints } : prev
 								);
-								refresh();
+								refreshModels();
 								openSnackbar(true, "Settings saved");
 							})
 							.catch((e: unknown) => {

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { $aiStatus } from "@components/global/aiStatusStore";
 import AiModelsCard from "./AiModelsCard";
 
 const aiSettings = {
@@ -110,6 +111,7 @@ function mockCard(extra: Record<string, (args: unknown) => unknown> = {}) {
 
 describe("AiModelsCard", () => {
 	afterEach(() => {
+		$aiStatus.set({ llm: { state: "missing" }, stt: { state: "missing" } });
 		vi.mocked(listen).mockReset();
 		vi.mocked(listen).mockImplementation(async () => () => {});
 	});
@@ -334,6 +336,24 @@ describe("AiModelsCard", () => {
 		// the active model keeps its stronger warning
 		await user.click(activeDelete!);
 		expect(activeDelete).toHaveTextContent("Really delete the ACTIVE model? (5s)");
+	});
+
+	it("shows engine status from the shared store without refetching on changes", async () => {
+		mockCard();
+		renderCard();
+		await screen.findByText("Whisper tiny (English)");
+		const invokesBefore = vi.mocked(invoke).mock.calls.length;
+
+		act(() => {
+			$aiStatus.set({
+				llm: { state: "error", model_id: "gemma-4-E2B-qat", error: "llm exploded" },
+				stt: { state: "loading", model_id: "whisper-tiny-en" }
+			});
+		});
+		expect(await screen.findByText("llm exploded")).toBeInTheDocument();
+		expect(screen.getByText("Loading...")).toBeInTheDocument();
+		// a status change is not a reason to reload models/settings/disk space
+		expect(vi.mocked(invoke).mock.calls.length).toBe(invokesBefore);
 	});
 
 	it("a progress event updates the download bar; an unknown size is indeterminate", async () => {
