@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripResultPreview } from "./api/user";
+import { stripResultPreview } from "./ideas";
 import { cn } from "./cn";
 
 describe("stripResultPreview", () => {

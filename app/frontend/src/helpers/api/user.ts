@@ -1,4 +1,5 @@
 import { invokeCommand } from "@src/tauri/invoke";
+import { stripResultPreview } from "@helpers/ideas";
 import type { DailyStatus, IdeaListItem } from "@src/types";
 
 export interface CurrentUser {
@@ -48,25 +49,6 @@ export async function getUserDailyStatusApi(): Promise<DailyStatus> {
 		isCompleted: response.is_completed,
 		streak: response.streak
 	};
-}
-
-/**
- * Distill a result document into a short preview line for the library grid.
- * Total (never crashes on missing/empty results) and pure, so it can be
- * unit-tested.
- */
-export function stripResultPreview(str: unknown): string {
-	// remove the first line before the first \n\n,
-	// and if the next line starts with ##, remove the ##
-	// then replace all newlines with spaces
-	if (typeof str !== "string" || str === "") return "";
-	const removedFirstLine = str.includes("\n\n") ? str.substring(str.indexOf("\n\n") + 2) : str;
-	const removedFirstLineAndHash = removedFirstLine.replace(/^##/, "");
-	const removedNewLines = removedFirstLineAndHash.replace(/\n/g, " ");
-	const trimmed = removedNewLines.trim();
-	if (!trimmed) return "";
-	// only append the ellipsis when something was actually cut off
-	return trimmed.length > 100 ? trimmed.substring(0, 100).trim() + "..." : trimmed;
 }
 
 /** Raw idea row as serialized by the backend (snake_case). */

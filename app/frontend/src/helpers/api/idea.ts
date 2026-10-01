@@ -18,6 +18,7 @@ export interface RawIdea {
 }
 
 import { getQueryParam } from "@helpers/helpers";
+import { stripResultPreview } from "@helpers/ideas";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Get idea */
@@ -72,21 +73,6 @@ export interface RawFeedbackChild {
 export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackItem[]> {
 	const response = await invokeCommand("getIdeaChildren", { ideaId: idea_id });
 
-	const strip = (str: unknown): string => {
-		// remove the first line before the first \n\n,
-		// and if the next line starts with ##, remove the ##
-		// then replace all newlines with spaces
-		if (typeof str !== "string" || str === "") return "";
-		const removedFirstLine = str.includes("\n\n")
-			? str.substring(str.indexOf("\n\n") + 2)
-			: str;
-		const removedFirstLineAndHash = removedFirstLine.replace(/^##/, "");
-		const removedNewLines = removedFirstLineAndHash.replace(/\n/g, " ");
-		const trimmed = removedNewLines.trim();
-		if (!trimmed) return "";
-		return trimmed.length > 100 ? trimmed.substring(0, 100).trim() + "..." : trimmed;
-	};
-
 	return response?.ideas.map((idea) => {
 		const feedbackComments = idea?.structured_result?.feedback_items
 			? idea.structured_result.feedback_items.map((feedbackComment) => ({
@@ -99,7 +85,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 		return {
 			id: idea.id,
 			title: idea?.title,
-			summaryPreview: strip(idea?.result),
+			summaryPreview: stripResultPreview(idea?.result),
 			createdAt: idea?.created_at,
 			creatorEmail: idea?.creator_email,
 			creatorName: idea?.creator_name,
