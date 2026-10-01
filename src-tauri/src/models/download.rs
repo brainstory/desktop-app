@@ -590,6 +590,11 @@ pub async fn download_model_file(
 			Ok(())
 		}
 		Err(StreamFailure::Resumable(e)) => {
+			// tokio finishes file writes in the background: flush so the
+			// kept prefix is really on disk before anyone resumes from it
+			if let Err(flush_err) = file.flush().await {
+				log::warn!("could not flush the partial download: {flush_err}");
+			}
 			drop(file);
 			log::info!(
 				"keeping {} bytes of {} for a resume: {e}",
