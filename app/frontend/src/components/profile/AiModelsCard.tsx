@@ -34,6 +34,33 @@ const localeLabel = (id: string): string => {
 	}
 };
 
+/**
+ * Languages offered for a multilingual whisper model when Apple Speech
+ * can't list its locales (whisper uses the primary subtag).
+ */
+const WHISPER_LOCALES = [
+	"en-US",
+	"de-DE",
+	"es-ES",
+	"fr-FR",
+	"it-IT",
+	"pt-BR",
+	"nl-NL",
+	"pl-PL",
+	"sv-SE",
+	"tr-TR",
+	"ru-RU",
+	"uk-UA",
+	"ja-JP",
+	"ko-KR",
+	"zh-CN",
+	"hi-IN",
+	"ar-SA"
+];
+
+/** Mirrors the backend: `*-en` whisper builds always transcribe English. */
+const isMultilingualWhisper = (modelId: string): boolean => !modelId.endsWith("-en");
+
 const ENDPOINT_KEYS = ["extLlmBaseUrl", "extLlmModel", "extSttBaseUrl", "extSttModel"] as const;
 
 const STATUS_LABELS = {
@@ -208,6 +235,25 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const appleActive =
 		settings.sttEngine === "apple" || (settings.sttEngine === "auto" && !!appleStt?.available);
 	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl && !appleActive;
+	// The language reaches Apple Speech and multilingual whisper models
+	// (directly, or as Apple's fallback); English-only builds ignore it.
+	const activeStt = models.stt.find((m) => m.active);
+	const multilingualWhisper = !!activeStt && isMultilingualWhisper(activeStt.id);
+	const showLanguage = appleActive || multilingualWhisper;
+	const currentLanguage = settings.sttLanguage || "en-US";
+	const appleLocales = appleStt?.supportedLocales ?? [];
+	const baseLocales =
+		appleLocales.length > 0 ? appleLocales : appleActive ? ["en-US"] : WHISPER_LOCALES;
+	const languageOptions = baseLocales.includes(currentLanguage)
+		? baseLocales
+		: [currentLanguage, ...baseLocales];
+	const languageHelp = !appleActive
+		? `${activeStt?.label ?? "The whisper model"} transcribes in this language.`
+		: multilingualWhisper
+			? "Used by Apple Speech and by the whisper fallback. Missing languages are fetched by macOS on first use."
+			: activeStt
+				? "Used by Apple Speech; missing languages are fetched by macOS on first use. The English-only whisper fallback always transcribes English."
+				: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
 
 	const usingExternalLlm = settings.llmMode === "external";
 	const usingExternalStt = !!settings.extSttBaseUrl;
@@ -424,7 +470,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							Recognition.
 						</p>
 					)}
-					{appleActive && (
+					{showLanguage && (
 						<div className="mt-1 max-w-xs">
 							<label
 								htmlFor="stt-language-select"
@@ -434,23 +480,20 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 							</label>
 							<select
 								id="stt-language-select"
-								value={settings.sttLanguage || "en-US"}
+								value={currentLanguage}
 								onChange={(e) => save({ sttLanguage: e.target.value })}
 								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 bg-white"
 							>
-								{(appleStt?.supportedLocales ?? ["en-US"]).map((loc) => (
+								{languageOptions.map((loc) => (
 									<option key={loc} value={loc}>
 										{localeLabel(loc)} ({loc})
-										{appleStt?.installedLocales.includes(loc)
+										{!appleActive || appleStt?.installedLocales.includes(loc)
 											? ""
 											: " - not installed yet"}
 									</option>
 								))}
 							</select>
-							<p className="text-sm text-stone-500 mt-1">
-								Applies to the Apple Speech engine. Missing languages are fetched by
-								macOS on first use.
-							</p>
+							<p className="text-sm text-stone-500 mt-1">{languageHelp}</p>
 						</div>
 					)}
 				</div>

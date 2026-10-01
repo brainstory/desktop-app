@@ -249,6 +249,37 @@ describe("AiModelsCard", () => {
 		);
 	});
 
+	it("offers the speech language for a multilingual whisper model", async () => {
+		const user = userEvent.setup();
+		const turbo = {
+			...models.stt[0]!,
+			id: "whisper-large-v3-turbo",
+			label: "Whisper large v3 turbo"
+		};
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, sttModel: turbo.id }),
+			list_models: () => ({ ...models, stt: [turbo] })
+		});
+		renderCard();
+		const select = await screen.findByLabelText("Speech language");
+		expect(
+			screen.getByText(/Whisper large v3 turbo transcribes in this language/)
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Applies to the Apple Speech engine/)).not.toBeInTheDocument();
+		await user.selectOptions(select, "de-DE");
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call![1]).toEqual({ ai: { sttLanguage: "de-DE" } });
+		});
+	});
+
+	it("hides the speech language for an English-only whisper model", async () => {
+		mockCard();
+		renderCard();
+		await screen.findByText("Whisper tiny (English)");
+		expect(screen.queryByLabelText("Speech language")).not.toBeInTheDocument();
+	});
+
 	it("a progress event updates the download bar; an unknown size is indeterminate", async () => {
 		const handlers = captureListeners();
 		mockCard();
