@@ -211,8 +211,15 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl && !appleActive;
 	// The language reaches Apple Speech and multilingual whisper models
 	// (directly, or as Apple's fallback); English-only builds ignore it.
-	const activeStt = models.stt.find((m) => m.active);
-	const multilingualWhisper = !!activeStt && isMultilingualWhisper(activeStt.id);
+	// The configured whisper model, not the `active` flag: list_models marks
+	// no whisper model active while Apple Speech runs, yet a downloaded one
+	// still serves as its fallback.
+	const whisperModel = models.stt.find((m) => m.id === settings.sttModel);
+	const whisperFallback = appleActive && !!whisperModel?.downloaded;
+	const multilingualWhisper =
+		!!whisperModel &&
+		(!appleActive || whisperFallback) &&
+		isMultilingualWhisper(whisperModel.id);
 	const showLanguage = appleActive || multilingualWhisper;
 	const currentLanguage = settings.sttLanguage || "en-US";
 	const appleLocales = appleStt?.supportedLocales ?? [];
@@ -222,10 +229,10 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		? baseLocales
 		: [currentLanguage, ...baseLocales];
 	const languageHelp = !appleActive
-		? `${activeStt?.label ?? "The whisper model"} transcribes in this language.`
+		? `${whisperModel?.label ?? "The whisper model"} transcribes in this language.`
 		: multilingualWhisper
 			? "Used by Apple Speech and by the whisper fallback. Missing languages are fetched by macOS on first use."
-			: activeStt
+			: whisperFallback
 				? "Used by Apple Speech; missing languages are fetched by macOS on first use. The English-only whisper fallback always transcribes English."
 				: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
 

@@ -273,6 +273,31 @@ describe("AiModelsCard", () => {
 		});
 	});
 
+	it("says the language also reaches a multilingual whisper fallback under Apple Speech", async () => {
+		const turbo = {
+			...models.stt[0]!,
+			id: "whisper-large-v3-turbo",
+			label: "Whisper large v3 turbo",
+			// list_models marks no whisper model active while Apple Speech runs
+			active: false
+		};
+		mockCard({
+			get_ai_settings: () => ({ ...aiSettings, sttEngine: "auto", sttModel: turbo.id }),
+			list_models: () => ({ ...models, stt: [turbo] }),
+			get_apple_stt_status: () => ({
+				available: true,
+				authorized: true,
+				supportedLocales: ["en-US", "de-DE"],
+				installedLocales: ["en-US"]
+			})
+		});
+		renderCard();
+		expect(await screen.findByLabelText("Speech language")).toBeInTheDocument();
+		expect(
+			screen.getByText(/Used by Apple Speech and by the whisper fallback/)
+		).toBeInTheDocument();
+	});
+
 	it("hides the speech language for an English-only whisper model", async () => {
 		mockCard();
 		renderCard();
