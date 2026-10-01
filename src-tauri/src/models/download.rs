@@ -1174,10 +1174,7 @@ mod hf_cache_tests {
 }
 #[cfg(test)]
 mod cache_storage_tests {
-	use super::{
-		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, remove_cached_model,
-		LLM_MODELS,
-	};
+	use super::{hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, LLM_MODELS};
 	use sha2::{Digest, Sha256};
 
 	fn sha256_hex(bytes: &[u8]) -> String {
@@ -1265,6 +1262,10 @@ mod cache_storage_tests {
 	#[cfg(target_family = "unix")]
 	#[test]
 	fn remove_prunes_snapshots_and_only_unreferenced_blobs() {
+		// imported here: this unix-only test is its only user, and a
+		// module-level import is unused (an error) on Windows
+		use super::remove_cached_model;
+
 		let cache = tempfile::tempdir().expect("tempdir");
 		let content = b"shared model bytes";
 		let spec = spec_for(content);
