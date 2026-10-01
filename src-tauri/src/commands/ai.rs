@@ -524,6 +524,19 @@ mod feedback_json_tests {
 	}
 
 	#[test]
+	fn feedback_items_do_not_need_labels() {
+		// the LLM no longer picks emoji labels (people react instead);
+		// documents without them are valid and older ones that still
+		// carry labels keep loading
+		let item = r#"{"oid_heading_text": "1## A", "matched_spans": [], "feedback_text": "f", "confidence": "high", "priority": "medium", "relationships": []}"#;
+		let v = extract_feedback_json(&format!(r#"{{"feedback_items": [{item}]}}"#))
+			.expect("no labels");
+		assert!(v["feedback_items"][0].get("labels").is_none());
+		let legacy = r#"{"feedback_items": [{"oid_heading_text": "1## A", "labels": [{"name": "agree", "emoji": "👍"}]}]}"#;
+		assert!(extract_feedback_json(legacy).is_some());
+	}
+
+	#[test]
 	fn empty_feedback_items_is_valid() {
 		assert!(extract_feedback_json(r#"{"feedback_items": []}"#).is_some());
 	}
