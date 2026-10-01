@@ -52,7 +52,7 @@ jobs:
         run: pnpm -C app/frontend format:check
 
       - name: Test
-        run: pnpm -C app/frontend test
+        run: pnpm -C app/frontend test:coverage
 
       # build scripts (scripts/*.test.mjs) run under plain node:test
       - name: Test build scripts

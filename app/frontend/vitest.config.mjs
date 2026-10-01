@@ -21,6 +21,16 @@ export default defineConfig({
 		setupFiles: ["src/test/setup.ts"],
 		coverage: {
 			provider: "v8",
+			include: ["src/**/*.{ts,tsx}"],
+			exclude: [
+				"src/**/*.test.{ts,tsx}",
+				// test harness, not app code
+				"src/test/**",
+				// declarations and type-only modules: nothing to execute
+				"src/**/*.d.ts",
+				"src/types.ts",
+				"src/components/chat/types.ts"
+			],
 			thresholds: {
 				// starting floor; raise as component coverage grows
 				lines: 50
