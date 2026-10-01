@@ -483,6 +483,34 @@ mod contract_tests {
 	}
 
 	#[test]
+	fn story_result_prompt_shows_a_synthesis_layout_the_feedback_cut_understands() {
+		// E4B dropped the synthesis on short sessions and put the note once
+		// after `---` (or not at all) when the layout was only described
+		// in prose; the prompt now shows it, and it must stay the shape
+		// idea_without_synthesis cuts
+		let layout: String = STORY_RESULT_SYSTEM
+			.lines()
+			.skip_while(|l| l.trim() != "---")
+			.take_while(|l| l.is_empty() || l.starts_with("    "))
+			.map(|l| format!("{}\n", l.strip_prefix("    ").unwrap_or(l)))
+			.collect();
+		for heading in [
+			"## Core Thesis",
+			"## Key Assumptions",
+			"## Open Questions",
+			"## Suggested Next Sessions",
+		] {
+			assert!(
+				layout.contains(&format!("{heading}\n*(Assistant's synthesis)*\n")),
+				"{heading} without its note in:\n{layout}"
+			);
+		}
+		let doc = format!("# Idea\n\n## Part\nMy words.\n\n{layout}");
+		assert_eq!(idea_without_synthesis(&doc), "# Idea\n\n## Part\nMy words.");
+		assert!(STORY_RESULT_SYSTEM.contains("always write all four"));
+	}
+
+	#[test]
 	fn feedback_prompts_carry_the_documented_tags() {
 		// the react prompt appends <idea author="..." is_current_user="...">
 		let mut react = request(ChatType::Feedback, false);
