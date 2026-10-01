@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import UpdaterBanner from "@ds/UpdaterBanner";
-import PinkButton from "@ds/PinkButton";
-import TransparentButton from "@ds/TransparentButton";
+import Button from "@ds/Button";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import { cn } from "@helpers/cn";
 
@@ -75,7 +74,8 @@ function NavigationInner() {
 	return (
 		<div>
 			{/* Open Sidebar Button */}
-			<TransparentButton
+			<Button
+				variant="transparent"
 				ref={openButtonRef}
 				icon="menu"
 				onClick={handleOpenSidebar}
@@ -106,7 +106,8 @@ function NavigationInner() {
 				<a href="/" className="flex justify-center items-center mt-2 mb-6 sm:mb-8">
 					<img src="/logo.svg" className="h-8 mr-3 sm:h-12" alt="Brainstory Logo" />
 				</a>
-				<TransparentButton
+				<Button
+					variant="transparent"
 					ref={closeButtonRef}
 					icon="close"
 					onClick={handleCloseSidebar}
@@ -120,14 +121,15 @@ function NavigationInner() {
 								<li key="new-idea-pink" className="mx-5">
 									{/* Real anchors: cmd-click / open-in-new-tab / screen
 									    readers keep working */}
-									<PinkButton
+									<Button
+										variant="pink"
 										icon={button.icon}
 										iconClasses="mr-0.5"
 										full
 										href={button.href}
 									>
 										{button.text}
-									</PinkButton>
+									</Button>
 									<div className="text-center mt-2">
 										<a
 											className="text-xs font-normal text-stone-500 underline hover:text-slate-700 underline-offset-2 hover:no-underline"
@@ -144,7 +146,8 @@ function NavigationInner() {
 						const isActive = pathname === button.href;
 						return (
 							<li key={button.id}>
-								<TransparentButton
+								<Button
+									variant="transparent"
 									id={button.id}
 									icon={button.icon}
 									href={button.href}
@@ -153,7 +156,7 @@ function NavigationInner() {
 									aria-current={isActive ? "page" : undefined}
 								>
 									{button.text}
-								</TransparentButton>
+								</Button>
 							</li>
 						);
 					})}

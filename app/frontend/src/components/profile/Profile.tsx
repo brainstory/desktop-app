@@ -16,7 +16,7 @@ import UpdatesCard from "./UpdatesCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 import { SUCCESS_COPY, useSnackbar } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
 
@@ -161,7 +161,11 @@ export default function Profile() {
 				<ErrorSection
 					title="Couldn't load your settings"
 					paragraphs={["Something went wrong while loading your settings."]}
-					action={<PinkButton onClick={retryLoadSettings}>Try again</PinkButton>}
+					action={
+						<Button variant="pink" onClick={retryLoadSettings}>
+							Try again
+						</Button>
+					}
 					hideDashboardLink
 				/>
 			) : (

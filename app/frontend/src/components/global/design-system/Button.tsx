@@ -1,7 +1,21 @@
 import React from "react";
 import { cn } from "@helpers/cn";
+
+/** Colour schemes (formerly PinkButton / BlackButton / BorderedButton /
+ * TransparentButton). Without a variant the button is uncoloured. */
+const VARIANT_CLASSES = {
+	pink: "bg-accent-600 hover:bg-accent-700 text-white",
+	black: "bg-stone-950 hover:bg-stone-800 text-white",
+	bordered:
+		"bg-white hover:bg-slate-200 border border-black text-black disabled:border-slate-500",
+	transparent: "bg-transparent hover:font-bold hover:bg-stone-400/20 text-black"
+} as const;
+
+export type ButtonVariant = keyof typeof VARIANT_CLASSES;
+
 export interface ButtonProps extends Omit<React.ComponentProps<"button">, "children" | "disabled"> {
 	children?: React.ReactNode;
+	variant?: ButtonVariant;
 	icon?: string | null;
 	full?: boolean;
 	left?: boolean;
@@ -14,6 +28,7 @@ export interface ButtonProps extends Omit<React.ComponentProps<"button">, "child
 
 export default function Button({
 	children,
+	variant,
 	icon = null,
 	full = false,
 	left = false,
@@ -31,6 +46,7 @@ export default function Button({
 		full && "w-full",
 		left ? "justify-start" : "justify-center",
 		disabled && "opacity-50 cursor-not-allowed",
+		variant && VARIANT_CLASSES[variant],
 		classes
 	);
 

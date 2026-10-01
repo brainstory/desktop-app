@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import type { AiSettingsResponse, EngineStatus, ModelStatus } from "@helpers/api/models";
 import { EngineStatusHeader } from "./EngineStatusHeader";
@@ -123,9 +123,13 @@ function EndpointField({
 				placeholder="https://huggingface.co"
 				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2"
 			/>
-			<PinkButton disabled={value === (initial ?? "")} onClick={() => onSave(value)}>
+			<Button
+				variant="pink"
+				disabled={value === (initial ?? "")}
+				onClick={() => onSave(value)}
+			>
 				Save
-			</PinkButton>
+			</Button>
 		</div>
 	);
 }

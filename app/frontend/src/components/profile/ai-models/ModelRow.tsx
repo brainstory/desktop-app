@@ -1,6 +1,5 @@
 import { memo } from "react";
-import PinkButton from "@ds/PinkButton";
-import BorderedButton from "@ds/BorderedButton";
+import Button from "@ds/Button";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 import type { ModelStatus } from "@helpers/api/models";
 import { formatSize } from "./format";
@@ -61,7 +60,9 @@ export const ModelRow = memo(function ModelRow({
 				</div>
 				<div className="flex gap-2 items-center shrink-0">
 					{model.downloaded && !model.active && (
-						<BorderedButton onClick={() => onActivate(model.id)}>Use</BorderedButton>
+						<Button variant="bordered" onClick={() => onActivate(model.id)}>
+							Use
+						</Button>
 					)}
 					{model.downloaded && !isDownloading && (
 						<DeleteModelButton
@@ -71,16 +72,18 @@ export const ModelRow = memo(function ModelRow({
 					)}
 					{!model.downloaded && !isDownloading && (
 						<>
-							<PinkButton onClick={() => onDownload(model.id)}>
+							<Button variant="pink" onClick={() => onDownload(model.id)}>
 								Download ({formatSize(model.sizeBytes)})
-							</PinkButton>
+							</Button>
 							{freeBytes !== null && (
 								<FreeSpaceNote freeBytes={freeBytes} needBytes={model.sizeBytes} />
 							)}
 						</>
 					)}
 					{isDownloading && (
-						<BorderedButton onClick={() => onCancel(model.id)}>Cancel</BorderedButton>
+						<Button variant="bordered" onClick={() => onCancel(model.id)}>
+							Cancel
+						</Button>
 					)}
 				</div>
 			</div>
@@ -145,7 +148,8 @@ export function ModelList({
 function DeleteModelButton({ isActive, onConfirm }: { isActive: boolean; onConfirm: () => void }) {
 	const { isConfirming, secondsLeft, confirm } = useConfirmClick();
 	return (
-		<BorderedButton
+		<Button
+			variant="bordered"
 			onClick={() => {
 				if (confirm()) onConfirm();
 			}}
@@ -158,7 +162,7 @@ function DeleteModelButton({ isActive, onConfirm }: { isActive: boolean; onConfi
 			) : (
 				"Delete"
 			)}
-		</BorderedButton>
+		</Button>
 	);
 }
 

@@ -4,7 +4,7 @@ import type { ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import ConversationTranscript from "@components/chat/ConversationTranscript";
 import ParentIdeaText from "@components/global/ParentIdeaText";
-import TransparentButton from "@ds/TransparentButton";
+import Button from "@ds/Button";
 import EndChatButton from "./reusable/EndChatButton";
 
 interface ChatFeedbackMainSectionProps {
@@ -47,14 +47,15 @@ export default function ChatFeedbackMainSection({
 						/>
 					)}
 					{currConversation.length > 1 && (
-						<TransparentButton
+						<Button
+							variant="transparent"
 							classes="border border-stone-200 mt-6 hidden sm:block"
 							onClick={() => {
 								setShowTranscript(!showTranscript);
 							}}
 						>
 							{showTranscript ? "Hide Transcript" : "Show Transcript"}
-						</TransparentButton>
+						</Button>
 					)}
 					{showTranscript && (
 						<div className="mt-4">

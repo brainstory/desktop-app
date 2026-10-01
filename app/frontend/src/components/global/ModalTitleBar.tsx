@@ -1,4 +1,4 @@
-import TransparentButton from "@ds/TransparentButton";
+import Button from "@ds/Button";
 
 export default function ModalTitleBar({
 	title,
@@ -15,7 +15,8 @@ export default function ModalTitleBar({
 		<div className={`flex flex-row items-start justify-between ${classes}`}>
 			<span className="flex flex-row items-start">
 				{onBack && (
-					<TransparentButton
+					<Button
+						variant="transparent"
 						onClick={onBack}
 						classes="w-8	h-8 mr-3"
 						icon="arrow-back"
@@ -24,7 +25,13 @@ export default function ModalTitleBar({
 				)}
 				<h2 className="mr-3 text-xl font-semibold text-gray-900">{title}</h2>
 			</span>
-			<TransparentButton onClick={onClose} classes="w-8 h-8" icon="close" sr="Close modal" />
+			<Button
+				variant="transparent"
+				onClick={onClose}
+				classes="w-8 h-8"
+				icon="close"
+				sr="Close modal"
+			/>
 		</div>
 	);
 }

@@ -5,7 +5,7 @@ import { Card } from "./ProfileCards";
 import TimePickerInput from "@components/global/time-picker/TimePickerInput";
 
 import OnOffToggleButton from "@ds/OnOffToggleButton";
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 
 interface NotificationsCardProps {
 	notificationsData?: NotificationSetting[];
@@ -105,9 +105,14 @@ export function NotificationsCard({
 				{renderNotificationFields(notificationFields)}
 			</div>
 
-			<PinkButton disabled={!hasChanged} onClick={handleSaveClick} classes="mt-8 mx-auto">
+			<Button
+				variant="pink"
+				disabled={!hasChanged}
+				onClick={handleSaveClick}
+				classes="mt-8 mx-auto"
+			>
 				Save
-			</PinkButton>
+			</Button>
 		</Card>
 	);
 }

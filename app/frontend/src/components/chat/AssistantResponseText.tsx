@@ -1,6 +1,6 @@
 import RivePencil from "@components/global/RivePencil";
 import { useAppContext } from "@src/components/chat/reusable/AppWrapper";
-import TransparentButton from "@ds/TransparentButton";
+import Button from "@ds/Button";
 import Tooltip from "@ds/Tooltip";
 import { cn } from "@helpers/cn";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
@@ -62,7 +62,8 @@ export function AssistantResponseText({
 			)}
 			{renderText()}
 			<Tooltip text="Another question">
-				<TransparentButton
+				<Button
+					variant="transparent"
 					icon="refresh"
 					title="Ask a different question"
 					classes={cn(!enableSkip && "cursor-not-allowed")}

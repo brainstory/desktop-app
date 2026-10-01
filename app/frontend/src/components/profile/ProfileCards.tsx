@@ -1,6 +1,6 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 
 interface CardProps {
@@ -164,9 +164,14 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 					))}
 				</select>
 			</div>
-			<PinkButton disabled={!hasChanged} onClick={handleSaveClick} classes="mt-6 mx-auto">
+			<Button
+				variant="pink"
+				disabled={!hasChanged}
+				onClick={handleSaveClick}
+				classes="mt-6 mx-auto"
+			>
 				Save
-			</PinkButton>
+			</Button>
 		</Card>
 	);
 }

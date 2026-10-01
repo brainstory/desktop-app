@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { getDailyLogQuestionsApi, submitDailyLogQuestionsApi } from "@helpers/api/forms";
 import type { LogFormAnswer } from "@helpers/api/forms";
 
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 import ModalTitleBar from "@components/global/ModalTitleBar";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import StartLogSection from "./StartLogSection";
@@ -127,7 +127,8 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 							setLogItems={setLogItems}
 							disabled={isSaving}
 						/>
-						<PinkButton
+						<Button
+							variant="pink"
 							disabled={isSaving}
 							onClick={() => {
 								setIsSaving(true);
@@ -139,7 +140,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 								<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />
 							)}
 							{isSaving ? "Saving" : "Submit"}
-						</PinkButton>
+						</Button>
 					</>
 				)}
 			</div>

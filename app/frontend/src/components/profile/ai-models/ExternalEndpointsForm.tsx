@@ -1,6 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import PinkButton from "@ds/PinkButton";
-import BorderedButton from "@ds/BorderedButton";
+import Button from "@ds/Button";
 import { normalizeApiError } from "@helpers/helpers";
 import {
 	saveAiSettingsApi,
@@ -131,18 +130,19 @@ export function ExternalEndpointsForm({
 				/>
 			</div>
 			<div className="flex gap-3">
-				<PinkButton
+				<Button
+					variant="pink"
 					disabled={!endpointDirty}
 					onClick={() => saveEndpoints().catch(() => {})}
 				>
 					{endpointDirty ? "Save Endpoints" : "All changes saved"}
-				</PinkButton>
-				<BorderedButton onClick={() => saveAndTest(testLlmEndpointApi)}>
+				</Button>
+				<Button variant="bordered" onClick={() => saveAndTest(testLlmEndpointApi)}>
 					Test LLM
-				</BorderedButton>
-				<BorderedButton onClick={() => saveAndTest(testSttEndpointApi)}>
+				</Button>
+				<Button variant="bordered" onClick={() => saveAndTest(testSttEndpointApi)}>
 					Test STT
-				</BorderedButton>
+				</Button>
 			</div>
 		</div>
 	);

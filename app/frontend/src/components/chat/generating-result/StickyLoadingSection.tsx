@@ -1,5 +1,5 @@
 import LoadingAnimation from "@components/global/LoadingAnimation";
-import BorderedButton from "@ds/BorderedButton";
+import Button from "@ds/Button";
 import { CancelGenerationButton } from "@components/chat/reusable/ChatStateNotification";
 
 const headingStyle = "mb-4 lg:mb-5 font-bold text-stone-900 text-center text-xl lg:text-2xl";
@@ -27,7 +27,9 @@ export default function StickyLoadingSection({
 						{saveError} Your summary is still here &mdash; try saving it again.
 					</p>
 					<div className="flex justify-center">
-						<BorderedButton onClick={onRetrySave}>Try saving again</BorderedButton>
+						<Button variant="bordered" onClick={onRetrySave}>
+							Try saving again
+						</Button>
 					</div>
 				</div>
 			) : isFinishedGenerating ? (
@@ -42,12 +44,13 @@ export default function StickyLoadingSection({
 						Finished! Saved your summary
 					</h1>
 					<div>
-						<BorderedButton
+						<Button
+							variant="bordered"
 							onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
 							classes="ml-auto"
 						>
 							Open your idea &rarr;
-						</BorderedButton>
+						</Button>
 					</div>
 				</>
 			) : (

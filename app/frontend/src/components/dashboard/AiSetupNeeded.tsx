@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "@nanostores/react";
 import { listModelsApi } from "@helpers/api/models";
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 import { $aiStatus, initAiStatus } from "@components/global/aiStatusStore";
 
 /** Catalog lookup state: not fetched yet, or whether any local LLM is
@@ -72,7 +72,9 @@ export default function AiSetupNeeded() {
 				download a local model{smallestGb ? ` (~${smallestGb} GB, once)` : ""}, or point it
 				at an external AI server if you have one. You can change this any time.
 			</p>
-			<PinkButton href="/profile?tab=aiModels">Set up AI Models</PinkButton>
+			<Button variant="pink" href="/profile?tab=aiModels">
+				Set up AI Models
+			</Button>
 		</div>
 	);
 }

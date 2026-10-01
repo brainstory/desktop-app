@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Card } from "./ProfileCards";
 import LogEntry from "@components/form/LogEntryInput";
 import type { LogSettingsQuestion } from "@helpers/api/settings";
-import PinkButton from "@ds/PinkButton";
+import Button from "@ds/Button";
 
 const getEnabledLogQidsFromData = (apiData: LogSettingsQuestion[]): number[] => {
 	return apiData.reduce((acc: number[], currField: LogSettingsQuestion) => {
@@ -60,9 +60,14 @@ export function DailyLogSettingsCard({
 				{renderlogFields(logFieldsData, enabledLogQids, handleToggle)}
 			</div>
 			{errorMessage && <p className="mt-1 text-pink-600 text-sm">{errorMessage}</p>}
-			<PinkButton disabled={!hasChanged} onClick={handleSaveClick} classes="mt-6 mx-auto">
+			<Button
+				variant="pink"
+				disabled={!hasChanged}
+				onClick={handleSaveClick}
+				classes="mt-6 mx-auto"
+			>
 				Save
-			</PinkButton>
+			</Button>
 		</Card>
 	);
 }

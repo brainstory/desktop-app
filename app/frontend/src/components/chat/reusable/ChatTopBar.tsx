@@ -3,7 +3,7 @@ import { CHAT_SAVE_STATE, type ChatSaveState } from "@src/const";
 import { cn } from "@helpers/cn";
 import type { ParentIdea } from "@components/chat/types";
 
-import TransparentButton from "@ds/TransparentButton";
+import Button from "@ds/Button";
 import ChatIntroText from "@components/chat/ChatIntroText";
 
 interface ChatTopBarProps {
@@ -42,7 +42,8 @@ export default function ChatTopBar({
 		return (
 			<div className="flex items-center flex-nowrap gap-2">
 				{isLeftButton && (
-					<TransparentButton
+					<Button
+						variant="transparent"
 						icon={leftButtonIcon}
 						href={leftButtonHref}
 						sr="Go back"
@@ -76,7 +77,8 @@ export default function ChatTopBar({
 				classes={cn("sm:block text-center grow", (!parentIdea || saveIconName) && "hidden")}
 			/>
 			{!parentIdea && (
-				<TransparentButton
+				<Button
+					variant="transparent"
 					classes="border border-stone-200 order-last ml-auto text-nowrap"
 					aria-pressed={showTranscript}
 					onClick={() => {
@@ -84,7 +86,7 @@ export default function ChatTopBar({
 					}}
 				>
 					{showTranscript ? "Hide Transcript" : "Show Transcript"}
-				</TransparentButton>
+				</Button>
 			)}
 		</div>
 	);

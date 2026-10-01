@@ -8,8 +8,6 @@ import { isOwnIdea } from "@helpers/ideas";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
-import TransparentButton from "@ds/TransparentButton";
-import PinkButton from "@ds/PinkButton";
 import { useSnackbar } from "@ds/Snackbar";
 import ErrorSection from "@components/error/ErrorSection";
 
@@ -90,14 +88,15 @@ export default function DashboardSection() {
 				<h1 className="mb-2 text-2xl font-bold tracking-tight text-center text-stone-900 md:text-2xl lg:text-4xl">
 					Dashboard
 				</h1>
-				<TransparentButton
+				<Button
+					variant="transparent"
 					icon="download-outline"
 					onClick={handleImport}
 					classes="absolute right-0 top-0"
 					aria-label="Import shared idea or feedback"
 				>
 					Import
-				</TransparentButton>
+				</Button>
 			</div>
 			<AiSetupNeeded />
 			{errorFound ? (
@@ -105,7 +104,9 @@ export default function DashboardSection() {
 					title="Couldn't load your ideas"
 					paragraphs={["Something went wrong while loading your library."]}
 					action={
-						<PinkButton onClick={() => window.location.reload()}>Try again</PinkButton>
+						<Button variant="pink" onClick={() => window.location.reload()}>
+							Try again
+						</Button>
 					}
 					hideDashboardLink
 				/>

@@ -1,5 +1,5 @@
 import { CONVERSATION_STATE, type ConversationState } from "@src/const";
-import BlackButton from "@ds/BlackButton";
+import Button from "@ds/Button";
 
 interface EndChatButtonProps {
 	conversationState: ConversationState;
@@ -16,7 +16,8 @@ export default function EndChatButton({
 	return (
 		<div className={`inline-block ${classes}`}>
 			<p className="text-xs sm:text-sm mb-1">Ready to end your session?</p>
-			<BlackButton
+			<Button
+				variant="black"
 				icon={isFinishing ? null : "exit-outline"}
 				disabled={
 					!(
@@ -28,7 +29,7 @@ export default function EndChatButton({
 				onClick={() => handleGetResult()}
 			>
 				{isFinishing ? "Loading summary..." : "Generate Summary & Save"}
-			</BlackButton>
+			</Button>
 		</div>
 	);
 }

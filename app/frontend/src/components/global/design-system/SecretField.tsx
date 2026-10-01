@@ -1,6 +1,5 @@
 import { useState } from "react";
-import PinkButton from "./PinkButton";
-import BorderedButton from "./BorderedButton";
+import Button from "./Button";
 
 /**
  * Password input for a stored secret (token / API key). The backend never
@@ -51,10 +50,14 @@ export default function SecretField({
 					className={`border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2 ${inputClasses}`}
 					placeholder={stored ? "Leave empty to keep the saved value" : placeholder}
 				/>
-				<PinkButton disabled={value === ""} onClick={() => saveAndReset(value)}>
+				<Button variant="pink" disabled={value === ""} onClick={() => saveAndReset(value)}>
 					{saveLabel}
-				</PinkButton>
-				{stored && <BorderedButton onClick={() => saveAndReset("")}>Remove</BorderedButton>}
+				</Button>
+				{stored && (
+					<Button variant="bordered" onClick={() => saveAndReset("")}>
+						Remove
+					</Button>
+				)}
 			</div>
 		</div>
 	);

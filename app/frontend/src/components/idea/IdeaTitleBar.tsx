@@ -3,8 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
 import { exportIdeaApi } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
-import PinkButton from "@ds/PinkButton";
-import BorderedButton from "@ds/BorderedButton";
+import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
 
 interface IdeaTitleBarProps {
@@ -131,20 +130,21 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 		const buttons = [];
 		if (!parentId) {
 			buttons.push(
-				<PinkButton
+				<Button
+					variant="pink"
 					key="give-feedback"
 					onClick={() => {
 						window.location.href = `/chat?parentId=${idea.id}`;
 					}}
 				>
 					Give Feedback
-				</PinkButton>
+				</Button>
 			);
 		}
 		if (isOwnIdea) {
 			buttons.push(
 				<span key="export-wrap" className="flex flex-col items-end">
-					<PinkButton onClick={handleExport}>
+					<Button variant="pink" onClick={handleExport}>
 						{exportState === "exporting"
 							? "Exporting..."
 							: exportState === "done"
@@ -154,7 +154,7 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 									: parentId
 										? "Export Feedback"
 										: "Export"}
-					</PinkButton>
+					</Button>
 					{/* privacy note: previously buried in a title attribute,
 					    invisible to keyboard and touch users */}
 					<p className="text-[10px] leading-tight text-stone-500 mt-1 max-w-[220px] text-right">
@@ -164,13 +164,14 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 			);
 		}
 		buttons.push(
-			<BorderedButton
+			<Button
+				variant="bordered"
 				key="delete"
 				onClick={handleDelete}
 				classes={confirmingDelete ? "border-red-400 text-red-600" : ""}
 			>
 				{confirmingDelete ? `Really delete? (${secondsLeft ?? 0}s)` : "Delete"}
-			</BorderedButton>,
+			</Button>,
 			// Announced once when armed, outside the button and not on
 			// every countdown tick
 			<span key="delete-status" role="status" className="sr-only">

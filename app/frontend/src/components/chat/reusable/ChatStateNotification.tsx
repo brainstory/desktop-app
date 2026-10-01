@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import LoadingAnimation from "@components/global/LoadingAnimation";
-import BorderedButton from "@ds/BorderedButton";
+import Button from "@ds/Button";
 import { CONVERSATION_STATE, type ConversationState } from "@src/const";
 import { cancelGenerationApi } from "@helpers/api/ai";
 
@@ -8,13 +8,14 @@ import { cancelGenerationApi } from "@helpers/api/ai";
  * between chunks, so the pending invoke rejects shortly after. */
 export function CancelGenerationButton() {
 	return (
-		<BorderedButton
+		<Button
+			variant="bordered"
 			onClick={() => {
 				cancelGenerationApi().catch((e) => console.error("cancel failed", e));
 			}}
 		>
 			Cancel
-		</BorderedButton>
+		</Button>
 	);
 }
 
