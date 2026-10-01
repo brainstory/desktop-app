@@ -103,6 +103,7 @@ export function ChatSection({
 		fetchedParentRef: persistence.fetchedParentRef,
 		setIdeaId: persistence.setIdeaId,
 		setCurrConversation,
+		markPersisted: persistence.markPersisted,
 		setConversationState: (s) => setConvStateRef.current(s),
 		onParentIdea: fetchParentIdea,
 		onFatalError: setFatalError
@@ -118,6 +119,7 @@ export function ChatSection({
 		onError: setAiError,
 		conversationEndCallbacks,
 		setSaveState: persistence.setSaveState,
+		saveResult: persistence.saveResult,
 		setResult
 	});
 

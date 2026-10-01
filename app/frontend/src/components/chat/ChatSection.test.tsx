@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { ChatSection } from "./ChatSection";
@@ -19,6 +20,7 @@ describe("ChatSection", () => {
 	});
 	afterEach(() => {
 		setUrl("");
+		vi.useRealTimers();
 	});
 
 	it("shows the draft-not-found error section when the draft can't be loaded", async () => {
@@ -32,5 +34,28 @@ describe("ChatSection", () => {
 		render(<ChatSection draftId="missing" conversationEndCallbacks={() => {}} />);
 		expect(await screen.findByText("Draft idea not found")).toBeInTheDocument();
 		expect(screen.queryByText(/__DRAFT_NOT_FOUND__/)).not.toBeInTheDocument();
+	});
+
+	it("does not write a freshly loaded draft straight back to the database", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		setUrl("?id=draft-1");
+		mockInvoke({
+			get_runtime_status: () => readyStatus,
+			get_idea: () => ({
+				id: "draft-1",
+				transcript: [
+					{ role: "assistant", content: "q1" },
+					{ role: "user", content: "a1" },
+					{ role: "assistant", content: "q2" },
+					{ role: "user", content: "a2" },
+					{ role: "assistant", content: "q3" }
+				]
+			}),
+			update_idea: () => ({ id: "draft-1" })
+		});
+		render(<ChatSection draftId="draft-1" conversationEndCallbacks={() => {}} />);
+		expect(await screen.findByText("q3")).toBeInTheDocument();
+		await act(() => vi.advanceTimersByTimeAsync(1000));
+		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "update_idea")).toHaveLength(0);
 	});
 });

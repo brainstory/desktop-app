@@ -4,7 +4,7 @@
  * ChatSection so the component handles rendering + generation flow.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@src/types";
 import { CHAT_SAVE_STATE } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
@@ -51,8 +51,84 @@ export function useIdeaPersistence(
 	// refs so the effects see live values without re-running
 	const creatingIdeaRef = useRef(false);
 	const conversationLengthRef = useRef(conversation.length);
-	const autosaveSeqRef = useRef(0);
 	const fetchedParentRef = useRef<string | null>(null);
+	const onErrorRef = useRef(onError);
+	useEffect(() => {
+		onErrorRef.current = onError;
+	});
+
+	// Autosave plumbing. Every write goes through one promise chain, so at
+	// most one updateIdeaApi is in flight and writes land in order; the
+	// pending slot coalesces bursts so the latest conversation wins.
+	const pendingSaveRef = useRef<{ ideaId: string; conversation: ChatMessage[] } | null>(null);
+	const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+	const drainQueuedRef = useRef(false);
+	const debounceRef = useRef<number | null>(null);
+	/** the conversation already in the database (created, loaded or saved):
+	 * autosaving it again would be a redundant write */
+	const persistedRef = useRef<ChatMessage[] | null>(null);
+
+	const markPersisted = useCallback((saved: ChatMessage[]) => {
+		persistedRef.current = saved;
+	}, []);
+
+	const flushAutosave = useCallback(() => {
+		if (debounceRef.current !== null) {
+			window.clearTimeout(debounceRef.current);
+			debounceRef.current = null;
+		}
+		// a queued (not yet started) step reads the pending slot when it
+		// runs, so it already covers this flush
+		if (!pendingSaveRef.current || drainQueuedRef.current) return;
+		drainQueuedRef.current = true;
+		saveQueueRef.current = saveQueueRef.current.then(async () => {
+			drainQueuedRef.current = false;
+			const job = pendingSaveRef.current;
+			pendingSaveRef.current = null;
+			if (!job) return;
+			setSaveState(CHAT_SAVE_STATE.SAVING);
+			try {
+				await updateIdeaApi(job.ideaId, job.conversation);
+				persistedRef.current = job.conversation;
+				// a newer save is queued: leave the label to it
+				if (pendingSaveRef.current) return;
+				// don't show SAVED visual for saving the user message so
+				// the switch from SAVING to SAVED doesn't happen twice
+				if (job.conversation[job.conversation.length - 1]?.role === "assistant") {
+					setSaveState(CHAT_SAVE_STATE.SUCCESS);
+				}
+			} catch (e) {
+				if (pendingSaveRef.current) return;
+				setSaveState(CHAT_SAVE_STATE.FAILED);
+				onErrorRef.current(`Autosave failed: ${normalizeApiError(e)}`);
+			}
+		});
+	}, []);
+
+	/** Save the final result, ordered after any autosave already in flight
+	 * (a late autosave would otherwise land after it). Rejects on failure. */
+	const saveResult = useCallback(
+		(
+			id: string,
+			finalConversation: ChatMessage[],
+			resultText: string,
+			structuredResult: unknown
+		): Promise<void> => {
+			if (debounceRef.current !== null) {
+				window.clearTimeout(debounceRef.current);
+				debounceRef.current = null;
+			}
+			// the final write carries the full conversation
+			pendingSaveRef.current = null;
+			const write = saveQueueRef.current.then(async () => {
+				await updateIdeaApi(id, finalConversation, resultText, structuredResult);
+				persistedRef.current = finalConversation;
+			});
+			saveQueueRef.current = write.catch(() => {});
+			return write;
+		},
+		[]
+	);
 
 	useEffect(() => {
 		conversationLengthRef.current = conversation.length;
@@ -69,9 +145,12 @@ export function useIdeaPersistence(
 	useEffect(() => {
 		if (readyToCreateIdea && !creatingIdeaRef.current) {
 			creatingIdeaRef.current = true;
-			createIdeaApi(result, conversation, chatType, parentIdParam, dailyLogId)
+			const createdWith = conversation;
+			createIdeaApi(result, createdWith, chatType, parentIdParam, dailyLogId)
 				.then((createdIdeaId) => {
 					creatingIdeaRef.current = false;
+					// the create already stored this conversation
+					persistedRef.current = createdWith;
 					setIdeaId(createdIdeaId);
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
@@ -88,33 +167,31 @@ export function useIdeaPersistence(
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [readyToCreateIdea, dailyLogId, conversation]);
 
-	// Autosave: debounced, sequenced (a stale completion can never
-	// overwrite the top-bar state of a newer save)
+	// Autosave: debounced; the write itself is serialized by flushAutosave
 	useEffect(() => {
 		if (!ideaId || conversation.length < minLength) {
 			return;
 		}
-		const seq = ++autosaveSeqRef.current;
-		const timer = window.setTimeout(() => {
-			setSaveState(CHAT_SAVE_STATE.SAVING);
-			updateIdeaApi(ideaId, conversation)
-				.then(() => {
-					if (seq !== autosaveSeqRef.current) return;
-					// don't show SAVED visual for saving the user message so
-					// the switch from SAVING to SAVED doesn't happen twice
-					if (conversation[conversation.length - 1]?.role === "assistant") {
-						setSaveState(CHAT_SAVE_STATE.SUCCESS);
-					}
-				})
-				.catch((e) => {
-					if (seq !== autosaveSeqRef.current) return;
-					setSaveState(CHAT_SAVE_STATE.FAILED);
-					onError(`Autosave failed: ${normalizeApiError(e)}`);
-				});
-		}, 400);
-		return () => window.clearTimeout(timer);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [conversation, ideaId]);
+		if (conversation === persistedRef.current) {
+			return;
+		}
+		pendingSaveRef.current = { ideaId, conversation };
+		if (debounceRef.current !== null) {
+			window.clearTimeout(debounceRef.current);
+		}
+		debounceRef.current = window.setTimeout(flushAutosave, 400);
+	}, [conversation, ideaId, minLength, flushAutosave]);
+
+	// Never drop the last change: flush the pending save when the chat
+	// unmounts or the page goes away (Astro navigations are full page
+	// loads, so React never unmounts on them)
+	useEffect(() => {
+		window.addEventListener("pagehide", flushAutosave);
+		return () => {
+			window.removeEventListener("pagehide", flushAutosave);
+			flushAutosave();
+		};
+	}, [flushAutosave]);
 
 	return {
 		ideaId,
@@ -122,8 +199,9 @@ export function useIdeaPersistence(
 		saveState,
 		setSaveState,
 		readyToCreateIdea,
-		autosaveSeqRef,
 		conversationLengthRef,
+		markPersisted,
+		saveResult,
 		getIdeaApi,
 		updateIdeaApi,
 		onFatalError,
@@ -141,6 +219,8 @@ export function useDraftLoader(
 		fetchedParentRef: React.RefObject<string | null>;
 		setIdeaId: (id: string | undefined) => void;
 		setCurrConversation: (next: ChatMessage[]) => void;
+		/** tell the autosave the loaded transcript is already stored */
+		markPersisted: (saved: ChatMessage[]) => void;
 		setConversationState: (state: string) => void;
 		onParentIdea: (parentId: string) => void;
 		onFatalError: (error: ChatFatalError) => void;
@@ -150,6 +230,7 @@ export function useDraftLoader(
 		conversationLengthRef,
 		fetchedParentRef,
 		setCurrConversation,
+		markPersisted,
 		setConversationState,
 		onParentIdea,
 		onFatalError
@@ -170,6 +251,7 @@ export function useDraftLoader(
 					// sees the mount-time conversation): restores a resumed
 					// draft, but never clobbers newer messages.
 					if (savedConversation.length > conversationLengthRef.current) {
+						markPersisted(savedConversation);
 						setCurrConversation(savedConversation);
 						const lastMessage = savedConversation.at(-1);
 						if (lastMessage?.role === "user") {

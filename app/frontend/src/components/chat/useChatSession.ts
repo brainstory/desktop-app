@@ -15,7 +15,6 @@ import {
 import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 import { markGettingStartedDone } from "@helpers/storage";
-import { updateIdeaApi } from "@helpers/api/idea";
 
 export interface ChatSessionOptions {
 	chatType: string;
@@ -30,6 +29,13 @@ export interface ChatSessionOptions {
 	onError: (message: string) => void;
 	conversationEndCallbacks: () => void;
 	setSaveState: (state: string) => void;
+	/** persist the final result (ordered after in-flight autosaves) */
+	saveResult: (
+		ideaId: string,
+		conversation: ChatMessage[],
+		result: string,
+		structuredResult: unknown
+	) => Promise<void>;
 	setResult: (result: string) => void;
 }
 
@@ -45,6 +51,7 @@ export function useChatSession(
 		fromGuideParam,
 		onError,
 		conversationEndCallbacks,
+		saveResult,
 		setResult
 	} = options;
 
@@ -108,7 +115,7 @@ export function useChatSession(
 			structuredResult: unknown
 		): Promise<void> => {
 			try {
-				await updateIdeaApi(ideaId, currConversation, result, structuredResult);
+				await saveResult(ideaId, currConversation, result, structuredResult);
 				setReadyToSave(true);
 			} catch (e) {
 				onError(`Could not save your summary: ${normalizeApiError(e)}`);
