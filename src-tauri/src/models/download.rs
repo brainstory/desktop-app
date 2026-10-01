@@ -286,6 +286,72 @@ pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, Strin
 	Ok(removed)
 }
 
+/// How long a resumable `.part` is kept around waiting for its download
+/// to be retried before the startup sweep reclaims the disk space.
+const PART_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Startup cleanup of `.part` staging files. Downloads resume from a
+/// `.part` across restarts, so only files that can never be resumed go:
+/// - in the legacy app models dir, every `.part` (downloads no longer
+///   stage there; leftovers are interrupted migration copies, which
+///   restart from scratch anyway);
+/// - in the blobs dir of a catalog repo, a `.part` that is not
+///   `<pinned sha>.part` of a catalog model, is not shorter than that
+///   model, or has not been touched for [`PART_MAX_AGE`].
+///
+/// Repos that are not in the catalog belong to other HuggingFace tools
+/// and are never touched.
+pub fn sweep_stale_part_files(models_dir: &Path, cache_dir: &Path) {
+	let is_part = |path: &Path| path.extension().map(|e| e == "part").unwrap_or(false);
+	let remove = |path: &Path| {
+		log::warn!("removing leftover partial download {}", path.display());
+		if let Err(e) = std::fs::remove_file(path) {
+			log::warn!("could not remove {}: {e}", path.display());
+		}
+	};
+	for entry in std::fs::read_dir(models_dir)
+		.into_iter()
+		.flatten()
+		.flatten()
+	{
+		if is_part(&entry.path()) {
+			remove(&entry.path());
+		}
+	}
+
+	let specs: Vec<&ModelSpec> = LLM_MODELS.iter().chain(STT_MODELS.iter()).collect();
+	let mut repos: Vec<&str> = specs.iter().map(|s| s.repo).collect();
+	repos.sort_unstable();
+	repos.dedup();
+	for repo in repos {
+		let blobs = cache_dir
+			.join(format!("models--{}", repo.replace('/', "--")))
+			.join("blobs");
+		for entry in std::fs::read_dir(&blobs).into_iter().flatten().flatten() {
+			let path = entry.path();
+			if !is_part(&path) {
+				continue;
+			}
+			let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+			let Some(spec) = specs.iter().find(|s| s.repo == repo && s.sha256 == stem) else {
+				remove(&path);
+				continue;
+			};
+			let meta = entry.metadata().ok();
+			let resumable = meta.as_ref().is_some_and(|m| m.len() < spec.size_bytes);
+			let fresh = meta
+				.and_then(|m| m.modified().ok())
+				.and_then(|t| t.elapsed().ok())
+				.is_some_and(|age| age < PART_MAX_AGE);
+			if resumable && fresh {
+				log::info!("keeping partial download of {} for a resume", spec.id);
+			} else {
+				remove(&path);
+			}
+		}
+	}
+}
+
 /// The `.part` staging path for a download destination: `<file>.part`
 /// appended to the full name (with_extension would collapse `x.bin` and
 /// `x.gguf` to the same `x.part`).
@@ -1330,4 +1396,69 @@ fn part_paths_do_not_collide_across_extensions() {
 	assert_eq!(bin, Path::new("/m/x.bin.part"));
 	assert_eq!(gguf, Path::new("/m/x.gguf.part"));
 	assert_ne!(bin, gguf, "staging names must be distinct");
+}
+
+#[cfg(test)]
+mod sweep_tests {
+	use super::{sweep_stale_part_files, LLM_MODELS, PART_MAX_AGE};
+
+	fn touch(path: &std::path::Path, bytes: usize) {
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(path, vec![0u8; bytes]).unwrap();
+	}
+
+	#[test]
+	fn startup_sweep_keeps_resumable_parts_and_drops_the_rest() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let models = dir.path().join("models");
+		let cache = dir.path().join("hub");
+		let spec = &LLM_MODELS[0];
+		let blobs = cache
+			.join(format!("models--{}", spec.repo.replace('/', "--")))
+			.join("blobs");
+
+		// a quit mid-download: this is what the next launch resumes
+		let resumable = blobs.join(format!("{}.part", spec.sha256));
+		touch(&resumable, 1000);
+		// a .part under a hash no catalog entry pins (an old pin)
+		let stale_pin = blobs.join("deadbeef.part");
+		touch(&stale_pin, 10);
+		// legacy app-dir staging file (interrupted migration copy)
+		let legacy = models.join("whatever.gguf.part");
+		touch(&legacy, 10);
+		// another tool's repo: not ours to clean
+		let foreign = cache
+			.join("models--someone--else")
+			.join("blobs")
+			.join("x.part");
+		touch(&foreign, 10);
+		// finished blobs are never touched
+		let blob = blobs.join(spec.sha256);
+		touch(&blob, 10);
+
+		sweep_stale_part_files(&models, &cache);
+
+		assert!(
+			resumable.exists(),
+			"a fresh catalog .part is kept for resume"
+		);
+		assert!(!stale_pin.exists(), "a .part nothing can resume is removed");
+		assert!(!legacy.exists(), "legacy app-dir staging files are removed");
+		assert!(
+			foreign.exists(),
+			"other tools' cache entries are left alone"
+		);
+		assert!(blob.exists());
+
+		// once it has sat untouched for too long it is reclaimed
+		let old = std::time::SystemTime::now() - PART_MAX_AGE - std::time::Duration::from_secs(60);
+		std::fs::File::options()
+			.write(true)
+			.open(&resumable)
+			.unwrap()
+			.set_modified(old)
+			.unwrap();
+		sweep_stale_part_files(&models, &cache);
+		assert!(!resumable.exists(), "an abandoned .part is reclaimed");
+	}
 }

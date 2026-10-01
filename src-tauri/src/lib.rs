@@ -151,7 +151,9 @@ pub fn run() {
 				}
 			};
 			std::fs::create_dir_all(data_dir.join("models")).ok();
-			sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());
+			// Drop only .part files that can never be resumed; a download
+			// interrupted by a quit continues from its .part next time.
+			models::sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());
 			prompts::init_overrides(&data_dir);
 
 			let db = match open_database(&data_dir) {
@@ -274,41 +276,6 @@ pub fn run() {
 				crate::force_exit();
 			}
 		});
-}
-
-/// Remove `.part` files left behind by a quit (or crash) mid-download; the
-/// in-process error path can't clean up when the process itself is gone.
-fn sweep_stale_part_files(models_dir: &std::path::Path, cache_dir: &std::path::Path) {
-	for dir in sweep_dirs(models_dir, cache_dir) {
-		let Ok(entries) = std::fs::read_dir(&dir) else {
-			continue;
-		};
-		for entry in entries.flatten() {
-			let path = entry.path();
-			let is_part = path.extension().map(|e| e == "part").unwrap_or(false);
-			if is_part {
-				log::warn!("removing leftover partial download {}", path.display());
-				if let Err(e) = std::fs::remove_file(&path) {
-					log::warn!("could not remove {}: {e}", path.display());
-				}
-			}
-		}
-	}
-}
-
-/// Directories that can hold `.part` staging files: the legacy app
-/// models dir and every repo's blobs dir in the hub cache.
-fn sweep_dirs(
-	models_dir: &std::path::Path,
-	cache_dir: &std::path::Path,
-) -> Vec<std::path::PathBuf> {
-	let mut dirs = vec![models_dir.to_path_buf()];
-	if let Ok(repos) = std::fs::read_dir(cache_dir) {
-		for repo in repos.flatten() {
-			dirs.push(repo.path().join("blobs"));
-		}
-	}
-	dirs
 }
 
 /// Open the database, quarantining a *corrupt* file instead of failing to

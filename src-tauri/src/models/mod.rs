@@ -15,6 +15,7 @@ pub use catalog::{find_model, ModelKind, ModelSpec, LLM_MODELS, STT_MODELS};
 pub use download::{
 	download_model_file, hf_blob_path, hf_cache_model_path, hf_hub_cache_candidates,
 	materialize_snapshot, migrate_legacy_models, model_url, primary_hub_cache, remove_cached_model,
+	sweep_stale_part_files,
 };
 pub use state::{AppState, EngineState, EngineStatus, Runtime};
 
