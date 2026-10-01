@@ -7,9 +7,11 @@ on:
 permissions:
   contents: read
 
-# one release pipeline per tag; never cancel an in-flight release midway
+# one release pipeline per tag; never cancel an in-flight release midway.
+# Must never equal the group ci.yml takes when called from here (see
+# ci.yml; "release-<ref>" matched its "Release-<ref>" case-insensitively).
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-pipeline-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

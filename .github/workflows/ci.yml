@@ -10,8 +10,13 @@ on:
   schedule:
     - cron: "0 6 * * 1"
 
+# When release.yml calls this file, github.workflow is the caller's name
+# ("Release"), so a plain workflow-ref group collided with release.yml's
+# own group (group names compare case-insensitively) and GitHub cancelled
+# the call as a deadlock. The ci- prefix keeps them apart; event_name
+# keeps the weekly schedule and a push to main from cancelling each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
