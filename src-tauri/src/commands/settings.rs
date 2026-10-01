@@ -3,7 +3,8 @@ use tauri::{Manager, State};
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::keys;
 use crate::types::{
-	AppPresence, LogSettingsItem, NotificationSettingsItem, UserSettings, UserSettingsUser,
+	AppPresence, LogSettingsItem, NotificationSettingsItem, UpdatesSettings, UserSettings,
+	UserSettingsUser,
 };
 use crate::AppState;
 
@@ -67,6 +68,9 @@ pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSetting
 		log,
 		notifications,
 		presence,
+		updates: UpdatesSettings {
+			enabled: updates_enabled(&state),
+		},
 	})
 }
 
@@ -325,4 +329,61 @@ pub fn set_app_presence(
 	)?;
 	crate::apply_presence(app.app_handle(), dock, tray);
 	Ok(())
+}
+
+/// Automatic update checks are on unless the user turned them off.
+pub(crate) fn updates_enabled(state: &AppState) -> bool {
+	state
+		.db
+		.get_setting(keys::setting::UPDATES_ENABLED)
+		.map(|v| v == "true")
+		.unwrap_or(true)
+}
+
+fn store_updates_enabled(state: &AppState, enabled: bool) -> Result<(), String> {
+	state.db.set_setting(
+		keys::setting::UPDATES_ENABLED,
+		if enabled { "true" } else { "false" },
+	)
+}
+
+/// Cheap read for the updater banner, which checks it before every
+/// (throttled) update check.
+#[tauri::command]
+pub async fn get_updates_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+	Ok(updates_enabled(&state))
+}
+
+/// Opt in to / out of automatic update checks.
+#[tauri::command]
+pub async fn set_updates_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+	store_updates_enabled(&state, enabled)
+}
+
+#[cfg(test)]
+mod updates_tests {
+	use super::{store_updates_enabled, updates_enabled};
+	use crate::AppState;
+
+	fn state() -> (AppState, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
+		let db = crate::db::Db::open(&dir.path().join("t.db")).expect("db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	#[test]
+	fn updates_are_enabled_by_default() {
+		let (state, _dir) = state();
+		assert!(updates_enabled(&state));
+	}
+
+	#[test]
+	fn updates_enabled_round_trips() {
+		let (state, _dir) = state();
+		store_updates_enabled(&state, false).expect("store false");
+		assert!(!updates_enabled(&state));
+		store_updates_enabled(&state, true).expect("store true");
+		assert!(updates_enabled(&state));
+	}
 }

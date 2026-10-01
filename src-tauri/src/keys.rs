@@ -17,6 +17,9 @@ pub mod setting {
 	pub const SHOW_IN_DOCK: &str = "show_in_dock";
 	pub const SHOW_IN_TRAY: &str = "show_in_tray";
 
+	/// automatic update checks ("false" = opted out; unset = on)
+	pub const UPDATES_ENABLED: &str = "updates_enabled";
+
 	pub const AI_LLM_MODE: &str = "ai_llm_mode";
 	pub const AI_LLM_MODEL: &str = "ai_llm_model";
 	pub const AI_STT_MODEL: &str = "ai_stt_model";
@@ -53,6 +56,7 @@ mod tests {
 			setting::ENABLED_LOG_QUESTION_IDS,
 			setting::SHOW_IN_DOCK,
 			setting::SHOW_IN_TRAY,
+			setting::UPDATES_ENABLED,
 			setting::AI_LLM_MODE,
 			setting::AI_LLM_MODEL,
 			setting::AI_STT_MODEL,

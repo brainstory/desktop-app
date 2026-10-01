@@ -92,6 +92,8 @@ pub fn run() {
 			commands::settings::get_user_settings,
 			commands::settings::save_user_settings,
 			commands::settings::set_app_presence,
+			commands::settings::get_updates_enabled,
+			commands::settings::set_updates_enabled,
 			commands::settings::get_ai_settings,
 			commands::settings::save_ai_settings,
 			commands::settings::test_llm_endpoint,

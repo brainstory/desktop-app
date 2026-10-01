@@ -30,6 +30,8 @@ export const COMMANDS = {
 	getUserSettings: "get_user_settings",
 	saveUserSettings: "save_user_settings",
 	setAppPresence: "set_app_presence",
+	getUpdatesEnabled: "get_updates_enabled",
+	setUpdatesEnabled: "set_updates_enabled",
 	getAiSettings: "get_ai_settings",
 	saveAiSettings: "save_ai_settings",
 	testLlmEndpoint: "test_llm_endpoint",

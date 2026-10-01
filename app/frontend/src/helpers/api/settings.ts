@@ -44,6 +44,9 @@ export interface UserSettingsResponse {
 		dock: boolean;
 		tray: boolean;
 	};
+	updates: {
+		enabled: boolean;
+	};
 }
 
 /** Get user settings */
@@ -59,6 +62,7 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 			enabled: boolean;
 		}[];
 		presence: { dock: boolean; tray: boolean };
+		updates?: { enabled: boolean };
 	}>(COMMANDS.getUserSettings);
 
 	const user = {
@@ -88,6 +92,9 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 		presence: {
 			dock: response.presence?.dock ?? true,
 			tray: response.presence?.tray ?? true
+		},
+		updates: {
+			enabled: response.updates?.enabled ?? true
 		}
 	};
 }
@@ -95,6 +102,16 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 /** Toggle dock / menu-bar (tray) icon visibility */
 export function setAppPresenceApi(dock: boolean, tray: boolean): Promise<void> {
 	return invoke(COMMANDS.setAppPresence, { dock, tray });
+}
+
+/** Whether automatic update checks are on (default true). */
+export function getUpdatesEnabledApi(): Promise<boolean> {
+	return invoke(COMMANDS.getUpdatesEnabled);
+}
+
+/** Opt in to / out of automatic update checks. */
+export function setUpdatesEnabledApi(enabled: boolean): Promise<void> {
+	return invoke(COMMANDS.setUpdatesEnabled, { enabled });
 }
 
 /** Save user settings */

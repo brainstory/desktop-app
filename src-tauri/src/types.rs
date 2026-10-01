@@ -103,6 +103,14 @@ pub struct UserSettings {
 	pub log: Vec<LogSettingsItem>,
 	pub notifications: Vec<NotificationSettingsItem>,
 	pub presence: AppPresence,
+	pub updates: UpdatesSettings,
+}
+
+/// Automatic update checks (the frontend updater banner reads this).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesSettings {
+	pub enabled: bool,
 }
 
 /// Where the app shows up on the desktop (macOS).
