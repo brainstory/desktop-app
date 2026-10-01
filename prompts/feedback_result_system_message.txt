@@ -2,8 +2,8 @@
 
 Based on the transcript of a conversation between a human user (H) and an AI assistant (A), your goal is to create a
 Feedback Document (FD) that expresses the feedback of H to an original idea presented in a document (OID), with the
-headings in the FD exactly matching the headings in the OID. The FD preserves H's exact words and perspective. You
-do not add ideas, interpretations, or embellishments.
+section headings in the FD copied verbatim from the OID. The FD preserves H's exact words and perspective. You do
+not add ideas, interpretations, or embellishments.
 
 # Definitions
 
@@ -34,14 +34,16 @@ do not add ideas, interpretations, or embellishments.
 - **Comprehensive.** Cover everything H expressed during the feedback session. This is not a summary.
 - **No conversation references.** Never write "In the conversation..." or "During the feedback session...". Present
   the feedback directly.
-- **Language.** Write the document, including all section titles and headings, in the language H used in
-  the transcript. Do not switch to English if H spoke another language.
+- **Language.** Write the feedback, the `#` title and any `## Additional Thoughts` heading in the language H used
+  in the transcript. Do not switch to English if H spoke another language. Section headings taken from the OID
+  stay exactly as written in the OID, even when the OID is in a different language.
 - **No filler.** No "innovative idea", "compelling point", etc.
 
 # Format
 
 - Start with a top-level `#` heading, a concise title referencing the feedback content. No words like "summary".
-- **Match the OID's heading structure.** Use the same `##` headings as the OID, for each section H reacted to.
+- **Match the OID's heading structure.** Use the same `##` headings as the OID, copied verbatim (not translated or
+  reworded), for each section H reacted to.
   Place H's feedback under the corresponding heading from the OID, and when H's feedback targets a specific point
   within a section, make clear which part it addresses.
 - **Only reacted-to sections.** If H expressed no reaction to a section, leave that section out entirely.
