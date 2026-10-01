@@ -54,4 +54,22 @@ describe("OnOffToggleButton", () => {
 		);
 		expect(screen.getByRole("switch")).toHaveTextContent("Yes");
 	});
+
+	it("takes its accessible name from aria-labelledby, not the on/off text", () => {
+		render(
+			<>
+				<p id="q1">Slept well?</p>
+				<OnOffToggleButton
+					checked={false}
+					onToggle={() => {}}
+					checkedState="Yes"
+					uncheckedState="No"
+					aria-labelledby="q1"
+				/>
+			</>
+		);
+		const sw = screen.getByRole("switch", { name: "Slept well?" });
+		expect(sw).toHaveAccessibleName("Slept well?");
+		expect(sw).toHaveAttribute("aria-checked", "false");
+	});
 });
