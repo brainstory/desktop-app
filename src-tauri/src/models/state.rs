@@ -146,7 +146,10 @@ impl AppState {
 	/// Persist settings and refresh the cache in one step, so a failed
 	/// write never leaves a cache disagreeing with the database.
 	pub fn save_ai_settings(&self, settings: &AiSettings) -> Result<(), String> {
-		settings.save(&self.db)?;
+		// the cache mirrors what is stored, so secrets compare against it
+		// instead of a fresh keychain read per save
+		let previous = self.ai_settings();
+		settings.save(&self.db, &previous)?;
 		*self
 			.ai_settings_cache
 			.write()

@@ -277,9 +277,13 @@ impl AiSettings {
 		Ok(())
 	}
 
-	/// Persist these settings. Err means the settings row or one of the
-	/// secrets could not be written - callers must not report success.
-	pub fn save(&self, db: &Db) -> Result<(), String> {
+	/// Persist these settings. `previous` is what is stored now (the
+	/// AppState cache, or a fresh load): secrets equal to it are left
+	/// alone, so a save does no keychain round-trips (each is a syscall
+	/// and can trigger a macOS permission prompt) for secrets the user
+	/// did not touch. Err means the settings row or one of the secrets
+	/// could not be written - callers must not report success.
+	pub fn save(&self, db: &Db, previous: &AiSettings) -> Result<(), String> {
 		db.set_settings(&[
 			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
 			(setting::AI_LLM_MODEL, self.llm_model.clone()),
@@ -292,26 +296,32 @@ impl AiSettings {
 			(setting::EXT_STT_BASE_URL, self.ext_stt_base_url.clone()),
 			(setting::EXT_STT_MODEL, self.ext_stt_model.clone()),
 		])?;
-		let save_secret = |secret: crate::secrets::Secret, value: &str| -> Result<(), String> {
-			let stored = crate::secrets::load(secret, db);
-			// Each keychain operation is a separate syscall round-trip
-			// (and on macOS can trigger a permission prompt), so only
-			// touch secrets whose value actually changed.
-			if stored.as_deref() == Some(value) {
-				return Ok(());
-			}
-			if value.is_empty() {
-				if stored.is_some() {
-					crate::secrets::clear(secret, db)?;
+		let save_secret =
+			|secret: crate::secrets::Secret, value: &str, stored: &str| -> Result<(), String> {
+				if value == stored {
+					return Ok(());
 				}
-				Ok(())
-			} else {
-				crate::secrets::store(secret, value, db)
-			}
-		};
-		save_secret(crate::secrets::Secret::HfToken, &self.hf_token)?;
-		save_secret(crate::secrets::Secret::ExtLlmApiKey, &self.ext_llm_api_key)?;
-		save_secret(crate::secrets::Secret::ExtSttApiKey, &self.ext_stt_api_key)?;
+				if value.is_empty() {
+					crate::secrets::clear(secret, db)
+				} else {
+					crate::secrets::store(secret, value, db)
+				}
+			};
+		save_secret(
+			crate::secrets::Secret::HfToken,
+			&self.hf_token,
+			&previous.hf_token,
+		)?;
+		save_secret(
+			crate::secrets::Secret::ExtLlmApiKey,
+			&self.ext_llm_api_key,
+			&previous.ext_llm_api_key,
+		)?;
+		save_secret(
+			crate::secrets::Secret::ExtSttApiKey,
+			&self.ext_stt_api_key,
+			&previous.ext_stt_api_key,
+		)?;
 		Ok(())
 	}
 }
@@ -386,9 +396,10 @@ mod tests {
 	fn stt_language_defaults_to_en_us_and_round_trips() {
 		let (db, _dir) = temp_db("lang");
 		let mut s = AiSettings::load(&db);
+		let previous = s.clone();
 		assert_eq!(s.stt_language, "en-US");
 		s.stt_language = "de-DE".into();
-		s.save(&db).expect("save");
+		s.save(&db, &previous).expect("save");
 		assert_eq!(AiSettings::load(&db).stt_language, "de-DE");
 	}
 
@@ -403,8 +414,9 @@ mod tests {
 			let conn = rusqlite::Connection::open(&path).unwrap();
 			conn.execute_batch("DROP TABLE settings").unwrap();
 		}
-		let err = AiSettings::load(&db)
-			.save(&db)
+		let loaded = AiSettings::load(&db);
+		let err = loaded
+			.save(&db, &loaded)
 			.expect_err("save must surface the failure instead of logging it");
 		assert!(
 			err.contains("failed to save setting"),
@@ -430,10 +442,11 @@ mod tests {
 			)
 			.unwrap();
 		}
-		let mut settings = AiSettings::load(&db);
+		let previous = AiSettings::load(&db);
+		let mut settings = previous.clone();
 		settings.hf_token = String::new();
 		let err = settings
-			.save(&db)
+			.save(&db, &previous)
 			.expect_err("a secret that survives a clear must not report success");
 		assert!(err.contains("database is locked"), "unexpected: {err}");
 		assert_eq!(
