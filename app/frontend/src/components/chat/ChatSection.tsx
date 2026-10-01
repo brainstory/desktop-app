@@ -158,7 +158,7 @@ export function ChatSection({
 	} else if (fatalError === "parent-not-found") {
 		return (
 			<ErrorSection
-				title="Shared idea not found"
+				title="Idea not found"
 				paragraphs={[
 					"The idea you were giving feedback on no longer exists in this library."
 				]}

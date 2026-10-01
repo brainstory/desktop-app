@@ -48,6 +48,25 @@ describe("ChatSection", () => {
 		expect(screen.queryByText(/__DRAFT_NOT_FOUND__/)).not.toBeInTheDocument();
 	});
 
+	it("shows 'Idea not found' when the idea to give feedback on is gone", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockChat({
+			get_idea: () => {
+				throw new Error("idea not found");
+			}
+		});
+		render(
+			<ChatSection
+				chatType="feedback"
+				parentIdParam="gone"
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		expect(await screen.findByText("Idea not found")).toBeInTheDocument();
+		expect(screen.queryByText(/Shared idea/)).not.toBeInTheDocument();
+		vi.mocked(console.error).mockRestore();
+	});
+
 	it("does not write a freshly loaded draft straight back to the database", async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		setUrl("?id=draft-1");
