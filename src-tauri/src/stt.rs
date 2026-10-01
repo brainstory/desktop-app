@@ -43,12 +43,40 @@ impl SttEngine {
 		for i in 0..n_segments {
 			if let Some(segment) = state.get_segment(i) {
 				if let Ok(text) = segment.to_str_lossy() {
-					transcript.push_str(&text);
+					if is_speech(&text, segment.no_speech_probability()) {
+						transcript.push_str(&text);
+					}
 				}
 			}
 		}
 		Ok(transcript.trim().to_string())
 	}
+}
+
+/// Whisper rates each segment's chance of being no speech at all. On
+/// silence and room noise (base.en) it says 0.86-0.95 while still
+/// emitting text ("you", "Sizzling."); real speech, even very quiet,
+/// rates below 0.1.
+const NO_SPEECH_DROP: f32 = 0.6;
+
+/// Whether a whisper segment is the user's words rather than what
+/// whisper makes of silence or noise.
+fn is_speech(segment: &str, no_speech_probability: f32) -> bool {
+	no_speech_probability <= NO_SPEECH_DROP && !is_non_speech_annotation(segment)
+}
+
+/// Whisper writes what it hears in silence or noise as a bracketed
+/// annotation segment ("[BLANK_AUDIO]", "[MUSIC]", "(wind blowing)").
+/// Those are not the user's words and must not reach the conversation.
+fn is_non_speech_annotation(segment: &str) -> bool {
+	let text = segment.trim();
+	let bracketed = |open: char, close: char| {
+		text.len() > 2
+			&& text.starts_with(open)
+			&& text.ends_with(close)
+			&& !text[1..text.len() - 1].contains([open, close])
+	};
+	bracketed('[', ']') || bracketed('(', ')')
 }
 
 /// Whisper's CPU thread count: one per physical core. Hyperthreads don't
@@ -258,7 +286,41 @@ pub async fn transcribe_external(
 
 #[cfg(test)]
 mod tests {
-	use super::{resample_to_16k, wav_to_samples, whisper_language};
+	use super::{
+		is_non_speech_annotation, is_speech, resample_to_16k, wav_to_samples, whisper_language,
+	};
+
+	#[test]
+	fn segments_whisper_rates_as_no_speech_are_dropped() {
+		// what base.en returned for digital silence, noise, and speech
+		assert!(!is_speech(" you", 0.94));
+		assert!(!is_speech(" Sizzling.", 0.86));
+		assert!(!is_speech(" [BLANK_AUDIO]", 0.0));
+		assert!(is_speech(" I'm testing the BrainStory app.", 0.01));
+		assert!(is_speech(" Yes.", 0.09));
+	}
+
+	#[test]
+	fn whisper_non_speech_annotations_are_dropped() {
+		for segment in [
+			" [BLANK_AUDIO]",
+			"[MUSIC]",
+			" (wind blowing)",
+			"[ Silence ]\n",
+		] {
+			assert!(is_non_speech_annotation(segment), "{segment:?}");
+		}
+		for segment in [
+			" I'm testing the app",
+			" [laughs] that was fun",
+			" it costs (about) ten",
+			" (a) and (b)",
+			"[]",
+			"",
+		] {
+			assert!(!is_non_speech_annotation(segment), "{segment:?}");
+		}
+	}
 
 	#[test]
 	fn whisper_language_uses_the_primary_subtag() {

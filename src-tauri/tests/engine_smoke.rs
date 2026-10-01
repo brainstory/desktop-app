@@ -23,6 +23,8 @@ fn whisper_and_llama_coexist() {
 		.transcribe(&samples, "en-US")
 		.expect("whisper transcription failed");
 	println!("whisper transcript of silence: {transcript:?}");
+	// whisper annotates silence ("[BLANK_AUDIO]"); none of it is speech
+	assert_eq!(transcript, "", "silence must transcribe to nothing");
 
 	// --- llama.cpp: generate a few tokens ---
 	let backend = Arc::new(
