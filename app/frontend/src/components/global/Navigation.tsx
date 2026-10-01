@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import UpdaterBanner from "@ds/UpdaterBanner";
 import PinkButton from "@ds/PinkButton";
 import TransparentButton from "@ds/TransparentButton";
+import { useMediaQuery } from "@src/hooks/useMediaQuery";
+import { cn } from "@helpers/cn";
 
 const buttons = [
 	{ icon: "add", text: "New", href: "/chat", id: "new-idea" },
@@ -18,11 +20,29 @@ function Navigation() {
 	);
 }
 
+const noopSubscribe = (): (() => void) => () => {};
+
+/** The current path, but only after hydration: the server render (and
+ * the first client pass) see null, so aria-current never mismatches. */
+function useClientPathname(): string | null {
+	return useSyncExternalStore(
+		noopSubscribe,
+		() => window.location.pathname,
+		() => null
+	);
+}
+
 function NavigationInner() {
 	const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 	const navButtons = buttons;
 	const openButtonRef = useRef<HTMLButtonElement | null>(null);
 	const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+	// Below `sm` the sidebar is an off-canvas drawer; at sm+ (always, in
+	// the desktop window) it is permanently visible. The server render
+	// assumes desktop so the sidebar is usable before hydration.
+	const isMobile = useMediaQuery("(max-width: 639px)", false);
+	const isHidden = isMobile && !isSidebarOpen;
+	const pathname = useClientPathname();
 
 	const handleOpenSidebar = () => {
 		setIsSidebarOpen(true);
@@ -74,12 +94,14 @@ function NavigationInner() {
 
 			{/* Sidebar */}
 			<aside
-				className={`top-0 left-0 z-40 w-64 h-full transition-transform sm:translate-x-0 fixed p-4 sm:pr-0 bg-stone-50 sm:sticky
-					${isSidebarOpen ? "" : "-translate-x-full"} `}
+				className={cn(
+					"top-0 left-0 z-40 w-64 h-full transition-transform sm:translate-x-0 fixed p-4 sm:pr-0 bg-stone-50 sm:sticky",
+					!isSidebarOpen && "-translate-x-full"
+				)}
 				aria-label="Sidebar"
-				// inert when closed: the off-screen drawer's links must not
-				// be focusable or clickable while hidden
-				inert={!isSidebarOpen ? true : undefined}
+				// inert only while actually hidden (closed mobile drawer): the
+				// off-screen links must not be focusable or clickable then
+				inert={isHidden ? true : undefined}
 			>
 				<a href="/" className="flex justify-center items-center mt-2 mb-6 sm:mb-8">
 					<img src="/logo.svg" className="h-8 mr-3 sm:h-12" alt="Brainstory Logo" />
@@ -119,9 +141,7 @@ function NavigationInner() {
 							);
 						}
 
-						const isActive =
-							typeof window !== "undefined" &&
-							window.location.pathname === button.href;
+						const isActive = pathname === button.href;
 						return (
 							<li key={button.id}>
 								<TransparentButton
