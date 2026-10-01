@@ -179,6 +179,55 @@ describe("IdeaResultContent feedback tab", () => {
 		expect(tab).toBeEnabled();
 		expect(screen.queryByRole("tab", { name: /Feedback \(/ })).not.toBeInTheDocument();
 	});
+
+	it("lists a draft as resumable (a feedback chat on this idea); finished feedback opens as before", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({
+				ideas: [feedbackChild("fd1", ""), feedbackChild("f1", "## Thoughts")]
+			})
+		});
+		render(<IdeaResultContent />);
+		await userEvent.setup().click(await screen.findByRole("tab", { name: "Feedback (1)" }));
+		const panel = screen.getByRole("tabpanel");
+
+		const draft = within(panel).getByRole("link", { name: /Feedback draft/ });
+		expect(draft).toHaveAttribute("href", "/chat?parentId=i1&id=fd1");
+		expect(draft).toHaveTextContent("said in fd1");
+
+		const finished = within(panel).getByRole("link", { name: "Feedback" });
+		expect(finished).toHaveAttribute("href", "/idea?id=f1");
+		// the finished one is not offered as a chat to resume
+		expect(within(panel).getAllByRole("link", { name: /Feedback draft/ })).toHaveLength(1);
+	});
+
+	it("deletes a draft from the tab without touching the finished feedback", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({
+				ideas: [feedbackChild("fd1", ""), feedbackChild("f1", "## Thoughts")]
+			}),
+			delete_idea: () => null
+		});
+		render(<IdeaResultContent />);
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole("tab", { name: "Feedback (1)" }));
+		await user.click(screen.getByRole("button", { name: "Delete draft" }));
+		await user.click(screen.getByRole("button", { name: "Confirm delete draft" }));
+		await vi.waitFor(() =>
+			expect(screen.queryByRole("link", { name: /Feedback draft/ })).not.toBeInTheDocument()
+		);
+		expect(vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "delete_idea")).toEqual([
+			["delete_idea", { ideaId: "fd1" }]
+		]);
+		expect(screen.getByRole("tab", { name: "Feedback (1)" })).toBeEnabled();
+		expect(screen.getByRole("link", { name: "Feedback" })).toHaveAttribute(
+			"href",
+			"/idea?id=f1"
+		);
+	});
 });
 
 describe("IdeaResultContent layout", () => {

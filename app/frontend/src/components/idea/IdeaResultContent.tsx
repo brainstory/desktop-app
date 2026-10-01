@@ -167,7 +167,17 @@ export default function IdeaResultContent() {
 			tabData.push({
 				label: feedbackCount > 0 ? `Feedback (${feedbackCount})` : "Feedback",
 				param: "feedback",
-				content: <IdeaBranches kids={ideaChildren} />
+				content: (
+					<IdeaBranches
+						kids={ideaChildren}
+						parentId={ideaId}
+						onDraftDeleted={(deletedId) =>
+							setIdeaChildren(
+								(prev) => prev?.filter((child) => child.id !== deletedId) ?? prev
+							)
+						}
+					/>
+				)
 			});
 		} else {
 			const tooltipText = isOwn
