@@ -58,10 +58,6 @@ export const CHAT_SAVE_STATE = {
 } as const;
 export type ChatSaveState = (typeof CHAT_SAVE_STATE)[keyof typeof CHAT_SAVE_STATE];
 
-export const ERROR_MESSAGE_MAP: Record<number, string> = {
-	469: "HttpError 469: Inappropriate input"
-};
-
 export const MIN_CONVERSATION_LENGTH_BEFORE_SAVE: Record<string, number> = {
 	DEFAULT: 4, // 4 messages = [assistant, user, assistant, user]
 	daily_intent: 2 // 2 messages = [assistant, user]
