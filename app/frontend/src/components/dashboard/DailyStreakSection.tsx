@@ -9,7 +9,6 @@ export default function DailyStreakSection() {
 	const [isLoaded, setIsLoaded] = useState(false);
 
 	useEffect(() => {
-		// TODO pulsing skeleton loading for text
 		getUserDailyStatusApi()
 			.then((resp) => {
 				setStreakCount(resp.streak);
