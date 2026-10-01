@@ -6,7 +6,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockInvoke } from "@src/test/mock-tauri";
 import { CONVERSATION_STATE } from "@src/const";
 import type { ChatMessage } from "@src/types";
-import { useChatSession, type ChatSessionOptions } from "./useChatSession";
+import {
+	chatSessionReducer,
+	initialChatSessionState,
+	useChatSession,
+	type ChatSessionEvent,
+	type ChatSessionOptions
+} from "./useChatSession";
 
 const q1: ChatMessage = { role: "assistant", content: "q1" };
 const a1: ChatMessage = { role: "user", content: "a1" };
@@ -198,5 +204,79 @@ describe("useChatSession", () => {
 		const first = result.current.handleGetResponse;
 		rerender();
 		expect(result.current.handleGetResponse).toBe(first);
+	});
+
+	describe("chatSessionReducer", () => {
+		const run = (...events: ChatSessionEvent[]) =>
+			events.reduce(chatSessionReducer, initialChatSessionState);
+
+		it("walks a voice turn: transcribe -> ready -> waiting -> idle", () => {
+			expect(run({ type: "transcriptionStarted" }).conversationState).toBe(
+				CONVERSATION_STATE.TranscribingUser
+			);
+			expect(
+				run({ type: "transcriptionStarted" }, { type: "userMessageReady" })
+					.conversationState
+			).toBe(CONVERSATION_STATE.ReadyToSendUserTranscript);
+			expect(run({ type: "coachRequested" }).conversationState).toBe(
+				CONVERSATION_STATE.WaitingForCoach
+			);
+			expect(
+				run({ type: "coachRequested" }, { type: "coachAnswered" }).conversationState
+			).toBe(CONVERSATION_STATE.Idle);
+		});
+
+		it("tracks the moderation resend flow", () => {
+			const flagged = run(
+				{ type: "coachRequested" },
+				{ type: "coachFlagged", transcript: "x" }
+			);
+			expect(flagged).toMatchObject({
+				conversationState: CONVERSATION_STATE.Idle,
+				isUserResendRequired: true,
+				inappropriateUserTranscript: "x"
+			});
+			expect(chatSessionReducer(flagged, { type: "coachAnswered" })).toMatchObject({
+				isUserResendRequired: false,
+				inappropriateUserTranscript: null
+			});
+		});
+
+		it("restores a draft to the right next step", () => {
+			expect(run({ type: "draftRestored", lastRole: "user" }).conversationState).toBe(
+				CONVERSATION_STATE.ReadyToSendUserTranscript
+			);
+			expect(run({ type: "draftRestored", lastRole: "assistant" }).conversationState).toBe(
+				CONVERSATION_STATE.Idle
+			);
+		});
+
+		it("tracks the summary: requested -> streamed -> saved, or back to idle", () => {
+			expect(
+				run(
+					{ type: "resultRequested" },
+					{ type: "resultStreamed" },
+					{ type: "resultSaved" }
+				)
+			).toMatchObject({
+				conversationState: CONVERSATION_STATE.FinishWithResult,
+				resultComplete: true,
+				readyToSave: true
+			});
+			expect(
+				run(
+					{ type: "resultRequested" },
+					{ type: "resultStreamed" },
+					{ type: "resultFailed" }
+				)
+			).toMatchObject({ conversationState: CONVERSATION_STATE.Idle, resultComplete: false });
+			expect(
+				run(
+					{ type: "resultRequested" },
+					{ type: "resultStreamed" },
+					{ type: "resultSaveFailed" }
+				).conversationState
+			).toBe(CONVERSATION_STATE.Idle);
+		});
 	});
 });

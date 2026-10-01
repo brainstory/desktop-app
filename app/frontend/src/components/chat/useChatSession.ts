@@ -4,7 +4,7 @@
  * Extracted from ChatSection.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useReducer } from "react";
 import type { ChatMessage } from "@src/types";
 import type { ParentIdea } from "@components/chat/types";
 import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
@@ -59,6 +59,96 @@ function reactionOptions(
 	};
 }
 
+/** Everything the session tracks besides the conversation itself. */
+export interface ChatSessionState {
+	conversationState: string;
+	/** moderation removed the last message; the user must reword it */
+	isUserResendRequired: boolean;
+	inappropriateUserTranscript: string | null;
+	/** the final summary is saved */
+	readyToSave: boolean;
+	/** the summary stream finished: the result text is final */
+	resultComplete: boolean;
+}
+
+/** The events that move the session between CONVERSATION_STATE values. */
+export type ChatSessionEvent =
+	| { type: "transcriptionStarted" }
+	| { type: "transcriptionFailed" }
+	| { type: "userMessageReady" }
+	| { type: "draftRestored"; lastRole: ChatMessage["role"] | undefined }
+	| { type: "coachRequested" }
+	| { type: "coachAnswered" }
+	| { type: "coachFlagged"; transcript: string }
+	| { type: "coachFailed" }
+	| { type: "resultRequested" }
+	| { type: "resultStreamed" }
+	| { type: "resultSaved" }
+	| { type: "resultSaveFailed" }
+	| { type: "resultFailed" };
+
+export const initialChatSessionState: ChatSessionState = {
+	conversationState: CONVERSATION_STATE.Start,
+	isUserResendRequired: false,
+	inappropriateUserTranscript: null,
+	readyToSave: false,
+	resultComplete: false
+};
+
+export function chatSessionReducer(
+	state: ChatSessionState,
+	event: ChatSessionEvent
+): ChatSessionState {
+	switch (event.type) {
+		case "transcriptionStarted":
+			return { ...state, conversationState: CONVERSATION_STATE.TranscribingUser };
+		case "transcriptionFailed":
+		case "coachFailed":
+			return { ...state, conversationState: CONVERSATION_STATE.Idle };
+		case "userMessageReady":
+			return { ...state, conversationState: CONVERSATION_STATE.ReadyToSendUserTranscript };
+		case "draftRestored":
+			// a draft that ends on the user's turn still owes them an answer
+			return {
+				...state,
+				conversationState:
+					event.lastRole === "user"
+						? CONVERSATION_STATE.ReadyToSendUserTranscript
+						: CONVERSATION_STATE.Idle
+			};
+		case "coachRequested":
+			return { ...state, conversationState: CONVERSATION_STATE.WaitingForCoach };
+		case "coachAnswered":
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.Idle,
+				isUserResendRequired: false,
+				inappropriateUserTranscript: null
+			};
+		case "coachFlagged":
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.Idle,
+				isUserResendRequired: true,
+				inappropriateUserTranscript: event.transcript
+			};
+		case "resultRequested":
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.FinishWithResult,
+				resultComplete: false
+			};
+		case "resultStreamed":
+			return { ...state, resultComplete: true };
+		case "resultSaved":
+			return { ...state, readyToSave: true };
+		case "resultSaveFailed":
+			return { ...state, conversationState: CONVERSATION_STATE.Idle };
+		case "resultFailed":
+			return { ...state, conversationState: CONVERSATION_STATE.Idle, resultComplete: false };
+	}
+}
+
 export function useChatSession(
 	currConversation: ChatMessage[],
 	setCurrConversation: (next: ChatMessage[]) => void,
@@ -75,14 +165,7 @@ export function useChatSession(
 		setResult
 	} = options;
 
-	const [conversationState, setConversationState] = useState(CONVERSATION_STATE.Start);
-	const [isUserResendRequired, setIsUserResendRequired] = useState(false);
-	const [inappropriateUserTranscript, setInappropriateUserTranscript] = useState<string | null>(
-		null
-	);
-	const [readyToSave, setReadyToSave] = useState(false);
-	/** the summary stream finished: the result text is final */
-	const [resultComplete, setResultComplete] = useState(false);
+	const [state, dispatch] = useReducer(chatSessionReducer, initialChatSessionState);
 
 	/** Generate assistant response. NOT for the final outline result.
 	 * Resolves with what happened to the user's message, so the composer
@@ -90,7 +173,7 @@ export function useChatSession(
 	// stable per conversation: ChatRecorder/RecordButton keep it in memo
 	// and effect dependencies
 	const handleGetResponse = useCallback(async (): Promise<CoachResponseOutcome> => {
-		setConversationState(CONVERSATION_STATE.WaitingForCoach);
+		dispatch({ type: "coachRequested" });
 		const apiCall = () =>
 			generateResponseApi({
 				messages: currConversation,
@@ -107,13 +190,13 @@ export function useChatSession(
 			);
 			const isUser = false;
 			addConversationMessage(message, isUser, currConversation, setCurrConversation);
-			setIsUserResendRequired(false);
-			setInappropriateUserTranscript(null);
+			dispatch({ type: "coachAnswered" });
 			return "sent";
 		} catch (err) {
 			if (isGenerationCancelled(err)) {
 				// user-initiated: the message stays and the chat returns
 				// to idle, no error banner
+				dispatch({ type: "coachFailed" });
 				return "cancelled";
 			}
 			if (isModerationError(err)) {
@@ -121,14 +204,12 @@ export function useChatSession(
 					currConversation,
 					setCurrConversation
 				);
-				setInappropriateUserTranscript(removedMessage);
-				setIsUserResendRequired(true);
+				dispatch({ type: "coachFlagged", transcript: removedMessage });
 				return "flagged";
 			}
 			onError(normalizeApiError(err));
+			dispatch({ type: "coachFailed" });
 			return "failed";
-		} finally {
-			setConversationState(CONVERSATION_STATE.Idle);
 		}
 	}, [currConversation, setCurrConversation, parentIdea, chatType, onError]);
 
@@ -139,19 +220,18 @@ export function useChatSession(
 			return;
 		}
 		conversationEndCallbacks();
-		setConversationState(CONVERSATION_STATE.FinishWithResult);
-		setResultComplete(false);
+		dispatch({ type: "resultRequested" });
 		const resultFinishedCallbacks = async (
 			result: string,
 			structuredResult: unknown
 		): Promise<void> => {
-			setResultComplete(true);
+			dispatch({ type: "resultStreamed" });
 			try {
 				await saveResult(ideaId, currConversation, result, structuredResult);
-				setReadyToSave(true);
+				dispatch({ type: "resultSaved" });
 			} catch (e) {
 				onError(`Could not save your summary: ${normalizeApiError(e)}`);
-				setConversationState(CONVERSATION_STATE.Idle);
+				dispatch({ type: "resultSaveFailed" });
 				return;
 			}
 			if (fromGuideParam) {
@@ -172,11 +252,10 @@ export function useChatSession(
 				// drop any partial summary: while a result is set the
 				// finished-result view replaces the chat (and its banner)
 				setResult("");
-				setResultComplete(false);
 				if (!isGenerationCancelled(err)) {
 					onError(normalizeApiError(err));
 				}
-				setConversationState(CONVERSATION_STATE.Idle);
+				dispatch({ type: "resultFailed" });
 			}
 		);
 	};
@@ -189,16 +268,12 @@ export function useChatSession(
 			currConversation,
 			setCurrConversation
 		);
-		setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
+		dispatch({ type: "userMessageReady" });
 	};
 
 	return {
-		conversationState,
-		setConversationState,
-		isUserResendRequired,
-		inappropriateUserTranscript,
-		readyToSave,
-		resultComplete,
+		...state,
+		dispatch,
 		handleGetResponse,
 		handleGetResult,
 		askADifferentQuestion

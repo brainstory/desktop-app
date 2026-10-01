@@ -1,20 +1,19 @@
-import { CONVERSATION_STATE, CHAT_SAVE_STATE } from "@src/const";
+import { CHAT_SAVE_STATE } from "@src/const";
 import { addConversationMessage } from "@helpers/chat";
 import AudioRecorder from "@components/recording-ui/AudioRecorder";
 import type { ChatMessage } from "@src/types";
-import type { CoachResponseOutcome } from "@components/chat/useChatSession";
+import type { ChatSessionEvent, CoachResponseOutcome } from "@components/chat/useChatSession";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback } from "react";
 
 /**
- * PLEASE: state var conversationState setting logic should only be in this component!
- *
- * aka don't pass setConversationState as a prop to children
- * This is so state changes can tracked easier rather than having it done in child components
+ * Conversation state changes are session events (useChatSession's
+ * reducer); the recorder dispatches the recording/transcription ones and
+ * doesn't pass dispatch further down.
  */
 interface ChatRecorderProps {
 	conversationState: string;
-	setConversationState: (state: string) => void;
+	dispatch: (event: ChatSessionEvent) => void;
 	currConversation: ChatMessage[];
 	setCurrConversation: Dispatch<SetStateAction<ChatMessage[]>>;
 	setSaveState: (state: string) => void;
@@ -26,7 +25,7 @@ interface ChatRecorderProps {
 
 export default function ChatRecorder({
 	conversationState,
-	setConversationState,
+	dispatch,
 	currConversation,
 	setCurrConversation,
 	setSaveState,
@@ -50,13 +49,13 @@ export default function ChatRecorder({
 	const handleIsTranscribing = useCallback(
 		(isTranscribing: boolean) => {
 			if (isTranscribing) {
-				setConversationState(CONVERSATION_STATE.TranscribingUser);
+				dispatch({ type: "transcriptionStarted" });
 			} else {
 				// transcription failed - release the UI back to idle
-				setConversationState(CONVERSATION_STATE.Idle);
+				dispatch({ type: "transcriptionFailed" });
 			}
 		},
-		[setConversationState]
+		[dispatch]
 	);
 
 	const handleTranscript = useCallback(
@@ -73,9 +72,9 @@ export default function ChatRecorder({
 			if (!isResend) {
 				addConversationMessage(userMessage, isUser, currConversation, setCurrConversation);
 			}
-			setConversationState(CONVERSATION_STATE.ReadyToSendUserTranscript);
+			dispatch({ type: "userMessageReady" });
 		},
-		[currConversation, setCurrConversation, setConversationState]
+		[currConversation, setCurrConversation, dispatch]
 	);
 
 	const handleCoachResponse = useCallback(() => handleGetResponse(), [handleGetResponse]);

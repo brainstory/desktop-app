@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { useStore } from "@nanostores/react";
 import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
 import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
@@ -96,22 +96,6 @@ export function ChatSection({
 		onParentIdea: fetchParentIdea
 	});
 
-	// session's setConversationState is stable (useState setter), but the
-	// hook ordering requires declaring it after the loaders; a ref bridges
-	const setConvStateRef = useRef<(s: string) => void>(() => {});
-	useDraftLoader(persistence.ideaId, parentIdParam, {
-		conversationLengthRef: persistence.conversationLengthRef,
-		fetchedParentRef: persistence.fetchedParentRef,
-		setIdeaId: persistence.setIdeaId,
-		setCurrConversation,
-		markPersisted: persistence.markPersisted,
-		setConversationState: (s) => setConvStateRef.current(s),
-		onParentIdea: fetchParentIdea,
-		onFatalError: setFatalError
-	});
-
-	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
-
 	const session = useChatSession(currConversation, setCurrConversation, {
 		chatType,
 		parentIdea,
@@ -123,10 +107,20 @@ export function ChatSection({
 		saveResult: persistence.saveResult,
 		setResult
 	});
+	const { dispatch } = session;
 
-	useEffect(() => {
-		setConvStateRef.current = session.setConversationState;
+	useDraftLoader(persistence.ideaId, parentIdParam, {
+		conversationLengthRef: persistence.conversationLengthRef,
+		fetchedParentRef: persistence.fetchedParentRef,
+		setIdeaId: persistence.setIdeaId,
+		setCurrConversation,
+		markPersisted: persistence.markPersisted,
+		onDraftRestored: (lastRole) => dispatch({ type: "draftRestored", lastRole }),
+		onParentIdea: fetchParentIdea,
+		onFatalError: setFatalError
 	});
+
+	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
 	if (result) {
 		return (
@@ -175,7 +169,7 @@ export function ChatSection({
 				key="chat-recorder"
 				isCompressed={Boolean(parentIdea)}
 				conversationState={session.conversationState}
-				setConversationState={session.setConversationState}
+				dispatch={dispatch}
 				currConversation={currConversation}
 				setCurrConversation={setCurrConversation}
 				setSaveState={persistence.setSaveState}

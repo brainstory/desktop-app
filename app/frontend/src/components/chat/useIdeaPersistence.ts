@@ -221,7 +221,8 @@ export function useDraftLoader(
 		setCurrConversation: (next: ChatMessage[]) => void;
 		/** tell the autosave the loaded transcript is already stored */
 		markPersisted: (saved: ChatMessage[]) => void;
-		setConversationState: (state: string) => void;
+		/** a saved transcript was adopted; lastRole decides the next step */
+		onDraftRestored: (lastRole: ChatMessage["role"] | undefined) => void;
 		onParentIdea: (parentId: string) => void;
 		onFatalError: (error: ChatFatalError) => void;
 	}
@@ -231,7 +232,7 @@ export function useDraftLoader(
 		fetchedParentRef,
 		setCurrConversation,
 		markPersisted,
-		setConversationState,
+		onDraftRestored,
 		onParentIdea,
 		onFatalError
 	} = hooks;
@@ -253,14 +254,7 @@ export function useDraftLoader(
 					if (savedConversation.length > conversationLengthRef.current) {
 						markPersisted(savedConversation);
 						setCurrConversation(savedConversation);
-						const lastMessage = savedConversation.at(-1);
-						if (lastMessage?.role === "user") {
-							setConversationState("ready to send user message");
-						} else {
-							setConversationState(
-								"waiting for next user action (record, send, finish)"
-							);
-						}
+						onDraftRestored(savedConversation.at(-1)?.role);
 					}
 
 					const parentIdData = res.parentIdea?.id;
