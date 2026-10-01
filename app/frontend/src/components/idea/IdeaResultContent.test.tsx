@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 import { mockInvoke } from "@src/test/mock-tauri";
+import { mockViewport } from "@src/test/match-media";
 import IdeaResultContent from "./IdeaResultContent";
 
 const resultJson = [
@@ -98,5 +99,35 @@ describe("IdeaResultContent ownership", () => {
 		render(<IdeaResultContent />);
 		expect(await screen.findByText("Created by Ada")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+	});
+});
+
+describe("IdeaResultContent layout", () => {
+	beforeEach(() => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_idea_children: () => ({ ideas: [] })
+		});
+	});
+
+	it("uses the document + sidebar view above 768px and the plain summary at or below", async () => {
+		const viewport = mockViewport(1024);
+		render(<IdeaResultContent />);
+		expect(await screen.findByText("All Feedback Comments")).toBeInTheDocument();
+
+		act(() => viewport.setWidth(768));
+		expect(screen.queryByText("All Feedback Comments")).not.toBeInTheDocument();
+		expect(screen.getByText("alpha body")).toBeInTheDocument();
+
+		act(() => viewport.setWidth(1200));
+		expect(screen.getByText("All Feedback Comments")).toBeInTheDocument();
+	});
+
+	it("does not listen to every window resize", async () => {
+		mockViewport(1024);
+		const addListener = vi.spyOn(window, "addEventListener");
+		render(<IdeaResultContent />);
+		await screen.findByText("All Feedback Comments");
+		expect(addListener.mock.calls.some(([type]) => type === "resize")).toBe(false);
 	});
 });

@@ -11,6 +11,7 @@ import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import { getQueryParam } from "@helpers/helpers";
 import { isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
+import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
 
 export default function IdeaResultContent() {
@@ -33,7 +34,9 @@ export default function IdeaResultContent() {
 	const [headingIdxToComments, setHeadingIdxToComments] = useState<
 		Record<number, FeedbackComment[]>
 	>({});
-	const [isMdSizeOrLess, setIsMdSizeOrLess] = useState(window.innerWidth <= 768);
+	// one matchMedia listener that only fires when the 768px boundary is
+	// crossed (not a re-render on every resize event)
+	const isMdSizeOrLess = useMediaQuery("(max-width: 768px)");
 	const [isUnread, setIsUnread] = useState(false);
 
 	// Opening an unread (imported feedback) idea marks it read.
@@ -43,12 +46,6 @@ export default function IdeaResultContent() {
 	const isOwn = isOwnIdea(idea);
 
 	useEffect(() => {
-		// Event listener to keep track of screen size
-		const handleResize = () => {
-			setIsMdSizeOrLess(window.innerWidth <= 768);
-		};
-		window.addEventListener("resize", handleResize);
-
 		let isCurrent = true;
 
 		// no ?id in the URL: there is nothing to load (rendered as an
@@ -57,7 +54,6 @@ export default function IdeaResultContent() {
 		if (!id) {
 			return () => {
 				isCurrent = false;
-				window.removeEventListener("resize", handleResize);
 			};
 		}
 		getIdeaApi(id)
@@ -112,7 +108,6 @@ export default function IdeaResultContent() {
 			});
 		return () => {
 			isCurrent = false;
-			window.removeEventListener("resize", handleResize);
 		};
 	}, [ideaId]);
 
