@@ -28,6 +28,15 @@ export function currentQueryParams(): FirstPromptParams {
 	return { qotd: getQueryParam("qotd"), topic: getQueryParam("topic") };
 }
 
+/**
+ * The assistant's opening message for a new chat.
+ *
+ * Keep in sync with the prompts: story_interview_system_message.txt,
+ * story_interview_react_system_message.txt and
+ * story_interview_context_system_message.txt paraphrase these opener
+ * strings ("The first assistant message of this conversation has already
+ * been sent...") - change them together.
+ */
 export function getFirstPrompt(
 	chatType: string,
 	params: FirstPromptParams = currentQueryParams()
