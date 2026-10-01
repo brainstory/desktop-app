@@ -2,4 +2,4 @@
 const { hasSideNavbar } = Astro.props;
 ---
 
-<footer class={`flex pt-0 p-4 text-sm ${hasSideNavbar && "sm:ml-64"}`}></footer>
+<footer class:list={["flex pt-0 p-4 text-sm", { "sm:ml-64": hasSideNavbar }]}></footer>

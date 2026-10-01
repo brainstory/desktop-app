@@ -34,12 +34,14 @@ export default function EmojiItem({
 			{...(onReactionClick
 				? { type: "button" as const, onClick: () => onReactionClick() }
 				: {})}
-			className={"flex flex-col items-center relative " + style}
+			className={cn("flex flex-col items-center relative", style)}
 		>
 			<div
-				className={`flex items-center ${cn(!labelsHasBorder && "p-1")} ${
+				className={cn(
+					"flex items-center",
+					!labelsHasBorder && "p-1",
 					isBlue && "border rounded-md border-blue-400 bg-blue-50 hover:bg-blue-200"
-				}`}
+				)}
 			>
 				<Tooltip text={creatorName ?? creatorEmail ?? undefined} position="left">
 					<Avatar
@@ -50,9 +52,10 @@ export default function EmojiItem({
 					/>
 				</Tooltip>
 				<div
-					className={`flex w-max capitalize ${
+					className={cn(
+						"flex w-max capitalize",
 						labelsHasBorder && "border rounded-md p-1"
-					}`}
+					)}
 				>
 					{labels.map((label, idx) => (
 						<Tooltip key={label.name ?? idx} text={label.name} position="left">

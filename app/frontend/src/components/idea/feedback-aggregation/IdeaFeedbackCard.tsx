@@ -46,9 +46,11 @@ export default function IdeaFeedbackCard({
 		}
 	}, [ref, focusedIdea, feedback.commentId]);
 
-	const containerClasses = `border-stone-200 ${
-		isFocused && "outline outline-accent-500 outline-2"
-	} m-1 p-3 border rounded-lg shadow transition-all ease-in-out duration-300`;
+	const containerClasses = cn(
+		"border-stone-200",
+		isFocused && "outline outline-accent-500 outline-2",
+		"m-1 p-3 border rounded-lg shadow transition-all ease-in-out duration-300"
+	);
 
 	function feedbackClicked() {
 		focusSection?.(feedback);
@@ -79,7 +81,7 @@ export default function IdeaFeedbackCard({
 				</div>
 				<p
 					ref={ref}
-					className={`text-sm leading-snug ${cn(!isShowingMore && "line-clamp-5")}`}
+					className={cn("text-sm leading-snug", !isShowingMore && "line-clamp-5")}
 				>
 					{feedbackText}
 				</p>
