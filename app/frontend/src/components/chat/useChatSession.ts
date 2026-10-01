@@ -14,7 +14,11 @@ import {
 	removeLastConversationMessage,
 	isGenerationCancelled
 } from "@helpers/chat";
-import { generateResponseApi, generateResponseStreamApi } from "@helpers/api/ai";
+import {
+	generateResponseApi,
+	generateResponseStreamApi,
+	type GenerateOptions
+} from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 import { markGettingStartedDone } from "@helpers/storage";
 
@@ -40,6 +44,19 @@ export interface ChatSessionOptions {
 		structuredResult: unknown
 	) => Promise<void>;
 	setResult: (result: string) => void;
+}
+
+/** The feedback-flow generation options for a parent idea (none for a
+ * regular chat). */
+function reactionOptions(
+	parentIdea: ParentIdea | undefined
+): Pick<GenerateOptions, "reactTo" | "reactToAuthor" | "reactToIsCurrentUser"> {
+	if (!parentIdea) return {};
+	return {
+		reactTo: parentIdea.summary ?? null,
+		reactToAuthor: parentIdea.creatorName ?? null,
+		reactToIsCurrentUser: parentIdea.creatorName == null
+	};
 }
 
 export function useChatSession(
@@ -75,13 +92,11 @@ export function useChatSession(
 	const handleGetResponse = useCallback(async (): Promise<CoachResponseOutcome> => {
 		setConversationState(CONVERSATION_STATE.WaitingForCoach);
 		const apiCall = () =>
-			generateResponseApi(
-				currConversation,
-				parentIdea?.summary,
-				parentIdea?.creatorName ?? null,
-				parentIdea ? parentIdea?.creatorName == null : false,
-				chatType
-			);
+			generateResponseApi({
+				messages: currConversation,
+				chatType,
+				...reactionOptions(parentIdea)
+			});
 		try {
 			// a cancel must stay cancelled: retrying would start a fresh
 			// generation with a new cancel token 500 ms later
@@ -145,14 +160,12 @@ export function useChatSession(
 		};
 		handleStreamResult(
 			() =>
-				generateResponseStreamApi(
-					currConversation,
-					true,
-					parentIdea?.summary,
-					parentIdea?.creatorName ?? null,
-					parentIdea ? parentIdea?.creatorName == null : false,
-					chatType
-				),
+				generateResponseStreamApi({
+					messages: currConversation,
+					summarize: true,
+					chatType,
+					...reactionOptions(parentIdea)
+				}),
 			setResult,
 			resultFinishedCallbacks,
 			(err) => {

@@ -13,18 +13,34 @@ export async function transcribeApi(blob: Blob): Promise<string> {
 	return response.transcript;
 }
 
+/** What to generate from: the conversation plus, for a feedback chat,
+ * the idea being reacted to. */
+export interface GenerateOptions {
+	messages: ChatMessage[];
+	chatType?: string | null;
+	/** the parent idea's document a feedback chat reacts to */
+	reactTo?: string | null;
+	/** who wrote it (imported ideas only) */
+	reactToAuthor?: string | null;
+	/** the user wrote the parent idea themselves */
+	reactToIsCurrentUser?: boolean;
+}
+
 /**
  * Kick off a streaming generation. Events (chunk/cumulative/status) arrive on
  * the returned channel; the invoke itself resolves once generation finishes.
  */
-export function generateResponseStreamApi(
-	messages: ChatMessage[],
+export function generateResponseStreamApi({
+	messages,
 	summarize = false,
-	reactTo: string | null = null,
-	reactToAuthor: string | null = null,
+	reactTo = null,
+	reactToAuthor = null,
 	reactToIsCurrentUser = false,
-	chatType: string | null = null
-): {
+	chatType = null
+}: GenerateOptions & {
+	/** generate the final summary instead of the next coach turn */
+	summarize?: boolean;
+}): {
 	channel: Channel;
 	invokePromise: Promise<GenerationResult>;
 } {
@@ -45,13 +61,13 @@ export function generateResponseStreamApi(
 }
 
 /** @returns response text */
-export async function generateResponseApi(
-	messages: ChatMessage[],
-	reactTo: string | null = null,
-	reactToAuthor: string | null = null,
+export async function generateResponseApi({
+	messages,
+	reactTo = null,
+	reactToAuthor = null,
 	reactToIsCurrentUser = false,
-	chatType: string | null = null
-): Promise<string> {
+	chatType = null
+}: GenerateOptions): Promise<string> {
 	const response = await invoke<GenerationResult>(COMMANDS.generateResponse, {
 		messages,
 		reactTo,
