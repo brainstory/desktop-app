@@ -636,18 +636,30 @@ impl ExternalLlm {
 	const MAX_SSE_BUFFER: usize = 1_000_000;
 
 	pub fn new(base_url: &str, api_key: &str, model: &str) -> Result<Self, String> {
-		// Client::new() panics when the TLS backend cannot initialize;
-		// surface that as an error instead.
-		let client = reqwest::Client::builder()
-			.connect_timeout(std::time::Duration::from_secs(10))
-			.build()
-			.map_err(|e| format!("failed to build HTTP client: {e}"))?;
 		Ok(Self {
 			base_url: base_url.trim_end_matches('/').to_string(),
 			api_key: api_key.to_string(),
 			model: model.to_string(),
-			client,
+			client: Self::shared_client()?,
 		})
+	}
+
+	/// One HTTP client for every external-endpoint call. A generation
+	/// builds a fresh ExternalLlm, and a client per instance threw away
+	/// its connection pool (TCP + TLS handshakes) on every message.
+	/// reqwest::Client is a cheap Arc handle to the shared pool.
+	fn shared_client() -> Result<reqwest::Client, String> {
+		static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+		if let Some(client) = CLIENT.get() {
+			return Ok(client.clone());
+		}
+		// Client::new() panics when the TLS backend cannot initialize;
+		// surface that as an error instead (and retry on the next call).
+		let client = reqwest::Client::builder()
+			.connect_timeout(std::time::Duration::from_secs(10))
+			.build()
+			.map_err(|e| format!("failed to build HTTP client: {e}"))?;
+		Ok(CLIENT.get_or_init(|| client).clone())
 	}
 
 	fn completions_url(&self) -> String {
@@ -1378,6 +1390,63 @@ mod external_stream_tests {
 			vec!["Hi there".to_string()],
 			"delivered as one chunk"
 		);
+	}
+
+	#[tokio::test]
+	async fn external_clients_share_one_connection_pool() {
+		// a server that accepts exactly ONE connection and answers two
+		// keep-alive requests on it: a second generation only succeeds if
+		// it reuses the pooled connection of the first
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			use std::io::{Read, Write};
+			let Ok((mut sock, _)) = listener.accept() else {
+				return;
+			};
+			for reply in ["one", "two"] {
+				let mut head = Vec::new();
+				let mut byte = [0u8; 1];
+				while !head.ends_with(b"\r\n\r\n") {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						return;
+					}
+					head.push(byte[0]);
+				}
+				let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+				let len: usize = head
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				let mut body = vec![0u8; len];
+				let _ = sock.read_exact(&mut body);
+				let json = format!(r#"{{"choices":[{{"message":{{"content":"{reply}"}}}}]}}"#);
+				let _ = sock.write_all(
+					format!(
+						"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{json}",
+						json.len()
+					)
+					.as_bytes(),
+				);
+				let _ = sock.flush();
+			}
+			std::thread::sleep(std::time::Duration::from_millis(500));
+		});
+		let url = format!("http://{addr}/v1");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		for expected in ["one", "two"] {
+			// a fresh ExternalLlm per generation, as the command layer does
+			let client = ExternalLlm::new(&url, "", "m").expect("client");
+			let (output, _) = tokio::time::timeout(
+				std::time::Duration::from_secs(5),
+				client.generate("", &[], &cancel, 8, |_| {}),
+			)
+			.await
+			.expect("the second call must reuse the first call's connection")
+			.expect("generate");
+			assert_eq!(output, expected);
+		}
 	}
 
 	#[tokio::test]
