@@ -1,57 +1,16 @@
 import { Card } from "./ProfileCards";
-import PinkButton from "@ds/PinkButton";
-import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { useAiModels } from "./useAiModels";
-import { useId, useState } from "react";
-import { ModelRow, type ModelRowActions } from "./ai-models/ModelRow";
+import type { ModelListContext } from "./ai-models/ModelRow";
 import { localeLabel } from "./ai-models/format";
-import { cn } from "@helpers/cn";
-import type { ModelStatus } from "@helpers/api/models";
+import { LlmSection } from "./ai-models/LlmSection";
+import { SttEngineSection } from "./ai-models/SttEngineSection";
 import { ExternalEndpointsForm } from "./ai-models/ExternalEndpointsForm";
-import { SecretRow } from "./ai-models/SecretRow";
-
-/**
- * Languages offered for a multilingual whisper model when Apple Speech
- * can't list its locales (whisper uses the primary subtag).
- */
-const WHISPER_LOCALES = [
-	"en-US",
-	"de-DE",
-	"es-ES",
-	"fr-FR",
-	"it-IT",
-	"pt-BR",
-	"nl-NL",
-	"pl-PL",
-	"sv-SE",
-	"tr-TR",
-	"ru-RU",
-	"uk-UA",
-	"ja-JP",
-	"ko-KR",
-	"zh-CN",
-	"hi-IN",
-	"ar-SA"
-];
-
-/** Mirrors the backend: `*-en` whisper builds always transcribe English. */
-const isMultilingualWhisper = (modelId: string): boolean => !modelId.endsWith("-en");
-
-const STATUS_LABELS = {
-	ready: "Ready",
-	loading: "Loading...",
-	missing: "Not downloaded",
-	error: "Error",
-	external: "Using external endpoint"
-};
 
 interface AiModelsCardProps {
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
-	const ai = useAiModels(openSnackbar);
-	const appleHintId = useId();
 	const {
 		models,
 		settings: maybeSettings,
@@ -60,7 +19,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		downloadProgress,
 		appleStt,
 		freeBytes,
-		externalLlmLabelId,
 		refreshModels,
 		download,
 		save,
@@ -71,7 +29,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		deleteModel,
 		cancelDownload,
 		activateModel
-	} = ai;
+	} = useAiModels(openSnackbar);
 
 	if (!maybeSettings) {
 		return (
@@ -82,21 +40,16 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	}
 	const settings = maybeSettings;
 
-	const rowActions: ModelRowActions = {
-		onDownload: download,
-		onCancel: cancelDownload,
-		onDelete: deleteModel,
-		onActivate: activateModel
+	const modelList: ModelListContext = {
+		downloadProgress,
+		freeBytes,
+		actions: {
+			onDownload: download,
+			onCancel: cancelDownload,
+			onDelete: deleteModel,
+			onActivate: activateModel
+		}
 	};
-	const renderModelRow = (model: ModelStatus) => (
-		<ModelRow
-			key={model.id}
-			model={model}
-			progress={downloadProgress[model.id]}
-			freeBytes={freeBytes}
-			{...rowActions}
-		/>
-	);
 
 	const llmStatus = runtime.llm;
 	const sttStatus = runtime.stt;
@@ -111,32 +64,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const appleActive =
 		settings.sttEngine === "apple" || (settings.sttEngine === "auto" && !!appleStt?.available);
 	const needsStt = sttStatus.state === "missing" && !settings.extSttBaseUrl && !appleActive;
-	// The language reaches Apple Speech and multilingual whisper models
-	// (directly, or as Apple's fallback); English-only builds ignore it.
-	// The configured whisper model, not the `active` flag: list_models marks
-	// no whisper model active while Apple Speech runs, yet a downloaded one
-	// still serves as its fallback.
-	const whisperModel = models.stt.find((m) => m.id === settings.sttModel);
-	const whisperFallback = appleActive && !!whisperModel?.downloaded;
-	const multilingualWhisper =
-		!!whisperModel &&
-		(!appleActive || whisperFallback) &&
-		isMultilingualWhisper(whisperModel.id);
-	const showLanguage = appleActive || multilingualWhisper;
-	const currentLanguage = settings.sttLanguage || "en-US";
-	const appleLocales = appleStt?.supportedLocales ?? [];
-	const baseLocales =
-		appleLocales.length > 0 ? appleLocales : appleActive ? ["en-US"] : WHISPER_LOCALES;
-	const languageOptions = baseLocales.includes(currentLanguage)
-		? baseLocales
-		: [currentLanguage, ...baseLocales];
-	const languageHelp = !appleActive
-		? `${whisperModel?.label ?? "The whisper model"} transcribes in this language.`
-		: multilingualWhisper
-			? "Used by Apple Speech and by the whisper fallback. Missing languages are fetched by macOS on first use."
-			: whisperFallback
-				? "Used by Apple Speech; missing languages are fetched by macOS on first use. The English-only whisper fallback always transcribes English."
-				: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
 
 	const usingExternalLlm = settings.llmMode === "external";
 	const usingExternalStt = !!settings.extSttBaseUrl;
@@ -194,206 +121,30 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					</p>
 				</div>
 			)}
-			<div className="flex flex-col gap-3">
-				<div className="flex justify-between items-center">
-					<h3 className="font-semibold">Language model (brainstorming & writeups)</h3>
-					<span
-						className={`text-xs font-medium uppercase rounded-full px-2 py-1 ${
-							llmStatus.state === "ready"
-								? "bg-green-100 text-green-700"
-								: llmStatus.state === "error"
-									? "bg-red-100 text-red-700"
-									: "bg-stone-100 text-stone-600"
-						}`}
-					>
-						{STATUS_LABELS[llmStatus.state as keyof typeof STATUS_LABELS] ??
-							llmStatus.state}
-					</span>
-				</div>
-				{llmStatus.error && <p className="text-sm text-red-600">{llmStatus.error}</p>}
-				<div className="flex gap-2 items-center">
-					<span className="text-sm text-stone-600" id={externalLlmLabelId}>
-						Use external LLM endpoint
-					</span>
-					<OnOffToggleButton
-						aria-labelledby={externalLlmLabelId}
-						checked={settings.llmMode === "external"}
-						onToggle={() => {
-							const nextMode = settings.llmMode === "external" ? "local" : "external";
-							// the toggle saves only llmMode, so the URL must already
-							// be persisted - a typed-but-unsaved one doesn't count
-							if (nextMode === "external" && !savedSettings?.extLlmBaseUrl) {
-								openSnackbar(
-									false,
-									settings.extLlmBaseUrl
-										? "Save the external endpoint URL first, then enable this"
-										: "Set an external endpoint URL first, then enable this"
-								);
-								return;
-							}
-							save({ llmMode: nextMode });
-						}}
-					/>
-				</div>
-				{settings.llmMode !== "external" && models.llm.map(renderModelRow)}
-				{settings.llmMode !== "external" && (
-					<div className="border border-stone-200 rounded-lg p-4 text-sm">
-						<SecretRow
-							inputId="hf-token-input"
-							label="HuggingFace access token (optional)"
-							labelClassName="font-semibold mb-1 block"
-							description={
-								<>
-									Authenticated downloads are faster and never hit
-									HuggingFace&rsquo;s anonymous rate limits. Create a free read
-									token at huggingface.co/settings/tokens.
-								</>
-							}
-							placeholder="hf_..."
-							stored={settings.hfTokenSet}
-							hint={settings.hfTokenHint}
-							saveLabel="Save Token"
-							onSave={(value) => saveSecret("hfToken", value)}
-						/>
-						<label
-							htmlFor="hf-endpoint-input"
-							className="font-semibold mb-1 mt-4 block"
-						>
-							HuggingFace download endpoint (mirror, optional)
-						</label>
-						<p className="text-stone-500 mb-2">
-							Leave empty to download from huggingface.co directly, or point at a
-							mirror (e.g. https://hf-mirror.com). Also picks up the HF_ENDPOINT
-							environment variable when launched from a terminal.
-						</p>
-						<EndpointField
-							inputId="hf-endpoint-input"
-							initial={settings.hfEndpoint}
-							onSave={saveEndpoint}
-						/>
-					</div>
-				)}
-			</div>
+
+			<LlmSection
+				settings={settings}
+				savedSettings={savedSettings}
+				status={llmStatus}
+				models={models.llm}
+				modelList={modelList}
+				save={save}
+				saveSecret={saveSecret}
+				saveEndpoint={saveEndpoint}
+				openSnackbar={openSnackbar}
+			/>
 
 			<hr className="my-6 border-stone-200" />
 
-			<div className="flex flex-col gap-3">
-				<div className="flex justify-between items-center">
-					<h3 className="font-semibold">Speech-to-text (transcribes you)</h3>
-					<span
-						className={`text-xs font-medium uppercase rounded-full px-2 py-1 ${
-							sttStatus.state === "ready"
-								? "bg-green-100 text-green-700"
-								: sttStatus.state === "error"
-									? "bg-red-100 text-red-700"
-									: "bg-stone-100 text-stone-600"
-						}`}
-					>
-						{STATUS_LABELS[sttStatus.state as keyof typeof STATUS_LABELS] ??
-							sttStatus.state}
-					</span>
-				</div>
-				{sttStatus.error && <p className="text-sm text-red-600">{sttStatus.error}</p>}
-				<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
-					<p className="font-semibold text-stone-900">Engine</p>
-					<div className="flex flex-wrap gap-2">
-						{(
-							[
-								{
-									id: "auto",
-									label: "Auto",
-									hint: "Apple Speech where available, whisper otherwise"
-								},
-								{
-									id: "apple",
-									label: "Apple Speech",
-									hint: "Built into macOS 26+ - no model download"
-								},
-								{
-									id: "whisper",
-									label: "Whisper",
-									hint: "Downloaded whisper model"
-								}
-							] as const
-						).map((opt) => {
-							const selected = settings.sttEngine === opt.id;
-							const disabled = opt.id === "apple" && !appleStt?.available;
-							return (
-								<button
-									key={opt.id}
-									type="button"
-									title={disabled ? undefined : opt.hint}
-									aria-pressed={selected}
-									aria-describedby={disabled ? appleHintId : undefined}
-									disabled={disabled}
-									onClick={() => save({ sttEngine: opt.id })}
-									className={cn(
-										"text-sm rounded-lg px-3 py-2 border transition-colors",
-										selected
-											? "bg-accent-600 border-accent-600 text-white hover:bg-accent-700"
-											: disabled
-												? "border-stone-200 text-stone-300 cursor-not-allowed"
-												: "border-stone-300 text-stone-700 hover:border-accent-400"
-									)}
-								>
-									{opt.label}
-								</button>
-							);
-						})}
-					</div>
-					{appleStt && !appleStt.available && (
-						// visible, not just a tooltip on the disabled chip
-						<p id={appleHintId} className="text-sm text-stone-500">
-							Apple Speech needs macOS 26 or newer and isn&rsquo;t available on this
-							system.
-						</p>
-					)}
-					{settings.sttEngine === "auto" && (
-						<p className="text-sm text-stone-500">
-							{appleStt?.available
-								? "Apple Speech is available on this Mac and will be used; whisper is the automatic fallback."
-								: "Auto uses whisper for transcription here."}
-						</p>
-					)}
-					{appleActive && appleStt && !appleStt.authorized && (
-						<p className="text-sm text-amber-700">
-							Apple Speech needs permission once: the next time you record, allow
-							Brainstory under System Settings &gt; Privacy &amp; Security &gt; Speech
-							Recognition.
-						</p>
-					)}
-					{showLanguage && (
-						<div className="mt-1 max-w-xs">
-							<label
-								htmlFor="stt-language-select"
-								className="block mb-1 text-sm font-medium text-stone-900"
-							>
-								Speech language
-							</label>
-							<select
-								id="stt-language-select"
-								value={currentLanguage}
-								onChange={(e) => save({ sttLanguage: e.target.value })}
-								className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
-							>
-								{languageOptions.map((loc) => (
-									<option key={loc} value={loc}>
-										{localeLabel(loc)} ({loc})
-										{!appleActive || appleStt?.installedLocales.includes(loc)
-											? ""
-											: " - not installed yet"}
-									</option>
-								))}
-							</select>
-							<p className="text-sm text-stone-500 mt-1">{languageHelp}</p>
-						</div>
-					)}
-				</div>
-				<h4 className="font-semibold text-stone-700 text-sm">
-					{appleActive ? "Whisper model (fallback)" : "Whisper model"}
-				</h4>
-				{models.stt.map(renderModelRow)}
-			</div>
+			<SttEngineSection
+				settings={settings}
+				status={sttStatus}
+				models={models.stt}
+				modelList={modelList}
+				appleStt={appleStt}
+				appleActive={appleActive}
+				save={save}
+			/>
 
 			<hr className="my-6 border-stone-200" />
 
@@ -411,32 +162,3 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 }
 
 export default AiModelsCard;
-
-/** Plain-text field with its own Save button for a single non-secret
- * setting (the download endpoint/mirror). Sends only its own value. */
-function EndpointField({
-	inputId,
-	initial,
-	onSave
-}: {
-	inputId: string;
-	initial?: string;
-	onSave: (value: string) => void;
-}) {
-	const [value, setValue] = useState(initial ?? "");
-	return (
-		<div className="flex flex-wrap gap-2">
-			<input
-				id={inputId}
-				type="url"
-				value={value}
-				onChange={(e) => setValue(e.target.value)}
-				placeholder="https://huggingface.co"
-				className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2"
-			/>
-			<PinkButton disabled={value === (initial ?? "")} onClick={() => onSave(value)}>
-				Save
-			</PinkButton>
-		</div>
-	);
-}

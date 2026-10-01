@@ -6,7 +6,7 @@
  * without refetching anything; each action reloads only what it changed.
  */
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "@nanostores/react";
 import {
@@ -35,7 +35,6 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
-	const externalLlmLabelId = useId();
 
 	/** Catalog + downloaded/active flags (downloads, deletes, activation, mode). */
 	const refreshModels = useCallback(() => {
@@ -233,7 +232,6 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		downloadProgress,
 		appleStt,
 		freeBytes,
-		externalLlmLabelId,
 		// actions
 		refreshModels,
 		download,

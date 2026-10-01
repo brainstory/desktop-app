@@ -113,6 +113,31 @@ export const ModelRow = memo(function ModelRow({
 	);
 });
 
+/** What every model list needs besides the models themselves. */
+export interface ModelListContext {
+	downloadProgress: Record<string, number>;
+	freeBytes: number | null;
+	actions: ModelRowActions;
+}
+
+/** A section's catalog models as rows. */
+export function ModelList({
+	models,
+	downloadProgress,
+	freeBytes,
+	actions
+}: ModelListContext & { models: ModelStatus[] }) {
+	return models.map((model) => (
+		<ModelRow
+			key={model.id}
+			model={model}
+			progress={downloadProgress[model.id]}
+			freeBytes={freeBytes}
+			{...actions}
+		/>
+	));
+}
+
 /**
  * Two-click delete with a visible countdown (the shared confirm pattern,
  * as on draft cards). The active model gets a stronger warning.
