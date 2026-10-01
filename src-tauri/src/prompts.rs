@@ -511,6 +511,19 @@ mod contract_tests {
 	}
 
 	#[test]
+	fn feedback_summaries_put_each_point_in_one_place() {
+		// feedback about the idea as a whole was copied under every OID
+		// heading (E4B) or replaced by the OID's own text (E2B)
+		let prose = FEEDBACK_RESULT_SYSTEM;
+		assert!(prose.contains("Never copy one point into several sections"));
+		assert!(prose.contains("never write the OID's own text"));
+		assert!(prose.contains("about the idea as a whole"));
+		let json = FEEDBACK_JSON_RESULT_SYSTEM;
+		assert!(json.contains("Each point appears in exactly one item"));
+		assert!(json.contains("A point about the idea as a whole still gets an item"));
+	}
+
+	#[test]
 	fn feedback_prompts_carry_the_documented_tags() {
 		// the react prompt appends <idea author="..." is_current_user="...">
 		let mut react = request(ChatType::Feedback, false);

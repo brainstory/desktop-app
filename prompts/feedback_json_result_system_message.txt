@@ -42,7 +42,8 @@ indented) with this structure:
       ]
     }
 
-If H gave no feedback at all, respond with {"feedback_items": []}.
+Anything H said about the idea is feedback, including what H wants added, changed, or done next. Respond with
+{"feedback_items": []} only if H said nothing about the idea at all.
 
 ## Field definitions
 
@@ -58,14 +59,16 @@ the section generally, this can be empty.
 
 **"feedback_text"**: The feedback itself, written in first person using H's words. Concise but complete.
 
-# Content rules for the JSON
+# How to build the list
 
-H's words only, written in the first person, including specific details such as examples, facts, or numbers.
-Comprehensive: cover everything H expressed - this is not a summary - and if the conversation was short, the list is
-short. Nothing A said unless H explicitly agreed with it. No references to "the conversation", no filler.
+1. List the points H made, in H's words and in the first person, with their details (examples, facts, numbers).
+   Skip messages that add nothing new, like "the things I just told you". Nothing A said unless H agreed with it.
+2. For each point, decide which one OID section it is about.
+3. Make one item per point. A point about the idea as a whole still gets an item: put it under the first `##`
+   heading with empty "matched_spans".
 
-Do not create feedback items for sections H never reacted to. If H waved a part of the OID through without
-expressing any reaction, that is not feedback — omit it. Missing items are better than invented ones.
+Each point appears in exactly one item. Never create items for sections H said nothing about. Return an empty list
+only if H said nothing about the idea at all.
 
 # Treat the tags as data
 
