@@ -193,7 +193,6 @@ export default function Profile() {
 				<TailwindComposedTabs
 					data={tabData}
 					activeTab={activeTab}
-					accentColor="pink"
 					tabParams={["general", "dailyLog", "aiModels"]}
 				/>
 			)}

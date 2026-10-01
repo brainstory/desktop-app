@@ -64,8 +64,7 @@ export const QUERY_PARAMS = {
 	qotd: "qotd",
 	tab: "tab",
 	parentId: "parentId",
-	dailyIntent: "dailyIntent",
-	isFeedbackAndFrom: "isFeedbackAndFrom"
+	dailyIntent: "dailyIntent"
 } as const;
 
 /** localStorage keys (storage.ts and the index.astro inline script). */

@@ -226,9 +226,6 @@ function TailwindComposedTabs({
 }: {
 	data: ComposedTab[];
 	activeTab?: number;
-	/** @deprecated Ignored (tabs always use the accent ramp). Kept only
-	 * until profile/Profile.tsx stops passing it; then delete. */
-	accentColor?: string;
 	tabParams?: string[];
 }) {
 	return (
