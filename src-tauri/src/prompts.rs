@@ -17,6 +17,58 @@ pub const FEEDBACK_RESULT_SYSTEM: &str =
 pub const FEEDBACK_JSON_RESULT_SYSTEM: &str =
 	include_str!("../../prompts/feedback_json_result_system_message.txt");
 
+/// The prompts the app ships, one per file under prompts/.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+	StoryInterview,
+	StoryInterviewContext,
+	StoryInterviewReact,
+	StoryResult,
+	FeedbackResult,
+	FeedbackJsonResult,
+}
+
+impl Prompt {
+	/// Every prompt, in declaration order (so `p as usize` indexes it).
+	pub const ALL: [Prompt; 6] = [
+		Prompt::StoryInterview,
+		Prompt::StoryInterviewContext,
+		Prompt::StoryInterviewReact,
+		Prompt::StoryResult,
+		Prompt::FeedbackResult,
+		Prompt::FeedbackJsonResult,
+	];
+
+	/// The prompt's file name under prompts/, without the `.txt`.
+	pub fn file_stem(self) -> &'static str {
+		match self {
+			Prompt::StoryInterview => "story_interview_system_message",
+			Prompt::StoryInterviewContext => "story_interview_context_system_message",
+			Prompt::StoryInterviewReact => "story_interview_react_system_message",
+			Prompt::StoryResult => "story_result_system_message",
+			Prompt::FeedbackResult => "feedback_result_system_message",
+			Prompt::FeedbackJsonResult => "feedback_json_result_system_message",
+		}
+	}
+
+	/// The text compiled into the binary.
+	pub fn embedded(self) -> &'static str {
+		match self {
+			Prompt::StoryInterview => STORY_INTERVIEW_SYSTEM,
+			Prompt::StoryInterviewContext => STORY_INTERVIEW_CONTEXT_SYSTEM,
+			Prompt::StoryInterviewReact => STORY_INTERVIEW_REACT_SYSTEM,
+			Prompt::StoryResult => STORY_RESULT_SYSTEM,
+			Prompt::FeedbackResult => FEEDBACK_RESULT_SYSTEM,
+			Prompt::FeedbackJsonResult => FEEDBACK_JSON_RESULT_SYSTEM,
+		}
+	}
+
+	/// The text in effect for this prompt.
+	pub fn text(self) -> &'static str {
+		self.embedded()
+	}
+}
+
 /// Chat type communicated by the frontend (mirrors CHAT_TYPE in src/const.ts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatType {
@@ -85,16 +137,16 @@ impl PromptRequest {
 		if self.summarize {
 			if self.chat_type == ChatType::Feedback {
 				if self.structured_feedback {
-					return FEEDBACK_JSON_RESULT_SYSTEM.to_string();
+					return Prompt::FeedbackJsonResult.text().to_string();
 				}
-				return FEEDBACK_RESULT_SYSTEM.to_string();
+				return Prompt::FeedbackResult.text().to_string();
 			}
-			return STORY_RESULT_SYSTEM.to_string();
+			return Prompt::StoryResult.text().to_string();
 		}
 
 		match self.chat_type {
-			ChatType::Original => STORY_INTERVIEW_SYSTEM.to_string(),
-			ChatType::DailyIntent => STORY_INTERVIEW_CONTEXT_SYSTEM.to_string(),
+			ChatType::Original => Prompt::StoryInterview.text().to_string(),
+			ChatType::DailyIntent => Prompt::StoryInterviewContext.text().to_string(),
 			ChatType::Feedback => {
 				let author = sanitize_author(
 					&self
@@ -110,7 +162,7 @@ impl PromptRequest {
 				let idea = sanitize_tag_content(&self.react_to.clone().unwrap_or_default(), "idea");
 				format!(
 					"{}\n\n<idea author=\"{}\" is_current_user=\"{}\">{}</idea>",
-					STORY_INTERVIEW_REACT_SYSTEM.trim_end(),
+					Prompt::StoryInterviewReact.text().trim_end(),
 					author,
 					is_current_user,
 					idea
@@ -520,6 +572,19 @@ mod contract_tests {
 				!content.contains("<oid"),
 				"structured={structured}: {content}"
 			);
+		}
+	}
+
+	#[test]
+	fn prompt_table_is_consistent() {
+		let mut stems = std::collections::HashSet::new();
+		for (index, prompt) in Prompt::ALL.into_iter().enumerate() {
+			assert_eq!(prompt as usize, index, "ALL must follow declaration order");
+			assert!(
+				stems.insert(prompt.file_stem()),
+				"duplicate stem {prompt:?}"
+			);
+			assert!(!prompt.embedded().trim().is_empty(), "{prompt:?} is empty");
 		}
 	}
 }

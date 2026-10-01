@@ -229,7 +229,9 @@ where
 	if request.summarize && request.structured_feedback {
 		structured = extract_feedback_json(&output);
 	} else if second_pass && request.summarize && request.chat_type == ChatType::Feedback {
-		let json_system = crate::prompts::FEEDBACK_JSON_RESULT_SYSTEM.to_string();
+		let json_system = crate::prompts::Prompt::FeedbackJsonResult
+			.text()
+			.to_string();
 		let json_output = run_generation(
 			state,
 			&settings,
