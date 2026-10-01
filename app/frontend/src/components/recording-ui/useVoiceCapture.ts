@@ -15,6 +15,8 @@ export function useVoiceCapture(options: {
 	onError: (error: unknown) => void;
 	onStopError: (error: unknown) => void;
 	onTimeLimit: () => void;
+	/** the capture actually started / stopped (for announcements) */
+	onRecordingChange?: (change: "started" | "stopped") => void;
 	maxDurationMs?: number;
 }) {
 	const {
@@ -24,6 +26,7 @@ export function useVoiceCapture(options: {
 		onError,
 		onStopError,
 		onTimeLimit,
+		onRecordingChange,
 		maxDurationMs = 240_000
 	} = options;
 
@@ -36,9 +39,21 @@ export function useVoiceCapture(options: {
 	const activeRecordingRef = useRef(false);
 	const mountedRef = useRef(true);
 	// keep the latest callbacks reachable from the timer/unmount closures
-	const callbacksRef = useRef({ onWavCaptured, onError, onStopError, onTimeLimit });
+	const callbacksRef = useRef({
+		onWavCaptured,
+		onError,
+		onStopError,
+		onTimeLimit,
+		onRecordingChange
+	});
 	useEffect(() => {
-		callbacksRef.current = { onWavCaptured, onError, onStopError, onTimeLimit };
+		callbacksRef.current = {
+			onWavCaptured,
+			onError,
+			onStopError,
+			onTimeLimit,
+			onRecordingChange
+		};
 	});
 
 	// If the component goes away mid-recording (user ends the chat, page
@@ -62,6 +77,8 @@ export function useVoiceCapture(options: {
 		// clearing first would make the unmount cleanup skip the stop and
 		// leave cpal capturing forever.
 		activeRecordingRef.current = false;
+		// before the WAV handoff, which may announce the transcription
+		callbacksRef.current.onRecordingChange?.("stopped");
 		if (!wav || wav.byteLength <= 44) {
 			callbacksRef.current.onError("no audio captured");
 			return;
@@ -111,6 +128,7 @@ export function useVoiceCapture(options: {
 				}, maxDurationMs);
 				timerRef.current = timeout;
 				setStatus("recording");
+				callbacksRef.current.onRecordingChange?.("started");
 			} catch (error) {
 				console.error("Error accessing microphone:", error);
 				setIsRecording(false);

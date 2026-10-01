@@ -11,6 +11,8 @@ import { MicButton, MicPermissionDenied } from "./MicButton";
 import { RecordingWarnings, TextComposer, useRecordingWarnings } from "./RecordingWarnings";
 import type { CoachResponseOutcome } from "@components/chat/useChatSession";
 
+const TRANSCRIBING = "Transcribing…";
+
 interface RecordButtonProps {
 	isRecording: boolean;
 	isDisabledOverride?: boolean;
@@ -46,6 +48,9 @@ function RecordButton({
 	const context = useContext(AppContext);
 	const { warningType, setWarningType, errorMessage, setErrorMessage, dismiss } =
 		useRecordingWarnings();
+	/** text of the visually hidden live region (screen readers only; the
+	 * visible recording timer is aria-live="off" so it doesn't chatter) */
+	const [announcement, setAnnouncement] = useState("");
 
 	// one-shot guard so the coach response fires once per ReadyToSend
 	const respondedRef = useRef(false);
@@ -61,6 +66,9 @@ function RecordButton({
 
 	const handleError = (error: unknown): void => {
 		setIsTranscribing(false);
+		// the error itself is announced by the role="alert" banner; only
+		// retract a stale "Transcribing…"
+		setAnnouncement((current) => (current === TRANSCRIBING ? "" : current));
 		console.error("recording/transcription failed", error);
 		const described = describeError(error);
 		setErrorMessage(
@@ -80,6 +88,7 @@ function RecordButton({
 
 	const generateTranscript = (blobby: Blob): void => {
 		setIsTranscribing(true);
+		setAnnouncement(TRANSCRIBING);
 		// Transient transport hiccups deserve one retry; configuration
 		// and input problems ("no model downloaded", bad audio) never fix
 		// themselves. No retry once unmounted either.
@@ -90,6 +99,7 @@ function RecordButton({
 		)
 			.then((transcript) => {
 				if (!mountedRef.current) return;
+				setAnnouncement("");
 				onTranscript(transcript);
 				setIsTranscribing(false);
 			})
@@ -105,7 +115,9 @@ function RecordButton({
 		onWavCaptured: generateTranscript,
 		onError: handleError,
 		onStopError: handleStopError,
-		onTimeLimit: () => setWarningType("timer")
+		onTimeLimit: () => setWarningType("timer"),
+		onRecordingChange: (change) =>
+			setAnnouncement(change === "started" ? "Recording started" : "Recording stopped")
 	});
 
 	useEffect(() => {
@@ -137,6 +149,9 @@ function RecordButton({
 
 	return (
 		<>
+			<p className="sr-only" role="status" aria-live="polite">
+				{announcement}
+			</p>
 			{isTextInput ? (
 				<TextComposer
 					value={userTextInput}

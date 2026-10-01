@@ -36,6 +36,42 @@ describe("RecordButton", () => {
 		vi.useRealTimers();
 	});
 
+	it("announces recording start, stop and transcription to screen readers", async () => {
+		let finish!: (v: unknown) => void;
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: wav,
+			transcribe: () => new Promise((res) => (finish = res))
+		});
+		renderRecorder();
+		const user = userEvent.setup();
+		await user.click(screen.getByRole("button", { name: "Start recording" }));
+		const started = await screen.findByText("Recording started");
+		expect(started).toHaveAttribute("aria-live", "polite");
+		expect(started).toHaveClass("sr-only");
+
+		await user.click(screen.getByRole("button", { name: "Stop recording" }));
+		// the stop is announced, then the transcription that follows it
+		expect(await screen.findByText("Transcribing…")).toHaveAttribute("aria-live", "polite");
+		await act(async () => {
+			finish({ transcript: "hello" });
+			await Promise.resolve();
+		});
+		expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
+	});
+
+	it("announces a stop that is not followed by a transcription", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: () => new ArrayBuffer(44)
+		});
+		renderRecorder();
+		await recordAndStop();
+		expect(await screen.findByText("Recording stopped")).toHaveAttribute("aria-live", "polite");
+		vi.mocked(console.error).mockRestore();
+	});
+
 	describe("transcription", () => {
 		it("does not retry a permanent transcription error", async () => {
 			vi.useFakeTimers({ shouldAdvanceTime: true });
