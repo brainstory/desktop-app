@@ -60,6 +60,11 @@ export function PhotoNameCard({ userName, createdAt }: PhotoNameCardProps) {
 	);
 }
 
+/** The zone the OS/webview reports for this machine. */
+export function detectedTimezone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 let runtimeTimezones: string[] | null = null;
 
 /**
@@ -88,7 +93,7 @@ interface GeneralCardProps {
 
 export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardProps) {
 	const [editedName, setEditedName] = useState(userName ?? "");
-	const [selectedTimezone, setSelectedTimezone] = useState(timezone ?? "Etc/GMT");
+	const [selectedTimezone, setSelectedTimezone] = useState(timezone ?? "");
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
 	const [hasChanged, setHasChanged] = useState(false);
 	const timezones = useMemo(() => timezoneOptions(timezone), [timezone]);
@@ -117,7 +122,10 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 
 	const handleSaveClick = () => {
 		if (editedName.trim().length > 0 && editedName.length <= 70) {
-			saveSettings(editedName, selectedTimezone);
+			// "Detect automatically" stores the zone detected right now, the
+			// same thing userStore does on first launch; an empty string
+			// would be dropped by saveUserSettingsApi and never persist
+			saveSettings(editedName, selectedTimezone || detectedTimezone());
 			setHasChanged(false);
 		}
 	};

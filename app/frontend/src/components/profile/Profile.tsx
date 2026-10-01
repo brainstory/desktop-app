@@ -48,7 +48,8 @@ export default function Profile() {
 		getUserSettingsApi()
 			.then((res) => {
 				setUserName(res.user.name ?? "");
-				setUserTimezone(res.user.timezone ? res.user.timezone : "Etc/GMT");
+				// empty = not stored yet; the select shows "Detect automatically"
+				setUserTimezone(res.user.timezone ?? "");
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);

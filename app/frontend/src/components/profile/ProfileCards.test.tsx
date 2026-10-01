@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { GeneralCard, timezoneOptions } from "./ProfileCards";
 
@@ -23,6 +24,26 @@ describe("GeneralCard timezone select", () => {
 
 	it("keeps canonical zones selectable", () => {
 		expect(renderCard("Europe/Berlin")).toHaveValue("Europe/Berlin");
+	});
+
+	it("shows 'Detect automatically' when no timezone is stored", () => {
+		render(<GeneralCard userName="Ada" timezone={undefined} saveSettings={() => {}} />);
+		expect(screen.getByRole("combobox", { name: "Your timezone" })).toHaveValue("");
+	});
+
+	it("saves the detected zone when 'Detect automatically' is chosen", async () => {
+		const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		const saveSettings = vi.fn();
+		render(<GeneralCard userName="Ada" timezone="Asia/Tokyo" saveSettings={saveSettings} />);
+		const user = userEvent.setup();
+		await user.selectOptions(
+			screen.getByRole("combobox", { name: "Your timezone" }),
+			"Detect automatically"
+		);
+		await user.click(screen.getByRole("button", { name: /save/i }));
+		// an empty string was silently dropped by saveUserSettingsApi, so
+		// switching back to automatic never persisted anything
+		expect(saveSettings).toHaveBeenCalledWith("Ada", detected);
 	});
 });
 

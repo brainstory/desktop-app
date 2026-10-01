@@ -46,6 +46,14 @@ describe("Profile", () => {
 		expect(calls).toBe(2);
 	});
 
+	it("shows 'Detect automatically' rather than Etc/GMT when no timezone is stored", async () => {
+		mockInvoke({
+			get_user_settings: () => ({ ...userSettings, user: { name: "Ada" } })
+		});
+		render(<Profile />);
+		expect(await screen.findByRole("combobox", { name: "Your timezone" })).toHaveValue("");
+	});
+
 	it("shows the Updates card with the stored opt-out", async () => {
 		mockInvoke({
 			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })
