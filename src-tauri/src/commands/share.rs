@@ -217,24 +217,16 @@ fn validate_imported_fields(title: &str, result: &str) -> Result<(), String> {
 	Ok(())
 }
 
-/// Export an idea (or a feedback document) as a portable JSON file. The user
-/// sends the file to the other person however they like; importing it on
-/// another machine attributes the content to the author stored in the file.
-/// The chat transcript is deliberately NOT included — only the distilled
-/// result is shared, so the raw conversation stays on the author's machine.
-#[tauri::command]
-pub async fn export_idea(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-	idea_id: String,
-) -> Result<serde_json::Value, String> {
-	let idea = state
-		.db
-		.get_idea(&idea_id)?
+/// The author and payload an export of `idea_id` carries. Split out of
+/// the command so the export -> import round trip can be tested without
+/// a native save dialog.
+fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePayload), String> {
+	let idea = db
+		.get_idea(idea_id)?
 		.ok_or_else(|| format!("idea {idea_id} not found"))?;
 
 	let idea_type = idea.r#type.clone().unwrap_or_else(|| "original".into());
-	let own_name = state.db.get_setting("user_name").filter(|s| !s.is_empty());
+	let own_name = db.get_setting("user_name").filter(|s| !s.is_empty());
 	let author = idea
 		.creator_name
 		.clone()
@@ -244,9 +236,7 @@ pub async fn export_idea(
 	let payload = if idea_type == "feedback" {
 		let (target_share_id, target_title) = match &idea.parent_idea {
 			Some(parent) => (
-				state
-					.db
-					.get_share_id(&parent.id)
+				db.get_share_id(&parent.id)
 					.unwrap_or_else(|| parent.id.clone()),
 				parent.title.clone(),
 			),
@@ -261,23 +251,38 @@ pub async fn export_idea(
 			created_at: Some(idea.created_at.clone()),
 		}
 	} else {
-		let share_id = state
-			.db
-			.get_share_id(&idea.id)
-			.unwrap_or_else(|| idea.id.clone());
+		let share_id = db.get_share_id(&idea.id).unwrap_or_else(|| idea.id.clone());
 		SharePayload::Idea {
 			share_id,
 			title: idea.title.clone(),
 			result: idea.result.clone().unwrap_or_default(),
-			idea_type: idea_type.clone(),
+			idea_type,
 			created_at: Some(idea.created_at.clone()),
 		}
 	};
+	Ok((author, payload))
+}
 
+/// Export an idea (or a feedback document) as a portable JSON file. The user
+/// sends the file to the other person however they like; importing it on
+/// another machine attributes the content to the author stored in the file.
+/// The chat transcript is deliberately NOT included — only the distilled
+/// result is shared, so the raw conversation stays on the author's machine.
+#[tauri::command]
+pub async fn export_idea(
+	app: tauri::AppHandle,
+	state: State<'_, AppState>,
+	idea_id: String,
+) -> Result<serde_json::Value, String> {
+	let (author, payload) = export_share(&state.db, &idea_id)?;
 	let envelope = build_export_payload(&author, &payload);
+	let file_tag = match &payload {
+		SharePayload::Idea { idea_type, .. } => idea_type.as_str(),
+		SharePayload::Feedback { .. } => "feedback",
+	};
 	let default_name = format!(
 		"brainstory-{}-{}.json",
-		idea_type,
+		file_tag,
 		chrono::Local::now().format("%Y%m%d-%H%M")
 	);
 
