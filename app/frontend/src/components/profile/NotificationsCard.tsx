@@ -9,7 +9,8 @@ import PinkButton from "@ds/PinkButton";
 
 interface NotificationsCardProps {
 	notificationsData?: NotificationSetting[];
-	saveSettings: (fields: NotificationSetting[]) => void;
+	/** Resolves true once persisted, false if the save failed. */
+	saveSettings: (fields: NotificationSetting[]) => Promise<boolean>;
 }
 
 export function NotificationsCard({
@@ -29,8 +30,11 @@ export function NotificationsCard({
 	}
 
 	const handleSaveClick = () => {
-		saveSettings(notificationFields);
 		setHasChanged(false);
+		void saveSettings(notificationFields).then((saved) => {
+			// a failed save leaves the edits pending, so Save can be retried
+			if (!saved) setHasChanged(true);
+		});
 	};
 
 	const renderNotificationFields = (fields: NotificationSetting[]) => {

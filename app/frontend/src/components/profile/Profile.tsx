@@ -94,17 +94,18 @@ export default function Profile() {
 			});
 	};
 
-	const handleNotificationsSave = (notificationFields: NotificationSetting[]): void => {
+	const handleNotificationsSave = (notificationFields: NotificationSetting[]): Promise<boolean> =>
 		saveUserSettingsApi({
 			notifications: notificationFields as unknown as Record<string, unknown>[]
 		})
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
+				return true;
 			})
 			.catch((e) => {
 				openSnackbar(false, normalizeApiError(e));
+				return false;
 			});
-	};
 
 	const handleLogSettingsSave = (enabledLogQids: number[]): void => {
 		// copy before sorting (the prop is the child's state) and sort

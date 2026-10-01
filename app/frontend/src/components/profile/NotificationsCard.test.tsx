@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { NotificationsCard } from "./NotificationsCard";
 import type { NotificationSetting } from "@helpers/api/settings";
@@ -21,5 +22,30 @@ describe("NotificationsCard", () => {
 			"aria-checked",
 			"false"
 		);
+	});
+
+	it("keeps Save available when saving fails, so it can be retried", async () => {
+		const user = userEvent.setup();
+		const saveSettings = vi.fn(async () => false);
+		render(<NotificationsCard notificationsData={[reminder]} saveSettings={saveSettings} />);
+		const save = screen.getByRole("button", { name: "Save" });
+		expect(save).toBeDisabled();
+		await user.click(screen.getByRole("switch", { name: "Daily intention reminder" }));
+		await user.click(save);
+		expect(saveSettings).toHaveBeenCalledWith([{ ...reminder, enabled: true }]);
+		await waitFor(() => expect(save).toBeEnabled());
+		await user.click(save);
+		expect(saveSettings).toHaveBeenCalledTimes(2);
+	});
+
+	it("disables Save again after a successful save", async () => {
+		const user = userEvent.setup();
+		const saveSettings = vi.fn(async () => true);
+		render(<NotificationsCard notificationsData={[reminder]} saveSettings={saveSettings} />);
+		await user.click(screen.getByRole("switch", { name: "Daily intention reminder" }));
+		const save = screen.getByRole("button", { name: "Save" });
+		await user.click(save);
+		await waitFor(() => expect(saveSettings).toHaveBeenCalledOnce());
+		expect(save).toBeDisabled();
 	});
 });
