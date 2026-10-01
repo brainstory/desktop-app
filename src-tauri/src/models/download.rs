@@ -900,13 +900,23 @@ mod resume_tests {
 		let addr = listener.local_addr().expect("addr");
 		std::thread::spawn(move || {
 			if let Ok((mut sock, _)) = listener.accept() {
-				let mut buf = [0u8; 4096];
-				let _ = sock.read(&mut buf); // drain the request head
+				// read the whole request head: closing with unread bytes
+				// would send a RST, which can discard data in flight
+				let mut request = Vec::new();
+				let mut byte = [0u8; 1];
+				while !request.ends_with(b"\r\n\r\n") {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0]);
+				}
 				let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
 				let _ = sock.write_all(head.as_bytes());
 				let _ = sock.write_all(&body[..sent]);
 				let _ = sock.flush();
-				// dropping the socket closes the connection mid-body
+				// a clean FIN mid-body: the client sees the stream end early
+				let _ = sock.shutdown(std::net::Shutdown::Write);
+				std::thread::sleep(std::time::Duration::from_millis(300));
 			}
 		});
 		format!("http://{addr}/model.bin")
