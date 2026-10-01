@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
+import { cleanStores } from "nanostores";
 import { mockInvoke } from "@src/test/mock-tauri";
+import { $aiStatus } from "@components/global/aiStatusStore";
 import { ChatSection } from "./ChatSection";
 
 // Rive needs a canvas + WASM runtime that jsdom doesn't have
 vi.mock("@components/global/RivePencil", () => ({ default: () => null }));
 
 const readyStatus = { llm: { state: "ready" }, stt: { state: "ready" } };
+
+/** mockInvoke with a ready AI runtime unless the test overrides it */
+function mockChat(handlers: Record<string, (args: unknown) => unknown>) {
+	mockInvoke({ get_runtime_status: () => readyStatus, ...handlers });
+}
 
 function setUrl(search: string) {
 	window.history.replaceState(null, "", `/chat${search}`);
@@ -22,12 +29,15 @@ describe("ChatSection", () => {
 	afterEach(() => {
 		setUrl("");
 		vi.useRealTimers();
+		// unmount first: a still-mounted consumer would re-seed the store
+		// right after cleanStores resets it
+		cleanup();
+		cleanStores($aiStatus);
 	});
 
 	it("shows the draft-not-found error section when the draft can't be loaded", async () => {
 		setUrl("?id=missing");
-		mockInvoke({
-			get_runtime_status: () => readyStatus,
+		mockChat({
 			get_idea: () => {
 				throw new Error("idea not found");
 			}
@@ -40,8 +50,7 @@ describe("ChatSection", () => {
 	it("does not write a freshly loaded draft straight back to the database", async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		setUrl("?id=draft-1");
-		mockInvoke({
-			get_runtime_status: () => readyStatus,
+		mockChat({
 			get_idea: () => ({
 				id: "draft-1",
 				transcript: [
@@ -71,7 +80,7 @@ describe("ChatSection", () => {
 		}
 
 		it("clears the composer once the coach answered", async () => {
-			mockInvoke({
+			mockChat({
 				generate_response: () => ({ response: "tell me more" })
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
@@ -81,7 +90,7 @@ describe("ChatSection", () => {
 		});
 
 		it("keeps the typed text when the message was flagged by moderation", async () => {
-			mockInvoke({
+			mockChat({
 				generate_response: () => {
 					throw "HttpError 469: Inappropriate input";
 				}
@@ -94,7 +103,7 @@ describe("ChatSection", () => {
 
 		it("locks the composer while the coach is answering (no duplicate sends)", async () => {
 			let answer!: (v: unknown) => void;
-			mockInvoke({
+			mockChat({
 				generate_response: () => new Promise((res) => (answer = res))
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
@@ -122,7 +131,7 @@ describe("ChatSection", () => {
 
 		it("keeps the text after an AI failure and resends it without duplicating it", async () => {
 			let attempts = 0;
-			mockInvoke({
+			mockChat({
 				generate_response: () => {
 					attempts++;
 					// the first send fails twice (call + its one retry)
@@ -144,6 +153,44 @@ describe("ChatSection", () => {
 			const sent = (lastCall[1] as { messages: { role: string; content: string }[] })
 				.messages;
 			expect(sent.filter((m) => m.content === "my idea")).toHaveLength(1);
+		});
+	});
+
+	describe("model status", () => {
+		it("asks to download a model when none is installed (not 'loading' forever)", async () => {
+			mockInvoke({
+				get_runtime_status: () => ({ llm: { state: "missing" }, stt: { state: "ready" } })
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			const link = await screen.findByRole("link", { name: "Download a model in Settings" });
+			expect(link).toHaveAttribute("href", "/profile?tab=aiModels");
+			expect(screen.queryByText(/Loading the AI model/)).not.toBeInTheDocument();
+		});
+
+		it("says nothing before the runtime status is known", () => {
+			mockInvoke({ get_runtime_status: () => new Promise(() => {}) });
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			expect(screen.queryByText(/Loading the AI model/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Download a model/)).not.toBeInTheDocument();
+		});
+
+		it("shows the loading notice while the model loads", async () => {
+			mockInvoke({
+				get_runtime_status: () => ({ llm: { state: "loading" }, stt: { state: "ready" } })
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			expect(await screen.findByText(/Loading the AI model/)).toBeInTheDocument();
+		});
+
+		it("explains a failed model load", async () => {
+			mockInvoke({
+				get_runtime_status: () => ({
+					llm: { state: "error", error: "bad gguf" },
+					stt: { state: "ready" }
+				})
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			expect(await screen.findByText(/failed to load: bad gguf/)).toBeInTheDocument();
 		});
 	});
 });

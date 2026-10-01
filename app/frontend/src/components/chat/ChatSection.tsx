@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useStore } from "@nanostores/react";
-import { $aiStatus, llmBusy } from "@components/global/aiStatusStore";
+import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
 import { CONVERSATION_STATE, MIN_CONVERSATION_LENGTH_BEFORE_SAVE, CHAT_TYPE } from "@src/const";
 import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
 import type { ChatMessage } from "@src/types";
@@ -13,6 +13,7 @@ import ChatIdeaMainSection from "@components/chat/ChatIdeaMainSection";
 import ChatFeedbackMainSection from "@components/chat/ChatFeedbackMainSection";
 import ErrorSection from "@components/error/ErrorSection";
 import { ChatErrorBanner } from "@components/chat/ChatErrorBanner";
+import { ModelStatusNotice } from "@components/chat/ModelStatusNotice";
 import { useChatSession } from "@components/chat/useChatSession";
 import {
 	useDraftLoader,
@@ -61,7 +62,7 @@ export function ChatSection({
 	const [aiError, setAiError] = useState<string | null>(null);
 
 	const aiStatus = useStore($aiStatus);
-	const showModelLoading = llmBusy(aiStatus);
+	const modelAvailability = llmAvailability(aiStatus);
 	const firstPrompt = getFirstPrompt(chatType);
 	const [currConversation, setCurrConversation] = useState<ChatMessage[]>([
 		{ role: "assistant", content: firstPrompt }
@@ -187,15 +188,7 @@ export function ChatSection({
 				{aiError && (
 					<ChatErrorBanner aiError={aiError} onDismiss={() => setAiError(null)} />
 				)}
-				{showModelLoading && (
-					<p
-						role="status"
-						className="mx-4 mt-2 text-sm text-stone-500 bg-stone-100 rounded-lg px-4 py-2"
-					>
-						Loading the AI model - you can type already, sending unlocks when it is
-						ready...
-					</p>
-				)}
+				<ModelStatusNotice availability={modelAvailability} error={aiStatus.llm.error} />
 				<ChatTopBar
 					parentIdea={parentIdea}
 					showTranscript={showTranscript}
