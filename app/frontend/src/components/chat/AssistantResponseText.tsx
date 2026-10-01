@@ -3,6 +3,7 @@ import { useAppContext } from "@src/components/chat/reusable/AppWrapper";
 import TransparentButton from "@ds/TransparentButton";
 import Tooltip from "@ds/Tooltip";
 import { cn } from "@helpers/cn";
+import { useMediaQuery } from "@src/hooks/useMediaQuery";
 
 interface AssistantResponseTextProps {
 	content?: string | null;
@@ -20,6 +21,8 @@ export function AssistantResponseText({
 	styleSetting
 }: AssistantResponseTextProps) {
 	const { sludgeman } = useAppContext();
+	// only mount the pencil (and so load the Rive WASM) where it is shown
+	const showPencil = useMediaQuery("(min-width: 1024px)");
 
 	const assistantTextStyle = cn(
 		"tracking-tight text-black whitespace-pre-wrap",
@@ -48,13 +51,15 @@ export function AssistantResponseText({
 
 	return (
 		<div className="flex flex-col gap-2 lg:gap-4 md:flex-row justify-center items-center">
-			<div className="sludge-sludge-maaaan hidden lg:block">
-				{sludgeman == "idle" ? (
-					<RivePencil type="wave" small={styleSetting === "feedback"} />
-				) : (
-					<RivePencil type="jump" small={styleSetting === "feedback"} />
-				)}
-			</div>
+			{showPencil && (
+				<div className="sludge-sludge-maaaan">
+					{sludgeman == "idle" ? (
+						<RivePencil type="wave" small={styleSetting === "feedback"} />
+					) : (
+						<RivePencil type="jump" small={styleSetting === "feedback"} />
+					)}
+				</div>
+			)}
 			{renderText()}
 			<Tooltip text="Another question">
 				<TransparentButton

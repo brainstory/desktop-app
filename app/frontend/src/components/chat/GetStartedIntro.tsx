@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { hasDoneGettingStarted } from "@helpers/storage";
 import { TOPICS } from "@src/const";
+import { useMediaQuery } from "@src/hooks/useMediaQuery";
 
 import { useAppContext } from "@components/chat/reusable/AppWrapper";
 
@@ -10,6 +11,8 @@ import TextsFadeIn from "./reusable/TextsFadeIn";
 export default function GetStartedIntro() {
 	const [isTextLoading, setIsTextLoading] = useState(true);
 	const { sludgeman } = useAppContext();
+	// only mount the pencil (and so load the Rive WASM) where it is shown
+	const showPencil = useMediaQuery("(min-width: 1024px)");
 
 	const hasDone = hasDoneGettingStarted();
 
@@ -50,13 +53,15 @@ export default function GetStartedIntro() {
 	return (
 		<div className="p-6 md:p-10">
 			<div className="flex flex-col md:flex-row justify-center items-center">
-				<div className="sludge-sludge-maaaan hidden lg:block lg:mr-4">
-					{sludgeman == "idle" ? (
-						<RivePencil type="wave" small={false} />
-					) : (
-						<RivePencil type="jump" small={false} />
-					)}
-				</div>
+				{showPencil && (
+					<div className="sludge-sludge-maaaan mr-4">
+						{sludgeman == "idle" ? (
+							<RivePencil type="wave" small={false} />
+						) : (
+							<RivePencil type="jump" small={false} />
+						)}
+					</div>
+				)}
 				<TextsFadeIn classes="tracking-tight text-xl md:text-2xl max-w-2xl flex flex-col gap-3">
 					{introTextComponents}
 				</TextsFadeIn>
