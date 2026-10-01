@@ -50,17 +50,17 @@ fn neutralize_turn_markers(content: &str) -> String {
 /// How a restored KV cache lines up with the next prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KvReuse {
-	/// First prompt position that still decodes; restored cells from
-	/// here on are dropped.
+	/// First prompt position that still decodes. Restored cells from here
+	/// on are dropped, so this is also how many cached tokens stay: on an
+	/// exact repeat it is one short of the shared prefix, and the dropped
+	/// final token is re-decoded rather than kept twice.
 	decode_from: usize,
-	/// Leading cached tokens that stay in the restored cache.
-	kept: usize,
 }
 
 impl KvReuse {
 	/// The tokens the cache holds once the prompt tail is decoded.
 	fn tokens_after_prompt<T: Clone>(&self, cached: &[T], prompt: &[T]) -> Vec<T> {
-		let mut tokens = cached[..self.kept].to_vec();
+		let mut tokens = cached[..self.decode_from].to_vec();
 		tokens.extend_from_slice(&prompt[self.decode_from..]);
 		tokens
 	}
@@ -81,7 +81,6 @@ fn plan_kv_reuse<T: PartialEq>(cached: &[T], prompt: &[T]) -> Option<KvReuse> {
 	}
 	Some(KvReuse {
 		decode_from: common.min(prompt.len().saturating_sub(1)),
-		kept: common,
 	})
 }
 
@@ -391,8 +390,7 @@ impl LocalLlm {
 							decode_from = plan.decode_from;
 							kv_tokens = plan.tokens_after_prompt(&saved.tokens, &tokens);
 							log::info!(
-								"reusing KV cache: {} cached tokens, decoding {} new",
-								plan.kept,
+								"reusing KV cache: {decode_from} cached tokens, decoding {} new",
 								n_prompt - decode_from
 							);
 						}
@@ -1002,6 +1000,28 @@ mod tests {
 		let plan = plan_kv_reuse(&cached, &prompt).expect("shared prefix");
 		assert_eq!(plan.decode_from, 3);
 		assert_eq!(plan.tokens_after_prompt(&cached, &prompt), prompt);
+	}
+
+	#[test]
+	fn kv_reuse_of_an_exact_repeat_records_each_prompt_token_once() {
+		use super::plan_kv_reuse;
+		// the same prompt again (a retry, or a cache that ends exactly at
+		// the prompt): the final token re-decodes for fresh logits, so its
+		// cell is dropped and must not stay recorded alongside the re-decode
+		let prompt = [1, 2, 3, 4];
+		for cached in [&[1, 2, 3, 4][..], &[1, 2, 3, 4, 50, 51][..]] {
+			let plan = plan_kv_reuse(cached, &prompt).expect("shared prefix");
+			assert_eq!(plan.decode_from, 3, "the last token decodes again");
+			assert_eq!(
+				plan.tokens_after_prompt(cached, &prompt),
+				prompt,
+				"cache bookkeeping must match the cells actually held"
+			);
+		}
+		// a one-token prompt still decodes its token
+		let plan = plan_kv_reuse(&[1, 2], &[1]).expect("shared prefix");
+		assert_eq!(plan.decode_from, 0);
+		assert_eq!(plan.tokens_after_prompt(&[1, 2], &[1]), [1]);
 	}
 
 	#[test]
