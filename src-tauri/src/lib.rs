@@ -718,9 +718,8 @@ mod tests {
 
 	#[test]
 	fn open_database_quarantines_corrupt_file_and_sidecars() {
-		let dir =
-			std::env::temp_dir().join(format!("brainstory-quarantine-{}", uuid::Uuid::new_v4()));
-		std::fs::create_dir_all(&dir).expect("make temp dir");
+		let temp = tempfile::tempdir().expect("tempdir");
+		let dir = temp.path().to_path_buf();
 		let db_path = dir.join("brainstory.db");
 		// a real WAL-mode database truncated mid-page opens with
 		// SQLITE_CORRUPT (not NOTADB), so the quarantine path runs
@@ -769,7 +768,6 @@ mod tests {
 				entry.path().display()
 			);
 		}
-		std::fs::remove_dir_all(&dir).ok();
 	}
 
 	#[test]

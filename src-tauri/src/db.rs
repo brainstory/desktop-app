@@ -1503,10 +1503,11 @@ mod coverage_tests {
 	use super::*;
 	use serde_json::json;
 
-	fn db() -> (Db, std::path::PathBuf) {
-		let path =
-			std::env::temp_dir().join(format!("brainstory-db-cov-{}.db", uuid::Uuid::new_v4()));
-		(Db::open(&path).expect("open"), path)
+	/// A fresh database in its own temp dir, removed (with its WAL
+	/// sidecars) when the returned TempDir drops.
+	fn db() -> (Db, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(Db::open(&dir.path().join("cov.db")).expect("open"), dir)
 	}
 
 	fn idea(db: &Db, id: &str, created_at: &str) {
@@ -1524,7 +1525,7 @@ mod coverage_tests {
 
 	#[test]
 	fn streak_counts_consecutive_days_and_stops_at_gap() {
-		let (db, _path) = db();
+		let (db, _dir) = db();
 		let ts = |offset: i64| {
 			(today_local() - chrono::Duration::days(offset))
 				.and_hms_opt(12, 0, 0)
@@ -1542,7 +1543,7 @@ mod coverage_tests {
 
 	#[test]
 	fn list_ideas_groups_children_under_parents_newest_first() {
-		let (db, _path) = db();
+		let (db, _dir) = db();
 		idea(&db, "old", "2026-01-01T00:00:00");
 		idea(&db, "new", "2026-02-01T00:00:00");
 		db.insert_idea(NewIdea {
@@ -1579,7 +1580,7 @@ mod coverage_tests {
 
 	#[test]
 	fn list_ideas_skips_what_the_library_grid_never_reads() {
-		let (db, _path) = db();
+		let (db, _dir) = db();
 		let chat = vec![ChatMessage {
 			role: "user".into(),
 			content: "a long brainstorm".into(),
@@ -1627,7 +1628,7 @@ mod coverage_tests {
 
 	#[test]
 	fn delete_idea_clears_daily_intent_and_survey_links() {
-		let (db, _path) = db();
+		let (db, _dir) = db();
 		// the production path that links an idea as today's intent
 		db.create_daily_intent_idea("target", "target", "r", &[], &json!({}))
 			.unwrap();

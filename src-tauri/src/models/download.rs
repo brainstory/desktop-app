@@ -616,7 +616,7 @@ fn downloaded_on_disk(path: &Path) -> u64 {
 }
 #[cfg(test)]
 mod download_tests {
-	use super::{download_model_file, part_path};
+	use super::download_model_file;
 	use sha2::{Digest, Sha256};
 	use std::io::{Read, Write};
 	use std::sync::atomic::AtomicBool;
@@ -658,14 +658,10 @@ mod download_tests {
 			.collect()
 	}
 
-	fn dest(tag: &str) -> std::path::PathBuf {
-		part_path(
-			&std::env::temp_dir().join(format!("brainstory-dl-cov-{tag}-{}", uuid::Uuid::new_v4())),
-		)
-		.with_file_name(format!(
-			"brainstory-dl-cov-{tag}-{}.bin",
-			uuid::Uuid::new_v4()
-		))
+	/// A download destination in its own temp dir (removed on drop).
+	fn dest(tag: &str) -> (std::path::PathBuf, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(dir.path().join(format!("{tag}.bin")), dir)
 	}
 
 	#[tokio::test]
@@ -682,7 +678,7 @@ mod download_tests {
 				.chain(body.clone())
 				.collect()
 		});
-		let dest = dest("auth");
+		let (dest, _dir) = dest("auth");
 		let cancel = Arc::new(AtomicBool::new(false));
 		download_model_file(
 			&url,
@@ -718,7 +714,7 @@ mod download_tests {
 				.chain(body.clone())
 				.collect()
 		});
-		let dest = dest("anon");
+		let (dest, _dir) = dest("anon");
 		let cancel = Arc::new(AtomicBool::new(false));
 		download_model_file(&url, &dest, 50, &digest, "", &cancel, &mut |_| {})
 			.await
@@ -747,7 +743,7 @@ mod download_tests {
 			out.extend_from_slice(b"0\r\n\r\n");
 			out
 		});
-		let dest = dest("indeterminate");
+		let (dest, _dir) = dest("indeterminate");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let mut progress = Vec::new();
 		download_model_file(&url, &dest, 3_000_000, &digest, "", &cancel, &mut |p| {
@@ -773,7 +769,7 @@ mod download_tests {
 				.chain(body.clone())
 				.collect()
 		});
-		let dest = dest("failfast");
+		let (dest, _dir) = dest("failfast");
 		let cancel = Arc::new(AtomicBool::new(false));
 		let err = download_model_file(
 			&url,
@@ -861,10 +857,8 @@ mod resume_tests {
 		let digest = sha256_hex(&body);
 		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
 		let url = serve_ranged(body.clone(), saw_range.clone());
-		let dest = part_path(
-			&std::env::temp_dir().join(format!("brainstory-resume-{}.bin", uuid::Uuid::new_v4())),
-		)
-		.with_file_name(format!("brainstory-resume-{}.bin", uuid::Uuid::new_v4()));
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
 		let tmp = part_path(&dest);
 
 		// a stalled download left the first 1000 bytes staged
@@ -895,7 +889,6 @@ mod resume_tests {
 			body,
 			"file assembled correctly"
 		);
-		let _ = std::fs::remove_file(&dest);
 	}
 
 	/// Promise `body.len()` bytes but hang up after `sent` of them, the way
@@ -1027,23 +1020,18 @@ mod resume_tests {
 	}
 
 	#[tokio::test]
-	async fn restarts_when_the_server_ignores_range() {
+	async fn restarts_when_the_partial_file_is_oversized() {
 		let body = vec![9u8; 1500];
 		let digest = sha256_hex(&body);
 		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
 		let url = serve_ranged(body.clone(), saw_range.clone());
-		let dest = std::env::temp_dir().join(format!(
-			"brainstory-resume-ign-{}.bin",
-			uuid::Uuid::new_v4()
-		));
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
 
-		// stale prefix from a DIFFERENT transfer must not be stitched on
-		std::fs::write(part_path(&dest), b"garbage prefix").expect("stage junk");
-
-		let cancel = Arc::new(AtomicBool::new(false));
-		// The server here honors Range, so make the junk prefix longer
-		// than the body: the resume is refused and the download restarts.
+		// a .part longer than the whole file is junk from another state:
+		// no resume is attempted, the download restarts from zero
 		std::fs::write(part_path(&dest), vec![0u8; 2000]).expect("stage oversized junk");
+		let cancel = Arc::new(AtomicBool::new(false));
 		download_model_file(
 			&url,
 			&dest,
@@ -1055,8 +1043,74 @@ mod resume_tests {
 		)
 		.await
 		.expect("clean restart");
+		assert_eq!(
+			saw_range.lock().unwrap().as_deref(),
+			None,
+			"no Range request for an oversized .part"
+		);
 		assert_eq!(std::fs::read(&dest).unwrap(), body);
-		let _ = std::fs::remove_file(&dest);
+	}
+
+	#[tokio::test]
+	async fn restarts_when_the_server_ignores_range() {
+		// a server (or proxy) without Range support answers 200 with the
+		// full body: the staged prefix must be dropped, not stitched onto it
+		let body: Vec<u8> = (0..1500u32).map(|i| (i % 7) as u8).collect();
+		let digest = sha256_hex(&body);
+		let saw_range = std::sync::Arc::new(std::sync::Mutex::new(None));
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		let served = body.clone();
+		let seen = saw_range.clone();
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				let mut request = String::new();
+				let mut byte = [0u8; 1];
+				while !request.ends_with("\r\n\r\n") {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+				}
+				*seen.lock().unwrap() = request
+					.lines()
+					.find(|l| l.to_lowercase().starts_with("range:"))
+					.map(|l| l.to_string());
+				let head = format!(
+					"HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+					served.len()
+				);
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(&served);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		std::fs::write(part_path(&dest), b"stale prefix from another transfer")
+			.expect("stage prefix");
+		let cancel = Arc::new(AtomicBool::new(false));
+		download_model_file(
+			&format!("http://{addr}/model.bin"),
+			&dest,
+			body.len() as u64,
+			&digest,
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect("restart from the full body");
+		assert!(
+			saw_range.lock().unwrap().is_some(),
+			"a resume was attempted"
+		);
+		assert_eq!(
+			std::fs::read(&dest).unwrap(),
+			body,
+			"prefix not stitched on"
+		);
 	}
 }
 #[cfg(test)]
