@@ -353,9 +353,20 @@ mod contract_tests {
 		react.react_to = Some("idea".into());
 		react.react_to_author = Some(hostile.into());
 		let system = react.system_prompt();
+		// the raw newline in the hostile name must not survive: the whole
+		// appended tag stays on one line, so the name can't spill out of
+		// the attribute onto a line of its own
 		assert!(
-			!system.contains("is_current_user=\"true\\n"),
+			!system.contains("is_current_user=\"true\n"),
 			"hostile author survived: {system}"
+		);
+		let tag_start = system.rfind("<idea author=\"").expect("idea tag appended");
+		assert!(
+			system[tag_start..]
+				.lines()
+				.next()
+				.is_some_and(|line| line.ends_with("</idea>")),
+			"newline broke the idea tag: {system}"
 		);
 		assert!(
 			!system.contains("author=\"x\""),
@@ -419,5 +430,96 @@ mod contract_tests {
 			structured.system_prompt(),
 			FEEDBACK_JSON_RESULT_SYSTEM.to_string()
 		);
+	}
+
+	#[test]
+	fn prompt_selection_covers_the_full_matrix() {
+		use ChatType::{DailyIntent, Feedback, Original};
+		for chat_type in [Original, DailyIntent, Feedback] {
+			for summarize in [false, true] {
+				for structured in [false, true] {
+					let mut req = request(chat_type, summarize);
+					req.structured_feedback = structured;
+					let system = req.system_prompt();
+					let case =
+						format!("{chat_type:?} summarize={summarize} structured={structured}");
+					match (chat_type, summarize, structured) {
+						(Original, false, _) => {
+							assert_eq!(system, STORY_INTERVIEW_SYSTEM, "{case}")
+						}
+						(DailyIntent, false, _) => {
+							assert_eq!(system, STORY_INTERVIEW_CONTEXT_SYSTEM, "{case}")
+						}
+						// the feedback interview appends the <idea> tag
+						(Feedback, false, _) => {
+							assert!(
+								system.starts_with(STORY_INTERVIEW_REACT_SYSTEM.trim_end()),
+								"{case}"
+							);
+							assert!(system.contains("\n\n<idea author=\""), "{case}");
+							assert!(system.ends_with("</idea>"), "{case}");
+						}
+						(Feedback, true, false) => {
+							assert_eq!(system, FEEDBACK_RESULT_SYSTEM, "{case}")
+						}
+						(Feedback, true, true) => {
+							assert_eq!(system, FEEDBACK_JSON_RESULT_SYSTEM, "{case}");
+							assert!(system.contains("oid_heading_text"), "{case}");
+						}
+						// structured_feedback only applies to feedback results
+						(Original | DailyIntent, true, _) => {
+							assert_eq!(system, STORY_RESULT_SYSTEM, "{case}")
+						}
+					}
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn summaries_wrap_the_transcript_and_interviews_pass_messages_through() {
+		for chat_type in [
+			ChatType::Original,
+			ChatType::DailyIntent,
+			ChatType::Feedback,
+		] {
+			let interview = request(chat_type, false).user_messages();
+			assert_eq!(interview.len(), 1, "{chat_type:?}");
+			assert_eq!(interview[0].role, "user", "{chat_type:?}");
+			assert_eq!(interview[0].content, "hello", "{chat_type:?}");
+
+			let summary = request(chat_type, true).user_messages();
+			assert_eq!(summary.len(), 1, "{chat_type:?}");
+			assert_eq!(summary[0].role, "user", "{chat_type:?}");
+			assert_eq!(
+				summary[0].content, "<t>[{\"role\":\"user\",\"content\":\"hello\"}]</t>",
+				"{chat_type:?}"
+			);
+		}
+	}
+
+	#[test]
+	fn feedback_without_react_to_degrades_cleanly() {
+		// interview: the <idea> tag is still appended, with the placeholder
+		// author and an empty body
+		let system = request(ChatType::Feedback, false).system_prompt();
+		assert!(
+			system.ends_with("\n\n<idea author=\"the author\" is_current_user=\"false\"></idea>"),
+			"{system}"
+		);
+		// summary (prose and JSON): no <oid> framing, just the transcript
+		for structured in [false, true] {
+			let mut summary = request(ChatType::Feedback, true);
+			summary.structured_feedback = structured;
+			let content = summary.user_messages().remove(0).content;
+			assert!(
+				content.starts_with("<t>") && content.ends_with("</t>"),
+				"structured={structured}: {content}"
+			);
+			assert!(
+				!content.contains("<oid"),
+				"structured={structured}: {content}"
+			);
+		}
 	}
 }
