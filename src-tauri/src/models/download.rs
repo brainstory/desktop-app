@@ -102,19 +102,28 @@ pub fn hf_blob_path(cache: &Path, spec: &ModelSpec) -> PathBuf {
 
 /// Link a blob into a snapshot under `snapshots/<sha>/<filename>`,
 /// trying a relative symlink (the standard layout) first, then a
-/// hardlink (Windows without symlink privileges), then a copy. Idempotent.
+/// hardlink (Windows without symlink privileges, or a symlink that
+/// doesn't resolve), then a copy. Idempotent; a dead link is replaced.
 pub fn materialize_snapshot(cache: &Path, spec: &ModelSpec) -> Result<(), String> {
 	let snapshot_dir = hf_repo_dir(cache, spec).join("snapshots").join(spec.sha256);
 	std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
 	let link = snapshot_dir.join(spec.filename);
 	if link.symlink_metadata().is_ok() {
-		return Ok(());
+		if link.is_file() {
+			return Ok(());
+		}
+		// a link that doesn't resolve (e.g. an older build's Windows link
+		// with `/` separators): replace it rather than keep a dead entry
+		std::fs::remove_file(&link).map_err(|e| e.to_string())?;
 	}
 	let blob = hf_blob_path(cache, spec);
 	if !blob.is_file() {
 		return Err(format!("blob missing for {}", spec.id));
 	}
-	let rel = std::path::Path::new("../../blobs").join(spec.sha256);
+	// built from components so Windows gets `..\..\blobs\<sha>`: it
+	// creates a symlink whose relative target uses `/` without complaint,
+	// but never resolves it
+	let rel: PathBuf = ["..", "..", "blobs", spec.sha256].iter().collect();
 	#[cfg(target_family = "unix")]
 	{
 		std::os::unix::fs::symlink(&rel, &link).map_err(|e| e.to_string())?;
@@ -122,7 +131,9 @@ pub fn materialize_snapshot(cache: &Path, spec: &ModelSpec) -> Result<(), String
 	#[cfg(target_os = "windows")]
 	{
 		use std::os::windows::fs as win_fs;
-		if win_fs::symlink_file(&rel, &link).is_err() {
+		let linked = win_fs::symlink_file(&rel, &link).is_ok() && link.is_file();
+		if !linked {
+			let _ = std::fs::remove_file(&link);
 			std::fs::hard_link(&blob, &link)
 				.or_else(|_| std::fs::copy(&blob, &link).map(|_| ()))
 				.map_err(|e| e.to_string())?;
@@ -1205,6 +1216,40 @@ mod cache_storage_tests {
 		// idempotent
 		materialize_snapshot(cache.path(), &spec).expect("materialize again");
 
+		let found = hf_cache_model_path(cache.path(), &spec).expect("resolved");
+		assert_eq!(std::fs::read(&found).unwrap(), content);
+	}
+
+	#[test]
+	fn materialize_repairs_a_snapshot_link_that_does_not_resolve() {
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"model bytes";
+		let spec = spec_for(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		let snapshot = blob
+			.parent()
+			.unwrap()
+			.parent()
+			.unwrap()
+			.join("snapshots")
+			.join(spec.sha256);
+		std::fs::create_dir_all(&snapshot).unwrap();
+		let link = snapshot.join(spec.filename);
+		// a dead link: on Windows the `/`-separated target older builds
+		// wrote (it never resolves there), elsewhere a missing blob name
+		#[cfg(target_os = "windows")]
+		if std::os::windows::fs::symlink_file(format!("../../blobs/{}", spec.sha256), &link)
+			.is_err()
+		{
+			return; // no symlink privilege: no dead link can exist
+		}
+		#[cfg(target_family = "unix")]
+		std::os::unix::fs::symlink("../../blobs/missing", &link).unwrap();
+		assert!(!link.is_file(), "precondition: the link is dead");
+
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
 		let found = hf_cache_model_path(cache.path(), &spec).expect("resolved");
 		assert_eq!(std::fs::read(&found).unwrap(), content);
 	}
