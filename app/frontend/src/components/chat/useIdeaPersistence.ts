@@ -10,6 +10,9 @@ import { CHAT_SAVE_STATE } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
 
+/** Load failures that replace the whole chat UI with an error section. */
+export type ChatFatalError = "draft-not-found" | "parent-not-found";
+
 export interface IdeaPersistenceOptions {
 	chatType: string;
 	parentIdParam: string | null;
@@ -20,8 +23,8 @@ export interface IdeaPersistenceOptions {
 	minLength: number;
 	/** called for error surfacing in the parent */
 	onError: (message: string) => void;
-	/** called with an error ReactNode for fatal load failures */
-	onFatalError: (node: React.ReactNode) => void;
+	/** called for fatal load failures (the parent renders the section) */
+	onFatalError: (error: ChatFatalError) => void;
 	/** fetch and display the parent idea (feedback flow) */
 	onParentIdea: (parentId: string) => void;
 }
@@ -138,7 +141,7 @@ export function useDraftLoader(
 		setCurrConversation: (next: ChatMessage[]) => void;
 		setConversationState: (state: string) => void;
 		onParentIdea: (parentId: string) => void;
-		onFatalError: (node: React.ReactNode) => void;
+		onFatalError: (error: ChatFatalError) => void;
 	}
 ) {
 	const {
@@ -184,9 +187,7 @@ export function useDraftLoader(
 				})
 				.catch((err) => {
 					console.error("idea not found with ID", ideaId, err);
-					onFatalError(
-						"__DRAFT_NOT_FOUND__" // sentinel; the parent renders the right node
-					);
+					onFatalError("draft-not-found");
 				});
 		} else if (parentIdParam && fetchedParentRef.current !== parentIdParam) {
 			fetchedParentRef.current = parentIdParam;

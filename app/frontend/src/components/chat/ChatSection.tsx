@@ -14,7 +14,11 @@ import ChatFeedbackMainSection from "@components/chat/ChatFeedbackMainSection";
 import ErrorSection from "@components/error/ErrorSection";
 import { ChatErrorBanner } from "@components/chat/ChatErrorBanner";
 import { useChatSession } from "@components/chat/useChatSession";
-import { useDraftLoader, useIdeaPersistence } from "@components/chat/useIdeaPersistence";
+import {
+	useDraftLoader,
+	useIdeaPersistence,
+	type ChatFatalError
+} from "@components/chat/useIdeaPersistence";
 
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
 import ChatTopBar from "./reusable/ChatTopBar";
@@ -51,8 +55,8 @@ export function ChatSection({
 		| undefined
 	>();
 	const [showTranscript, setShowTranscript] = useState(false);
-	/** display error component as the section instead of mic ui */
-	const [errorComponent, setErrorComponent] = useState<React.ReactNode>();
+	/** fatal load failure: an error section replaces the mic ui */
+	const [fatalError, setFatalError] = useState<ChatFatalError | null>(null);
 	/** error from the AI layer that is not the 469 resend case */
 	const [aiError, setAiError] = useState<string | null>(null);
 
@@ -74,14 +78,7 @@ export function ChatSection({
 			})
 			.catch((err) => {
 				console.error("Parent Idea not found with ID", parentId, err);
-				setErrorComponent(
-					<ErrorSection
-						title="Shared idea not found"
-						paragraphs={[
-							"The idea you were giving feedback on no longer exists in this library."
-						]}
-					/>
-				);
+				setFatalError("parent-not-found");
 			});
 	};
 
@@ -94,7 +91,7 @@ export function ChatSection({
 		dailyLogId,
 		minLength: minConversationLenForCreateAndEnd,
 		onError: setAiError,
-		onFatalError: setErrorComponent,
+		onFatalError: setFatalError,
 		onParentIdea: fetchParentIdea
 	});
 
@@ -108,7 +105,7 @@ export function ChatSection({
 		setCurrConversation,
 		setConversationState: (s) => setConvStateRef.current(s),
 		onParentIdea: fetchParentIdea,
-		onFatalError: setErrorComponent
+		onFatalError: setFatalError
 	});
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
@@ -137,8 +134,25 @@ export function ChatSection({
 				readyForFinish={session.readyToSave}
 			/>
 		);
-	} else if (errorComponent) {
-		return errorComponent;
+	} else if (fatalError === "draft-not-found") {
+		return (
+			<ErrorSection
+				title="Draft idea not found"
+				paragraphs={[
+					"This draft no longer exists.",
+					"If you did not mean to open a draft, start a new idea instead"
+				]}
+			/>
+		);
+	} else if (fatalError === "parent-not-found") {
+		return (
+			<ErrorSection
+				title="Shared idea not found"
+				paragraphs={[
+					"The idea you were giving feedback on no longer exists in this library."
+				]}
+			/>
+		);
 	} else {
 		const aiMessageContent = session.isUserResendRequired
 			? session.inappropriateUserTranscript
