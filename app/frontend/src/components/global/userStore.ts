@@ -9,12 +9,12 @@ export interface UserState {
 }
 
 /**
- * The userState store starts empty and is populated once getUserApi
- * resolves; empty means "not loaded yet". When populated it contains:
+ * The userState store starts as { loaded: false } and is filled once
+ * getUserApi settles (loaded: true, even when the call failed). Then it
+ * holds:
  * - userName: display name (may be undefined until the user sets one)
  * - createdAt: when the local profile was created
  * - timezone: the user's IANA timezone
- * (email/mailVerified were removed with the accounts they belonged to.)
  */
 export const $userState = map<UserState>({ loaded: false });
 

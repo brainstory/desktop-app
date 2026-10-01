@@ -3,18 +3,16 @@ import { stripResultPreview } from "@helpers/ideas";
 import type { DailyStatus, IdeaListItem } from "@src/types";
 
 export interface CurrentUser {
-	email: null;
 	name?: string;
-	mailVerified: boolean;
 	timezone?: string;
 	createdAt?: string;
 }
 
-/** The local user as serialized by the backend (snake_case). */
+/** The local user as serialized by the backend (snake_case). Leftover
+ * account fields the backend may still send (email, mail_verified) are
+ * deliberately not read. */
 export interface RawUser {
-	email: null;
 	name?: string;
-	mail_verified: boolean;
 	timezone?: string;
 	created_at: string;
 }
@@ -23,9 +21,7 @@ export interface RawUser {
 export async function getUserApi(): Promise<CurrentUser> {
 	const response = await invokeCommand("getUser");
 	return {
-		email: response.email,
 		name: response?.name,
-		mailVerified: response?.mail_verified,
 		timezone: response?.timezone,
 		createdAt: response?.created_at
 	};
