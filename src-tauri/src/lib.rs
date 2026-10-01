@@ -5,6 +5,7 @@ pub mod keys;
 pub mod llm;
 pub mod models;
 pub mod prompts;
+pub mod reactions;
 mod reminders;
 pub mod secrets;
 pub mod stt;
