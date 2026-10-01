@@ -63,7 +63,9 @@ export function useIdeaPersistence(
 	const readyToCreateIdea = !ideaId && conversation.length >= minLength;
 
 	// create-once effect: the guard prevents a second create while one is
-	// in flight (StrictMode double-invoke, conversation updates)
+	// in flight (StrictMode double-invoke, conversation updates). The
+	// conversation is a dependency so a failed create retries on the next
+	// message instead of never saving the session.
 	useEffect(() => {
 		if (readyToCreateIdea && !creatingIdeaRef.current) {
 			creatingIdeaRef.current = true;
@@ -84,7 +86,7 @@ export function useIdeaPersistence(
 				});
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [readyToCreateIdea, dailyLogId]);
+	}, [readyToCreateIdea, dailyLogId, conversation]);
 
 	// Autosave: debounced, sequenced (a stale completion can never
 	// overwrite the top-bar state of a newer save)
