@@ -720,6 +720,18 @@ mod contract_tests {
 	}
 
 	#[test]
+	fn the_feedback_interview_asks_concrete_questions_not_which_area() {
+		// "Ask what area they want to build on" made the model ask H to
+		// pick or rank topics they had just listed, over and over
+		let prompt = STORY_INTERVIEW_REACT_SYSTEM;
+		assert!(!prompt.contains("what area"), "{prompt}");
+		assert!(prompt.contains("Never ask H to choose between, rank, or repeat"));
+		// H may be the idea's author; the prompt must not claim otherwise
+		assert!(!prompt.contains("written by\nanother person"));
+		assert!(!prompt.contains("written by another person"));
+	}
+
+	#[test]
 	fn the_feedback_interview_still_sees_the_whole_idea() {
 		// only the summaries drop the synthesis; the conversation is unchanged
 		let mut req = request(ChatType::Feedback, false);
