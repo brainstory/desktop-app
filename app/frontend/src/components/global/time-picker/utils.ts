@@ -6,20 +6,11 @@ export function isValidHour(value: string): boolean {
 }
 
 /**
- * regular expression to check for valid 12 hour format (01-12)
- */
-export function isValid12Hour(value: string): boolean {
-	return /^(0[1-9]|1[0-2])$/.test(value);
-}
-
-/**
  * regular expression to check for valid minute format (00-59)
  */
 export function isValidMinuteOrSecond(value: string): boolean {
 	return /^[0-5][0-9]$/.test(value);
 }
-
-//   type GetValidNumberConfig = { max; min?; loop?: boolean };
 
 interface ValidNumberConfig {
 	max: number;
@@ -52,21 +43,10 @@ export function getValidHour(value: string): string {
 	return getValidNumber(value, { max: 23 });
 }
 
-export function getValid12Hour(value: string): string {
-	if (isValid12Hour(value)) return value;
-	return getValidNumber(value, { max: 12 });
-}
-
 export function getValidMinuteOrSecond(value: string): string {
 	if (isValidMinuteOrSecond(value)) return value;
 	return getValidNumber(value, { max: 59 });
 }
-
-// type GetValidArrowNumberConfig = {
-// 	min,
-// 	max,
-// 	step
-// };
 
 interface ArrowNumberConfig {
 	min: number;
@@ -109,8 +89,6 @@ export function setHours(date: Date, value: string): Date {
 	return date;
 }
 
-// export type TimePickerType = "minutes" | "seconds" | "hours"; // | "12hours";
-
 export type TimePickerType = "minutes" | "seconds" | "hours";
 
 export function setDateByType(date: Date, value: string, type: TimePickerType): Date {
@@ -123,19 +101,6 @@ export function setDateByType(date: Date, value: string, type: TimePickerType): 
 			return setHours(date, value);
 		default:
 			return date;
-	}
-}
-
-export function getDateByType(date: Date, type: TimePickerType): string {
-	switch (type) {
-		case "minutes":
-			return getValidMinuteOrSecond(String(date.getMinutes()));
-		case "seconds":
-			return getValidMinuteOrSecond(String(date.getSeconds()));
-		case "hours":
-			return getValidHour(String(date.getHours()));
-		default:
-			return "00";
 	}
 }
 
