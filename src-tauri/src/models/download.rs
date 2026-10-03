@@ -408,11 +408,55 @@ enum StreamFailure {
 	Discard(String),
 }
 
+/// The running total after one more chunk arrives, or None when the
+/// counter would wrap (checked arithmetic: a server lying with huge
+/// chunked sizes cannot overflow the byte count into a bogus small
+/// total that slips past the size checks).
+fn checked_next_total(downloaded: u64, chunk_len: u64) -> Option<u64> {
+	downloaded.checked_add(chunk_len)
+}
+
+/// Deadline configuration for the download transport. Production runs
+/// [`Timeouts::PRODUCTION`]; tests inject tiny values so deadline and
+/// cancellation paths run in milliseconds instead of 30/60 seconds.
+///
+/// There is deliberately no overall whole-download deadline: multi-GB
+/// models on slow links are the supported slow-transfer policy - as
+/// long as bytes keep arriving (each within `stall`), a transfer may
+/// legitimately take hours.
+#[derive(Clone, Copy)]
+struct Timeouts {
+	/// Overall bound on awaiting response headers once the request is
+	/// sent: a connected server that never answers cannot pin the
+	/// download (and its cancel path) forever. Firing is transient -
+	/// the staged prefix survives it for a resume.
+	header: std::time::Duration,
+	/// A body read is stalled when not a single byte arrives for this
+	/// long; the stall timer only resets on data, so cancel polling
+	/// never extends it.
+	stall: std::time::Duration,
+	/// How often the cancel flag is polled while awaiting headers or
+	/// body chunks, so a cancel lands within a fraction of a second
+	/// instead of waiting out `header`/`stall`.
+	cancel_poll: std::time::Duration,
+}
+
+impl Timeouts {
+	const PRODUCTION: Timeouts = Timeouts {
+		header: std::time::Duration::from_secs(30),
+		stall: std::time::Duration::from_secs(60),
+		cancel_poll: std::time::Duration::from_millis(150),
+	};
+}
+
 /// Stream a model file to disk, reporting progress through `on_progress`
 /// (percentage 0-100). Verifies the download completed fully and matches
 /// the pinned sha256 before moving it into place. A transient failure
 /// keeps the `.part` file so the next attempt resumes it; cancellation
-/// and integrity/size failures remove it.
+/// and integrity/size failures remove it. Every wait - headers, body
+/// chunks - is bounded and cancellation-aware (see [`Timeouts`]); any
+/// byte that would outgrow `expected_size` is rejected before it is
+/// written.
 pub async fn download_model_file(
 	url: &str,
 	dest: &Path,
@@ -421,6 +465,30 @@ pub async fn download_model_file(
 	hf_token: &str,
 	cancel: &AtomicBool,
 	on_progress: &mut (impl FnMut(f64) + Send),
+) -> Result<(), String> {
+	download_with_timeouts(
+		url,
+		dest,
+		expected_size,
+		expected_sha256,
+		hf_token,
+		cancel,
+		on_progress,
+		Timeouts::PRODUCTION,
+	)
+	.await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn download_with_timeouts(
+	url: &str,
+	dest: &Path,
+	expected_size: u64,
+	expected_sha256: &str,
+	hf_token: &str,
+	cancel: &AtomicBool,
+	on_progress: &mut (impl FnMut(f64) + Send),
+	timeouts: Timeouts,
 ) -> Result<(), String> {
 	use sha2::{Digest, Sha256};
 
@@ -462,10 +530,35 @@ pub async fn download_model_file(
 	if !hf_token.is_empty() {
 		request = request.bearer_auth(hf_token);
 	}
-	let response = request
-		.send()
-		.await
-		.map_err(|e| format!("download request failed: {e}"))?;
+	// Bounded, cancellation-aware header wait: a connected server that
+	// withholds its response cannot pin the download forever. The send
+	// future is raced with a short cancel tick; the overall deadline
+	// is re-checked on every tick. A deadline firing is a transient
+	// failure (the staged prefix survives it, like a dropped
+	// connection), while an explicit cancel discards it like every
+	// other cancel.
+	let header_deadline = tokio::time::Instant::now() + timeouts.header;
+	let send = request.send();
+	tokio::pin!(send);
+	let response = loop {
+		if cancel.load(Ordering::Relaxed) {
+			let _ = tokio::fs::remove_file(&tmp).await;
+			return Err("download cancelled".into());
+		}
+		let now = tokio::time::Instant::now();
+		if now >= header_deadline {
+			return Err(format!(
+				"download timed out waiting for the server's response ({}s) - please retry",
+				timeouts.header.as_secs()
+			));
+		}
+		let wait = timeouts.cancel_poll.min(header_deadline - now);
+		match tokio::time::timeout(wait, send.as_mut()).await {
+			Ok(Ok(response)) => break response,
+			Ok(Err(e)) => return Err(format!("download request failed: {e}")),
+			Err(_) => continue, // tick elapsed: re-check cancel and deadline
+		}
+	};
 	if response.status() == reqwest::StatusCode::UNAUTHORIZED
 		|| response.status() == reqwest::StatusCode::FORBIDDEN
 	{
@@ -525,6 +618,11 @@ pub async fn download_model_file(
 
 	// Hash the resumed prefix from disk so the integrity check still
 	// covers the complete file, and pre-seed the byte counter.
+	// Cancellation is checked between 1 MiB buffered reads - one read
+	// of a local staging file completes in far under a second, so a
+	// cancel lands promptly without racing the read future itself
+	// (dropping an in-flight tokio::fs read can discard the bytes it
+	// read while the file offset still advances, corrupting the hash).
 	if resumed {
 		if let Some(h) = hasher.as_mut() {
 			let mut file = tokio::fs::File::open(&tmp)
@@ -533,6 +631,11 @@ pub async fn download_model_file(
 			use tokio::io::AsyncReadExt;
 			let mut buf = vec![0u8; 1024 * 1024];
 			loop {
+				if cancel.load(Ordering::Relaxed) {
+					drop(file);
+					let _ = tokio::fs::remove_file(&tmp).await;
+					return Err("download cancelled".into());
+				}
 				let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
 				if n == 0 {
 					break;
@@ -598,24 +701,66 @@ pub async fn download_model_file(
 		// `downloaded` comes from the outer scope: it is pre-seeded with
 		// the resumed prefix so totals and progress include it.
 		let mut last_report: u64 = downloaded;
-		const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+		// A read is stalled when no byte arrives for the stall timeout.
+		// The timer only resets on data, so the short cancel ticks never
+		// extend it; cancellation is raced with the same tick so a
+		// cancel lands in well under a second instead of waiting out
+		// the stall (StreamExt::next is cancel-safe - no chunk is lost
+		// when the tick wins the race).
+		let stall = tokio::time::sleep(timeouts.stall);
+		tokio::pin!(stall);
 		loop {
 			if cancel.load(Ordering::Relaxed) {
 				return Err(Discard("download cancelled".into()));
 			}
-			let chunk = match tokio::time::timeout(CHUNK_IDLE_TIMEOUT, stream.next()).await {
-				Err(_) => return Err(Resumable("download stalled (no data for 60s)".into())),
-				Ok(Some(Ok(c))) => c,
-				Ok(Some(Err(e))) => return Err(Resumable(format!("download interrupted: {e}"))),
-				Ok(None) => break,
+			let chunk = tokio::select! {
+				_ = &mut stall => {
+					return Err(Resumable(format!(
+						"download stalled (no data for {}s) - please retry",
+						timeouts.stall.as_secs()
+					)))
+				}
+				_ = tokio::time::sleep(timeouts.cancel_poll) => continue,
+				chunk = stream.next() => chunk,
 			};
+			stall.as_mut()
+				.reset(tokio::time::Instant::now() + timeouts.stall);
+			let chunk = match chunk {
+				Some(Ok(c)) => c,
+				Some(Err(e)) => return Err(Resumable(format!("download interrupted: {e}"))),
+				None => break,
+			};
+			// The catalog size caps the staging file before each write:
+			// the running total advances with checked arithmetic (a
+			// lying chunked stream cannot overflow it), and any byte
+			// that would take the file past `expected_size` fails and
+			// discards like an integrity failure - an endless response
+			// can never grow the staging file past the pinned size.
+			// expected_size == 0 (no catalog bound) is only reachable
+			// from local/test callers - the production call site always
+			// passes a catalog spec.size_bytes > 0 - so that mode stays
+			// uncapped rather than inventing a limit no shipped model
+			// needs.
+			let next = match checked_next_total(downloaded, chunk.len() as u64) {
+				Some(next) => next,
+				None => {
+					return Err(Discard(
+						"download byte counter overflowed - please retry".into(),
+					))
+				}
+			};
+			if expected_size > 0 && next > expected_size {
+				return Err(Discard(format!(
+					"download exceeded the expected size (stream passed {expected_size} bytes) - the extra data was not saved, please retry"
+				)));
+			}
 			if let Some(hasher) = hasher.as_mut() {
 				hasher.update(&chunk);
 			}
 			file.write_all(&chunk)
 				.await
 				.map_err(|e| Discard(e.to_string()))?;
-			downloaded += chunk.len() as u64;
+			downloaded = next;
 			if downloaded - last_report > 2_000_000 || downloaded == total {
 				last_report = downloaded;
 				let pct = if total > 0 {
@@ -1865,6 +2010,305 @@ mod dl_flow_tests {
 		.expect_err("size mismatch must fail");
 		assert!(err.contains("size mismatch"), "unexpected error: {err}");
 		assert!(!dest.exists());
+	}
+}
+#[cfg(test)]
+mod transport_timeout_tests {
+	use super::{checked_next_total, download_with_timeouts, part_path, Timeouts};
+	use sha2::{Digest, Sha256};
+	use std::io::{Read, Write};
+	use std::sync::atomic::AtomicBool;
+	use std::sync::Arc;
+	use std::time::{Duration, Instant};
+
+	/// Tiny deadlines so deadline paths run in milliseconds: a generous
+	/// header/stall budget when the test wants the cancel path, a
+	/// 300ms header when it wants the deadline itself, and a fast
+	/// cancel poll everywhere.
+	fn test_timeouts(header_ms: u64, stall: Duration) -> Timeouts {
+		Timeouts {
+			header: Duration::from_millis(header_ms),
+			stall,
+			cancel_poll: Duration::from_millis(20),
+		}
+	}
+
+	#[test]
+	fn huge_chunk_sizes_cannot_overflow_the_byte_counter() {
+		assert_eq!(checked_next_total(5, 5), Some(10));
+		assert_eq!(checked_next_total(u64::MAX - 4, 4), Some(u64::MAX));
+		assert_eq!(
+			checked_next_total(u64::MAX - 4, 5),
+			None,
+			"a lying server cannot wrap the running total"
+		);
+	}
+
+	fn sha256_hex(bytes: &[u8]) -> String {
+		Sha256::digest(bytes)
+			.iter()
+			.map(|b| format!("{b:02x}"))
+			.collect()
+	}
+
+	/// Accept the connection, optionally write a canned response, then
+	/// hold the socket open in silence: no FIN, so the client sees a
+	/// connected server that never starts (or stops) talking.
+	fn serve_then_hold(response: Vec<u8>) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				let mut request = Vec::new();
+				let mut byte = [0u8; 1];
+				while !request.ends_with(b"\r\n\r\n") {
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0]);
+				}
+				if !response.is_empty() {
+					let _ = sock.write_all(&response);
+					let _ = sock.flush();
+				}
+				std::thread::sleep(Duration::from_secs(10));
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	/// Encode `body` as HTTP/1.1 chunked transfer (no derivable length).
+	fn chunked(body: &[u8]) -> Vec<u8> {
+		let mut out = Vec::new();
+		for part in body.chunks(1024) {
+			out.extend_from_slice(format!("{:x}\r\n", part.len()).as_bytes());
+			out.extend_from_slice(part);
+			out.extend_from_slice(b"\r\n");
+		}
+		out.extend_from_slice(b"0\r\n\r\n");
+		out
+	}
+
+	fn dest(tag: &str) -> (std::path::PathBuf, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		(dir.path().join(format!("{tag}.bin")), dir)
+	}
+
+	/// Flip the cancel flag from another thread after `delay`, the way
+	/// the UI's cancel button lands mid-download.
+	fn canceller_after(delay: Duration, cancel: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
+		let cancel = cancel.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(delay);
+			cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+		})
+	}
+
+	#[tokio::test]
+	async fn a_silent_server_times_out_waiting_for_headers() {
+		// the staged prefix also proves the cleanup policy: a header
+		// deadline is transient, so the prefix must survive it
+		let url = serve_then_hold(Vec::new());
+		let (dest, _dir) = dest("nohdr");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let attempt = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				6,
+				&sha256_hex(b"abcdef"),
+				"",
+				&cancel,
+				&mut |_| {},
+				test_timeouts(300, Duration::from_secs(5)),
+			),
+		)
+		.await
+		.expect("the header wait must be bounded");
+		let err = attempt.expect_err("a silent server must fail the download");
+		assert!(
+			err.contains("timed out waiting"),
+			"expected a header-deadline error, got: {err}"
+		);
+		assert_eq!(
+			std::fs::read(&tmp).expect("part kept"),
+			b"abc".to_vec(),
+			"a header deadline is transient: the prefix stays resumable"
+		);
+		assert!(!dest.exists(), "dest is never touched on error");
+	}
+
+	#[tokio::test]
+	async fn cancelling_while_headers_are_pending_returns_promptly() {
+		let url = serve_then_hold(Vec::new());
+		let (dest, _dir) = dest("cancelhdr");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let canceller = canceller_after(Duration::from_millis(100), &cancel);
+		let start = Instant::now();
+		let err = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				6,
+				&sha256_hex(b"abcdef"),
+				"",
+				&cancel,
+				&mut |_| {},
+				test_timeouts(10_000, Duration::from_secs(5)),
+			),
+		)
+		.await
+		.expect("cancel must not wait out the header wait")
+		.expect_err("cancelled download must fail");
+		assert!(err.contains("cancelled"), "unexpected error: {err}");
+		assert!(
+			start.elapsed() < Duration::from_secs(1),
+			"cancel answered in {:?}, not after the header deadline",
+			start.elapsed()
+		);
+		assert!(!tmp.exists(), "a user cancel discards the staged prefix");
+		assert!(!dest.exists());
+		canceller.join().unwrap();
+	}
+
+	#[tokio::test]
+	async fn cancelling_during_a_stalled_body_chunk_returns_promptly() {
+		// headers arrive, then the server goes silent mid-body: the
+		// cancel must land within the short poll bound, not the stall
+		let url = serve_then_hold(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n".to_vec());
+		let (dest, _dir) = dest("cancelbody");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let canceller = canceller_after(Duration::from_millis(150), &cancel);
+		let start = Instant::now();
+		let err = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				100,
+				&sha256_hex(&[0u8; 100]),
+				"",
+				&cancel,
+				&mut |_| {},
+				test_timeouts(5_000, Duration::from_secs(10)),
+			),
+		)
+		.await
+		.expect("cancel must not wait out the stall timeout")
+		.expect_err("cancelled download must fail");
+		assert!(err.contains("cancelled"), "unexpected error: {err}");
+		assert!(
+			start.elapsed() < Duration::from_secs(1),
+			"cancel answered in {:?}, not after the stall timeout",
+			start.elapsed()
+		);
+		assert!(
+			!part_path(&dest).exists(),
+			"a cancel discards the partial body"
+		);
+		assert!(!dest.exists());
+		canceller.join().unwrap();
+	}
+
+	#[tokio::test]
+	async fn an_oversized_chunked_stream_is_rejected_before_persistence() {
+		// chunked with no EOF: the stream must be cut the moment it
+		// would outgrow the catalog size, never written past it
+		let expected = 2048usize;
+		let served = vec![9u8; 3072];
+		let mut response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+		// three chunk frames, then the server holds the connection
+		for part in served.chunks(1024) {
+			response.extend_from_slice(format!("{:x}\r\n", part.len()).as_bytes());
+			response.extend_from_slice(part);
+			response.extend_from_slice(b"\r\n");
+		}
+		let url = serve_then_hold(response);
+		let (dest, _dir) = dest("oversize");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				expected as u64,
+				&sha256_hex(&served[..expected]),
+				"",
+				&cancel,
+				&mut |_| {},
+				test_timeouts(5_000, Duration::from_secs(10)),
+			),
+		)
+		.await
+		.expect("oversize must be rejected without waiting for EOF")
+		.expect_err("an oversized stream must fail");
+		assert!(
+			err.contains("exceeded the expected size"),
+			"unexpected error: {err}"
+		);
+		assert!(
+			!part_path(&dest).exists(),
+			"oversize bytes are discarded like an integrity failure"
+		);
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn cancelling_during_prefix_hashing_returns_promptly() {
+		// a 3 GiB sparse staged prefix takes seconds to hash: a cancel
+		// landing mid-hash must abort within the short bound instead
+		// of hashing the whole prefix first (sparse: no disk usage)
+		let prefix_len: u64 = 3 << 30;
+		let suffix = b"tail".to_vec();
+		let total = prefix_len + suffix.len() as u64;
+		let mut response = format!(
+			"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes {prefix_len}-{}/{}\r\n\r\n",
+			total - 1,
+			total
+		)
+		.into_bytes();
+		response.extend_from_slice(&chunked(&suffix));
+		let url = serve_then_hold(response);
+		let (dest, _dir) = dest("cancelhash");
+		let tmp = part_path(&dest);
+		std::fs::File::create(&tmp)
+			.expect("create prefix")
+			.set_len(prefix_len)
+			.expect("sparse prefix");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let canceller = canceller_after(Duration::from_millis(100), &cancel);
+		let start = Instant::now();
+		let err = tokio::time::timeout(
+			Duration::from_secs(30),
+			download_with_timeouts(
+				&url,
+				&dest,
+				total,
+				&sha256_hex(&suffix),
+				"",
+				&cancel,
+				&mut |_| {},
+				test_timeouts(5_000, Duration::from_secs(5)),
+			),
+		)
+		.await
+		.expect("prefix hashing is bounded by cancellation")
+		.expect_err("cancelled download must fail");
+		assert!(err.contains("cancelled"), "unexpected error: {err}");
+		assert!(
+			start.elapsed() < Duration::from_secs(1),
+			"cancel answered in {:?}, not after hashing 3 GiB",
+			start.elapsed()
+		);
+		assert!(!tmp.exists(), "a user cancel discards the staged prefix");
+		assert!(!dest.exists());
+		canceller.join().unwrap();
 	}
 }
 #[test]
