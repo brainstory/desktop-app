@@ -372,6 +372,30 @@ fn part_path(dest: &Path) -> PathBuf {
 	PathBuf::from(name)
 }
 
+/// Parse a `Content-Range: bytes <start>-<end>/<total|*>` header into
+/// `(start, end, total)`, with `total` None for `*` (unknown). None
+/// when the header is missing or malformed: wrong unit, unparsable
+/// numbers, `end < start`, or a declared total that cannot cover `end`.
+fn parse_content_range(header: Option<&str>) -> Option<(u64, u64, Option<u64>)> {
+	let header = header?.trim();
+	let (unit, spec) = header.split_once(' ')?;
+	if !unit.trim().eq_ignore_ascii_case("bytes") {
+		return None;
+	}
+	let (range, total) = spec.trim().split_once('/')?;
+	let total = match total.trim() {
+		"*" => None,
+		digits => Some(digits.parse::<u64>().ok()?),
+	};
+	let (start, end) = range.trim().split_once('-')?;
+	let start = start.trim().parse::<u64>().ok()?;
+	let end = end.trim().parse::<u64>().ok()?;
+	if end < start || total.is_some_and(|t| t <= end) {
+		return None;
+	}
+	Some((start, end, total))
+}
+
 /// Why a streaming download stopped, and whether the staged bytes are
 /// still a valid prefix worth resuming from.
 enum StreamFailure {
@@ -465,6 +489,40 @@ pub async fn download_model_file(
 		hasher = (!expected_sha256.is_empty()).then(Sha256::new);
 	}
 
+	// Validate a 206 before a single byte is appended: the Content-Range
+	// start has to equal the resume offset (or the stitched file would
+	// be corrupt) and a declared total has to agree with the catalog.
+	// A 206 nobody asked for (no Range was sent) is a malformed
+	// response. These are bounded failures: the body is never streamed
+	// and the staged bytes are discarded like any other integrity
+	// failure, never appended to.
+	let mut range_total: Option<u64> = None;
+	if resumed {
+		let header = response
+			.headers()
+			.get(reqwest::header::CONTENT_RANGE)
+			.and_then(|value| value.to_str().ok());
+		let rejection = match parse_content_range(header) {
+			_ if resume_from == 0 => Some(
+				"unexpected 206 Partial Content without a range request - please retry".into(),
+			),
+			Some((start, _, _)) if start != resume_from => Some(format!(
+				"resume position mismatch (server sent bytes from {start}, expected the staged {resume_from}-byte prefix) - please retry"
+			)),
+			Some((_, _, total)) => {
+				range_total = total;
+				None
+			}
+			None => Some(
+				"malformed Content-Range header on a 206 response - please retry".into(),
+			),
+		};
+		if let Some(err) = rejection {
+			let _ = tokio::fs::remove_file(&tmp).await;
+			return Err(err);
+		}
+	}
+
 	// Hash the resumed prefix from disk so the integrity check still
 	// covers the complete file, and pre-seed the byte counter.
 	if resumed {
@@ -491,14 +549,33 @@ pub async fn download_model_file(
 			.map_err(|e| e.to_string())?;
 	}
 
-	let total = response.content_length().unwrap_or(0) + resume_from;
+	// The whole-file size this response actually pins down: a 206
+	// declares it in its Content-Range total (or as resume offset plus
+	// the partial Content-Length), a 200 in its Content-Length. A
+	// chunked body may declare none - the total is then genuinely
+	// unknown and only the catalog size bounds the finished file; it
+	// must not be invented (treating it as the prefix length is what
+	// broke chunked resumes).
+	let advertised: Option<u64> = if resumed {
+		range_total.or_else(|| response.content_length().map(|len| resume_from + len))
+	} else {
+		response.content_length()
+	};
 	// Fail fast when the advertised length already contradicts the spec:
 	// streaming multi-GB only to reject it at the end wastes the transfer.
-	if total > 0 && expected_size > 0 && total != expected_size {
-		return Err(format!(
-			"download size mismatch (server says {total} bytes, expected {expected_size}) - please retry"
-		));
+	if let Some(known) = advertised {
+		if known > 0 && expected_size > 0 && known != expected_size {
+			if resumed {
+				// the staged prefix belongs to whatever the server is
+				// serving, not to the pinned file: not resumable
+				let _ = tokio::fs::remove_file(&tmp).await;
+			}
+			return Err(format!(
+				"download size mismatch (server says {known} bytes, expected {expected_size}) - please retry"
+			));
+		}
 	}
+	let total = advertised.unwrap_or(0);
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
 	let mut file = if resumed {
@@ -840,17 +917,27 @@ mod resume_tests {
 					.find(|l| l.to_lowercase().starts_with("range:"))
 					.map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string());
 				*saw_range.lock().unwrap() = range.clone();
+				let mut content_range = String::new();
 				let (status, slice): (&str, &[u8]) = match range
 					.as_deref()
 					.and_then(|r| r.strip_prefix("bytes=").and_then(|r| r.split('-').next()))
 					.and_then(|start| start.parse::<usize>().ok())
 				{
-					Some(start) if start < body.len() => ("206 Partial Content", &body[start..]),
+					Some(start) if start < body.len() => {
+						// a real 206 advertises the slice it is serving
+						content_range = format!(
+							"Content-Range: bytes {}-{}/{}\r\n",
+							start,
+							body.len() - 1,
+							body.len()
+						);
+						("206 Partial Content", &body[start..])
+					}
 					Some(_) => ("416 Range Not Satisfiable", &[]),
 					None => ("200 OK", &body),
 				};
 				let head = format!(
-					"HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\r\n",
+					"HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n{content_range}\r\n",
 					slice.len()
 				);
 				let _ = sock.write_all(head.as_bytes());
@@ -1122,6 +1209,283 @@ mod resume_tests {
 			body,
 			"prefix not stitched on"
 		);
+	}
+
+	/// Serve one canned response verbatim, for hand-built 206 heads
+	/// (chunked suffixes, wrong ranges, bogus totals).
+	fn serve_raw(response: Vec<u8>) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let _ = sock.write_all(&response);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		format!("http://{addr}/model.bin")
+	}
+
+	/// Encode `body` as an HTTP/1.1 chunked transfer: no length is
+	/// derivable from the head, the way streamed 206 suffixes arrive.
+	fn chunked(body: &[u8]) -> Vec<u8> {
+		let mut out = Vec::new();
+		for part in body.chunks(1024) {
+			out.extend_from_slice(format!("{:x}\r\n", part.len()).as_bytes());
+			out.extend_from_slice(part);
+			out.extend_from_slice(b"\r\n");
+		}
+		out.extend_from_slice(b"0\r\n\r\n");
+		out
+	}
+
+	#[tokio::test]
+	async fn resumes_a_chunked_206_with_a_content_range_total() {
+		// F08: the suffix arrives chunked (no Content-Length), so the
+		// whole-file size is only declared by Content-Range. A valid
+		// resume must not be mistaken for a size mismatch.
+		let body = b"abcdef".to_vec();
+		let digest = sha256_hex(&body);
+		let cancel = Arc::new(AtomicBool::new(false));
+
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		std::fs::write(part_path(&dest), &body[..3]).expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/6\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(&body[3..]));
+		let url = serve_raw(response);
+		download_model_file(&url, &dest, 6, &digest, "", &cancel, &mut |_| {})
+			.await
+			.expect("chunked 206 resume");
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+		assert!(!part_path(&dest).exists(), "staging file consumed");
+
+		// the no-hash mode (empty pinned sha) resumes the same way
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		std::fs::write(part_path(&dest), &body[..3]).expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/6\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(&body[3..]));
+		let url = serve_raw(response);
+		download_model_file(&url, &dest, 6, "", "", &cancel, &mut |_| {})
+			.await
+			.expect("chunked 206 resume without a pinned hash");
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+	}
+
+	#[tokio::test]
+	async fn resumes_a_206_that_carries_a_content_length() {
+		// the classic shape: 206 with a Content-Length for the suffix
+		// and a Content-Range total for the whole file
+		let body = b"0123456789".to_vec();
+		let digest = sha256_hex(&body);
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		std::fs::write(part_path(&dest), &body[..4]).expect("stage prefix");
+		let mut response =
+			b"HTTP/1.1 206 Partial Content\r\nContent-Length: 6\r\nContent-Range: bytes 4-9/10\r\n\r\n".to_vec();
+		response.extend_from_slice(&body[4..]);
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		download_model_file(&url, &dest, 10, &digest, "", &cancel, &mut |_| {})
+			.await
+			.expect("content-length 206 resume");
+		assert_eq!(std::fs::read(&dest).unwrap(), body);
+	}
+
+	#[tokio::test]
+	async fn rejects_a_206_that_resumes_at_the_wrong_offset() {
+		// the staged prefix is "abc" but the server restarts at 0:
+		// stitching would corrupt the file, so nothing may be appended
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 0-5/6\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(b"abcdef"));
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a mismatched range must be rejected");
+		assert!(
+			err.contains("resume position mismatch"),
+			"unexpected error: {err}"
+		);
+		assert!(
+			!tmp.exists(),
+			"an invalid range is never appended: staged bytes are discarded"
+		);
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn rejects_a_206_whose_declared_total_conflicts_with_the_catalog() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/99\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(b"def"));
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a contradictory total must be rejected up front");
+		assert!(
+			err.contains("server says 99 bytes, expected 6"),
+			"unexpected error: {err}"
+		);
+		assert!(!tmp.exists(), "the unusable staged bytes are discarded");
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn a_truncated_resumed_suffix_keeps_the_part_file() {
+		// promised bytes 3-5/6, the stream ends after "d": a short file
+		// is still a valid prefix worth resuming
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/6\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(b"d"));
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a truncated suffix must fail");
+		assert!(err.contains("got 4 of 6 bytes"), "unexpected error: {err}");
+		assert_eq!(
+			std::fs::read(&tmp).expect("part kept"),
+			b"abcd",
+			"the arrived prefix is kept for the next resume"
+		);
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn a_resumed_download_with_a_corrupt_suffix_fails_its_integrity_check() {
+		// sizes line up (3 + 3 = 6) but the suffix bytes are wrong: the
+		// hash over prefix + suffix must catch it and discard the part
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/6\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(b"XXX"));
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a corrupt suffix must fail the hash check");
+		assert!(err.contains("integrity"), "unexpected error: {err}");
+		assert!(!tmp.exists(), "corrupt bytes are not resumable");
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn rejects_an_unsolicited_206_without_a_staged_prefix() {
+		// no Range was sent (nothing to resume), yet the server answers
+		// 206: the body is partial and must not be treated as the file
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 0-2/6\r\n\r\n".to_vec();
+		response.extend_from_slice(b"abc");
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("an unsolicited 206 must be rejected");
+		assert!(
+			err.contains("without a range request"),
+			"unexpected error: {err}"
+		);
+		assert!(!part_path(&dest).exists());
+		assert!(!dest.exists());
+	}
+
+	#[tokio::test]
+	async fn rejects_a_206_with_a_malformed_content_range() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dest = dir.path().join("model.bin");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let mut response = b"HTTP/1.1 206 Partial Content\r\nTransfer-Encoding: chunked\r\nContent-Range: bytes 3-5/not-a-number\r\n\r\n".to_vec();
+		response.extend_from_slice(&chunked(b"def"));
+		let url = serve_raw(response);
+		let cancel = Arc::new(AtomicBool::new(false));
+		let err = download_model_file(
+			&url,
+			&dest,
+			6,
+			&sha256_hex(b"abcdef"),
+			"",
+			&cancel,
+			&mut |_| {},
+		)
+		.await
+		.expect_err("a malformed Content-Range must be rejected");
+		assert!(
+			err.contains("malformed Content-Range"),
+			"unexpected error: {err}"
+		);
+		assert!(
+			!tmp.exists(),
+			"nothing is appended when the range cannot be validated"
+		);
+		assert!(!dest.exists());
 	}
 }
 #[cfg(test)]
