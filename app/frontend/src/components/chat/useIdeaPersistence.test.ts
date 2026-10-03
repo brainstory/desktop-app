@@ -10,6 +10,7 @@ const q1: ChatMessage = { role: "assistant", content: "q1" };
 const a1: ChatMessage = { role: "user", content: "a1" };
 const q2: ChatMessage = { role: "assistant", content: "q2" };
 const a2: ChatMessage = { role: "user", content: "a2" };
+const q3: ChatMessage = { role: "assistant", content: "q3" };
 
 function options(overrides: Partial<IdeaPersistenceOptions> = {}): IdeaPersistenceOptions {
 	return {
@@ -79,6 +80,215 @@ describe("useIdeaPersistence", () => {
 		});
 		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
 		expect(callsTo("create_idea")).toHaveLength(1);
+	});
+
+	describe("create completion handoff", () => {
+		it("saves the newest transcript when creation resolves after unmount", async () => {
+			let finish!: (value: { id: string }) => void;
+			mockInvoke({
+				create_idea: () => new Promise((resolve) => (finish = resolve)),
+				update_idea: () => ({ id: "idea-1" })
+			});
+			const original = [q1, a1];
+			const latest = [q1, a1, q2];
+			const { rerender, unmount } = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options()),
+				{ initialProps: { conversation: original } }
+			);
+			rerender({ conversation: latest });
+			unmount();
+			await act(async () => {
+				finish({ id: "idea-1" });
+			});
+			const updates = callsTo("update_idea");
+			expect(updates).toHaveLength(1);
+			expect(updates[0]![1]).toMatchObject({ id: "idea-1", transcript: latest });
+		});
+
+		it("hands the newest transcript to the save queue without waiting for a render or the debounce", async () => {
+			vi.useFakeTimers();
+			let resolveCreate!: (v: { id: string }) => void;
+			mockInvoke({
+				create_idea: () => new Promise((res) => (resolveCreate = res)),
+				update_idea: () => ({ id: "idea-1" })
+			});
+			const { rerender } = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options()),
+				{ initialProps: { conversation: [q1, a1] } }
+			);
+			rerender({ conversation: [q1, a1, q2] });
+			await act(async () => {
+				resolveCreate({ id: "idea-1" });
+			});
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			// saved immediately: no debounce timer has fired yet
+			const updates = callsTo("update_idea");
+			expect(updates).toHaveLength(1);
+			expect((updates[0]![1] as { transcript: ChatMessage[] }).transcript).toEqual([
+				q1,
+				a1,
+				q2
+			]);
+			await act(() => vi.advanceTimersByTimeAsync(500));
+			// the debounced autosave effect must not repeat that write
+			expect(callsTo("update_idea")).toHaveLength(1);
+		});
+
+		it("retries a rejected create once with the newest conversation and no duplicate writes", async () => {
+			let creates = 0;
+			mockInvoke({
+				create_idea: () => {
+					creates++;
+					if (creates === 1) throw new Error("db locked");
+					return { id: "idea-1" };
+				},
+				update_idea: () => ({ id: "idea-1" })
+			});
+			const onError = vi.fn();
+			const { result, rerender } = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options({ onError })),
+				{ initialProps: { conversation: [q1, a1] } }
+			);
+			await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+			expect(result.current.ideaId).toBeUndefined();
+
+			rerender({ conversation: [q1, a1, q2] });
+			await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
+			expect(creates).toBe(2);
+			// the retried create captured the newest conversation itself
+			await act(async () => {});
+			expect(callsTo("update_idea")).toHaveLength(0);
+		});
+
+		it("coalesces rapid edits while the post-create save is in flight", async () => {
+			vi.useFakeTimers();
+			let resolveCreate!: (v: { id: string }) => void;
+			const pending: (() => void)[] = [];
+			let inFlight = 0;
+			let maxInFlight = 0;
+			mockInvoke({
+				create_idea: () => new Promise((res) => (resolveCreate = res)),
+				update_idea: () =>
+					new Promise((res) => {
+						inFlight++;
+						maxInFlight = Math.max(maxInFlight, inFlight);
+						pending.push(() => {
+							inFlight--;
+							res({ id: "idea-1" });
+						});
+					})
+			});
+			const { rerender } = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options()),
+				{ initialProps: { conversation: [q1, a1] } }
+			);
+			rerender({ conversation: [q1, a1, q2] });
+			await act(async () => {
+				resolveCreate({ id: "idea-1" });
+			});
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			// the newest transcript went straight into the serialized queue
+			expect(pending).toHaveLength(1);
+
+			rerender({ conversation: [q1, a1, q2, a2] });
+			await act(() => vi.advanceTimersByTimeAsync(500));
+			rerender({ conversation: [q1, a1, q2, a2, q3] });
+			await act(() => vi.advanceTimersByTimeAsync(500));
+			// one update in flight; the newer edits wait behind it
+			expect(pending).toHaveLength(1);
+
+			await act(async () => {
+				pending.shift()!();
+				await vi.advanceTimersByTimeAsync(500);
+			});
+			expect(maxInFlight).toBe(1);
+			const updates = callsTo("update_idea");
+			expect(updates).toHaveLength(2);
+			expect((updates[1]![1] as { transcript: ChatMessage[] }).transcript).toEqual([
+				q1,
+				a1,
+				q2,
+				a2,
+				q3
+			]);
+		});
+
+		it("orders the summary save after the newest-transcript save handed off by the create", async () => {
+			vi.useFakeTimers();
+			let resolveCreate!: (v: { id: string }) => void;
+			let releaseTranscriptSave!: () => void;
+			const order: string[] = [];
+			mockInvoke({
+				create_idea: () => new Promise((res) => (resolveCreate = res)),
+				update_idea: (args) => {
+					const { result } = args as { result: string };
+					if (!result) {
+						return new Promise((res) => {
+							releaseTranscriptSave = () => {
+								order.push("transcript");
+								res({ id: "idea-1" });
+							};
+						});
+					}
+					order.push("summary");
+					return { id: "idea-1" };
+				}
+			});
+			const { result, rerender } = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options()),
+				{ initialProps: { conversation: [q1, a1] } }
+			);
+			rerender({ conversation: [q1, a1, q2] });
+			await act(async () => {
+				resolveCreate({ id: "idea-1" });
+			});
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			expect(order).toEqual([]);
+			let summaryDone = false;
+			void result.current.saveResult("idea-1", [q1, a1, q2], "# summary", null).then(() => {
+				summaryDone = true;
+			});
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			// the summary waits for the in-flight transcript save
+			expect(summaryDone).toBe(false);
+			await act(async () => {
+				releaseTranscriptSave();
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(order).toEqual(["transcript", "summary"]);
+			expect(summaryDone).toBe(true);
+		});
+
+		it("a late create completion after teardown does not touch history or a new session", async () => {
+			let finish!: (value: { id: string }) => void;
+			mockInvoke({
+				create_idea: () => new Promise((resolve) => (finish = resolve)),
+				update_idea: (args) => ({ id: (args as { id: string }).id })
+			});
+			const original = [q1, a1];
+			const latest = [q1, a1, q2];
+			const first = renderHook(
+				({ conversation }) => useIdeaPersistence(conversation, "", options()),
+				{ initialProps: { conversation: original } }
+			);
+			first.rerender({ conversation: latest });
+			first.unmount();
+
+			// a fresh session owns the same document now
+			const second = renderHook(() =>
+				useIdeaPersistence([q1], "", options({ initialIdeaId: "idea-b" }))
+			);
+			await act(async () => {
+				finish({ id: "idea-a" });
+			});
+			// the dead session's newest transcript still reaches its idea row
+			const updates = callsTo("update_idea");
+			expect(updates).toHaveLength(1);
+			expect(updates[0]![1]).toMatchObject({ id: "idea-a", transcript: latest });
+			// but the obsolete callback must not rewrite the live URL
+			expect(window.location.search).not.toContain("idea-a");
+			expect(second.result.current.ideaId).toBe("idea-b");
+		});
 	});
 
 	describe("autosave", () => {

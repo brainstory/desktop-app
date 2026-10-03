@@ -62,6 +62,18 @@ export function useIdeaPersistence(
 		onErrorRef.current = onError;
 	});
 
+	/** false once this instance is torn down: a create completion
+	 * landing after teardown still hands the newest transcript to the
+	 * save queue (that data must not be lost) but is otherwise obsolete
+	 * and must not touch the history/URL a new session now owns */
+	const aliveRef = useRef(true);
+	useEffect(() => {
+		aliveRef.current = true;
+		return () => {
+			aliveRef.current = false;
+		};
+	}, []);
+
 	// Autosave plumbing. Every write goes through one promise chain, so at
 	// most one updateIdeaApi is in flight and writes land in order; the
 	// pending slot coalesces bursts so the latest conversation wins.
@@ -72,6 +84,10 @@ export function useIdeaPersistence(
 	/** the conversation already in the database (created, loaded or saved):
 	 * autosaving it again would be a redundant write */
 	const persistedRef = useRef<ChatMessage[] | null>(null);
+	/** newest transcript this session has seen, tracked independently of
+	 * the assigned idea id: the create completion may fire after the hook
+	 * unmounted, when no effect will ever run again */
+	const latestConversationRef = useRef(conversation);
 
 	const markPersisted = useCallback((saved: ChatMessage[]) => {
 		persistedRef.current = saved;
@@ -91,6 +107,10 @@ export function useIdeaPersistence(
 			const job = pendingSaveRef.current;
 			pendingSaveRef.current = null;
 			if (!job) return;
+			// the same snapshot reached the database while this job waited
+			// in the pending slot (e.g. the create-completion handoff):
+			// writing it again would be redundant
+			if (job.conversation === persistedRef.current) return;
 			setSaveState(CHAT_SAVE_STATE.SAVING);
 			try {
 				await updateIdeaApi(job.ideaId, job.conversation);
@@ -138,6 +158,9 @@ export function useIdeaPersistence(
 	useEffect(() => {
 		conversationLengthRef.current = conversation.length;
 	}, [conversation.length]);
+	useEffect(() => {
+		latestConversationRef.current = conversation;
+	}, [conversation]);
 
 	// derived: an idea must be created as soon as the conversation is long
 	// enough and no idea row exists yet
@@ -154,9 +177,26 @@ export function useIdeaPersistence(
 			createIdeaApi(result, createdWith, chatType, parentIdParam, dailyLogId)
 				.then((createdIdeaId) => {
 					creatingIdeaRef.current = false;
-					// the create already stored this conversation
-					persistedRef.current = createdWith;
 					createdIdeaIdRef.current = createdIdeaId;
+					// the create stored createdWith; anything that arrived
+					// while it was in flight must reach the database now,
+					// through the serialized queue. This handoff must not
+					// depend on a later render, which never comes if the
+					// hook unmounted before the create resolved.
+					const newest = latestConversationRef.current;
+					if (newest !== createdWith) {
+						pendingSaveRef.current = {
+							ideaId: createdIdeaId,
+							conversation: newest
+						};
+						flushAutosave();
+					} else {
+						// the create already stored this conversation
+						persistedRef.current = createdWith;
+					}
+					// obsolete after teardown: the document may belong to a
+					// new session, so no history/URL updates from here on
+					if (!aliveRef.current) return;
 					setIdeaId(createdIdeaId);
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
