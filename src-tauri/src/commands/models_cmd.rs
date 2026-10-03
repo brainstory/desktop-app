@@ -320,10 +320,13 @@ pub async fn download_model(
 	Ok(())
 }
 
-/// Why `spec` cannot be deleted right now, if anything: its download is
-/// still running or just finished and about to auto-load, or a load of
-/// its engine kind is running (that load would re-install the engine
-/// right after the deletion).
+/// Why `spec` cannot be deleted right now, if anything: its download
+/// is still running, or just finished and is about to auto-load (the
+/// cancel entry holds the slot until that load is done). Download
+/// bookkeeping only - a load of the engine kind is NOT checked here:
+/// the delete runs under the engine slot claim, which waits out or
+/// times out on loads, and the claim itself holds the very flag a
+/// loading check would read as busy.
 fn delete_blocked(state: &AppState, spec: &crate::models::ModelSpec) -> Option<&'static str> {
 	if state
 		.download_progress
@@ -341,14 +344,48 @@ fn delete_blocked(state: &AppState, spec: &crate::models::ModelSpec) -> Option<&
 	{
 		return Some("model is still being set up - try again in a moment");
 	}
-	let loading = match spec.kind {
-		ModelKind::Llm => &state.llm_loading,
-		ModelKind::Stt => &state.stt_loading,
-	};
-	if loading.load(Ordering::SeqCst) {
-		return Some("model is currently loading - try again in a moment");
-	}
 	None
+}
+
+/// How long a delete waits for an in-flight load of the model's engine
+/// kind before reporting busy (a load that long is wedged).
+const DELETE_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Delete `spec`'s files: the legacy app-dir copy first, then every
+/// hub-cache candidate (snapshot links, and the blob only when no
+/// other snapshot in that repo still references it - huggingface's
+/// own pruning rule; anything unverifiable is retained). Returns
+/// whether anything was removed.
+fn delete_model_files(
+	state: &AppState,
+	spec: &crate::models::ModelSpec,
+	caches: &[std::path::PathBuf],
+) -> Result<bool, String> {
+	let mut deleted = false;
+	let app_path = state.model_path(spec);
+	if app_path.is_file() {
+		std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
+		deleted = true;
+	}
+	for cache in caches {
+		deleted |= crate::models::remove_cached_model(cache, spec)?;
+	}
+	Ok(deleted)
+}
+
+/// The exclusive delete for `spec` against the real runtime slots,
+/// over an injectable event sink and hub-cache list (tests point the
+/// caches at temp dirs; production passes every candidate).
+fn delete_model_events(
+	state: &AppState,
+	events: &dyn crate::StatusEvents,
+	spec: &crate::models::ModelSpec,
+	caches: &[std::path::PathBuf],
+	slot_wait: std::time::Duration,
+) -> Result<(), String> {
+	let delete_files = || delete_model_files(state, spec, caches);
+	let blocked = || delete_blocked(state, spec);
+	state.delete_model_kind_events(events, spec, &blocked, &delete_files, slot_wait)
 }
 
 #[tauri::command]
@@ -360,53 +397,9 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		let spec = find_model(&model_id, ModelKind::Llm)
 			.or_else(|| find_model(&model_id, ModelKind::Stt))
 			.ok_or_else(|| format!("unknown model {model_id}"))?;
-		if let Some(reason) = delete_blocked(&state, spec) {
-			return Err(reason.into());
-		}
-		// Unload the engine BEFORE deleting the files: a loaded engine
-		// mmaps the model, and on Windows an open mmap makes remove_file
-		// fail. Covers the legacy app copy and every cache candidate.
-		let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
-		let llm_gone =
-			runtime.llm.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
-		let stt_gone =
-			runtime.stt.as_ref().map(|e| e.model_id.clone()).as_deref() == Some(model_id.as_str());
-		if llm_gone {
-			runtime.llm = None;
-		}
-		if stt_gone {
-			runtime.stt = None;
-		}
-		drop(runtime);
-
-		// Delete every copy: the legacy app-dir file first, then the hub
-		// cache entry (snapshot links, and the blob only when no other
-		// snapshot in that repo still references it - the same pruning
-		// rule huggingface's own cache manager applies).
-		let mut deleted = false;
-		let app_path = state.model_path(spec);
-		if app_path.is_file() {
-			std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
-			deleted = true;
-		}
-		for cache in crate::models::hf_hub_cache_candidates() {
-			deleted |= crate::models::remove_cached_model(&cache, spec)?;
-		}
-		if !deleted {
-			return Err("model file not found".into());
-		}
-
-		if llm_gone {
-			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				crate::models::EngineStatus::missing();
-			state.emit_llm_status(&app);
-		}
-		if stt_gone {
-			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				crate::models::EngineStatus::missing();
-			state.emit_stt_status(&app);
-		}
-		Ok(())
+		let events = crate::AppStatusEvents(&app);
+		let caches = crate::models::hf_hub_cache_candidates();
+		delete_model_events(&state, &events, spec, &caches, DELETE_SLOT_WAIT)
 	})
 	.await
 	.map_err(|e| format!("delete task failed: {e}"))?
@@ -542,7 +535,7 @@ mod tests {
 	}
 
 	#[test]
-	fn delete_is_blocked_while_downloading_or_loading() {
+	fn delete_is_blocked_by_download_bookkeeping_only() {
 		let (state, _dir) = temp_state("blocked");
 		let spec = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
 			.expect("catalog model");
@@ -552,9 +545,16 @@ mod tests {
 		assert!(super::delete_blocked(&state, spec).is_some(), "downloading");
 		unregister_download(&state, spec.id);
 
+		// A load of this kind is not a guard arm: the delete holds the
+		// engine slot claim while re-checking this guard, and the claim
+		// itself owns the loading flag - checking it here would refuse
+		// every claimed delete. Load exclusivity is the claim's job.
 		state.stt_loading.store(true, Ordering::SeqCst);
-		assert!(super::delete_blocked(&state, spec).is_some(), "loading");
-		// a load of the other engine kind does not block
+		assert_eq!(
+			super::delete_blocked(&state, spec),
+			None,
+			"load exclusivity is the slot claim's job, not this guard's"
+		);
 		state.stt_loading.store(false, Ordering::SeqCst);
 		state.llm_loading.store(true, Ordering::SeqCst);
 		assert_eq!(super::delete_blocked(&state, spec), None);
@@ -806,5 +806,53 @@ mod tests {
 			.get("m")
 			.is_none());
 		assert!(register_download(&state, "m").is_ok());
+	}
+
+	struct RecordingEvents(std::sync::Mutex<Vec<String>>);
+
+	impl crate::StatusEvents for RecordingEvents {
+		fn llm_status(&self, status: &crate::models::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("llm:{:?}:{:?}", status.state, status.model_id));
+		}
+		fn stt_status(&self, status: &crate::models::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("stt:{:?}:{:?}", status.state, status.model_id));
+		}
+	}
+
+	/// The production delete wiring through the real runtime slots: no
+	/// engine is resident in a test state, so nothing is published and
+	/// the app copy still goes. The cache list is injected so the test
+	/// never touches the developer's real hub cache.
+	#[test]
+	fn delete_model_events_removes_the_app_copy_through_the_real_slot() {
+		use std::time::Duration;
+		let (state, _dir) = temp_state("del-cmd");
+		let spec = crate::models::find_model("whisper-small-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		std::fs::write(state.model_path(spec), b"stub").expect("model file");
+		let events = RecordingEvents(std::sync::Mutex::new(Vec::new()));
+
+		super::delete_model_events(&state, &events, spec, &[], Duration::from_secs(5))
+			.expect("the delete succeeds");
+
+		assert!(
+			!state.model_path(spec).is_file(),
+			"the app copy is removed through the real slot path"
+		);
+		assert!(
+			events.0.lock().unwrap().is_empty(),
+			"no engine was resident: nothing to publish: {:?}",
+			events.0.lock().unwrap()
+		);
+
+		let err = super::delete_model_events(&state, &events, spec, &[], Duration::from_secs(5))
+			.expect_err("nothing is left to delete");
+		assert_eq!(err, "model file not found");
 	}
 }
