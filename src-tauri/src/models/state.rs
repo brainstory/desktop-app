@@ -218,14 +218,29 @@ impl AppState {
 	/// (cache, or database when cold - inside the lock), apply `patch`
 	/// to a working copy, persist it, and publish it to the cache, all
 	/// under the settings mutex. `patch` returning Err aborts with the
-	/// cache and database unchanged; a failed persist never publishes,
-	/// so the cache can never disagree with the database either.
+	/// cache and database unchanged.
 	///
-	/// Returns the committed snapshot and the new generation (bumped on
-	/// every successful publish). No engine work may run while the lock
-	/// is held - start loaders after this returns. The critical section
-	/// may lock the db connection (settings mutex → db mutex, never the
-	/// reverse).
+	/// Persistence is staged (settings row, then each changed secret),
+	/// and SQLite cannot transact the OS keychain, so a failed persist
+	/// may still have committed part of the update. On any save
+	/// failure the cache is therefore re-published from
+	/// [`AiSettings::reload`] - the state the stores actually hold -
+	/// and the returned Err names the failing stage/secret (never a
+	/// secret value). A retry goes through here again and builds on
+	/// that reloaded state, so fields committed by the failed attempt
+	/// are preserved, never reverted. If the reload itself fails the
+	/// cache is dropped (degraded mode: the next read loads cold) and
+	/// the Err says the settings state is unavailable - never success
+	/// after an incomplete write, never a claimed rollback of
+	/// keychain mutations.
+	///
+	/// Returns the committed snapshot and the new generation (bumped
+	/// on every successful publish; a failure-path reconcile publish
+	/// does NOT bump it - it reports the stores, it is not a new
+	/// commit, and the Err already tells callers to re-read). No
+	/// engine work may run while the lock is held - start loaders
+	/// after this returns. The critical section may lock the db
+	/// connection (settings mutex → db mutex, never the reverse).
 	pub fn mutate_ai_settings(
 		&self,
 		patch: impl FnOnce(&mut AiSettings) -> Result<(), String>,
@@ -244,10 +259,35 @@ impl AppState {
 		// it (not a fresh keychain read) - untouched secrets are skipped
 		// on save
 		patch(&mut working)?;
-		working.save(&self.db, &latest)?;
-		let generation = self.ai_settings_generation.fetch_add(1, Ordering::SeqCst) + 1;
-		*cache = Some(working.clone());
-		Ok((working, generation))
+		match working.save(&self.db, &latest) {
+			Ok(()) => {
+				let generation = self.ai_settings_generation.fetch_add(1, Ordering::SeqCst) + 1;
+				*cache = Some(working.clone());
+				Ok((working, generation))
+			}
+			Err(failure) => {
+				// The failed save may have committed (the row
+				// transaction runs before the secret writes), so the
+				// pre-save snapshot is obsolete: publish the
+				// authoritative reload so the cache can never serve
+				// values the stores no longer hold.
+				match AiSettings::reload(&self.db) {
+					Ok(authoritative) => {
+						*cache = Some(authoritative);
+						Err(failure.to_string())
+					}
+					Err(degraded) => {
+						// The store cannot even be read back: drop the
+						// cache so the next read loads cold, and say
+						// so instead of republishing unverified values.
+						*cache = None;
+						Err(format!(
+							"settings state unavailable after a failed save: {degraded} (failed save: {failure})"
+						))
+					}
+				}
+			}
+		}
 	}
 
 	pub fn models_dir(&self) -> PathBuf {
@@ -849,5 +889,304 @@ mod settings_cache_tests {
 			.expect("clear token");
 		assert_eq!(state.ai_settings().hf_token, "");
 		assert_eq!(reopened(dir.path(), "secrets").ai_settings().hf_token, "");
+	}
+
+	// ---- partial persistence failure (F06) ----
+	//
+	// Ordinary rows commit in one transaction BEFORE the sequential
+	// secret writes, so a failing secret leaves the database holding
+	// the new ordinary values while a stale cache still serves the old
+	// ones. These regressions inject failures via SQLite triggers on
+	// dev-only rows (debug builds keep secrets there), so they never
+	// touch the developer's real keychain.
+
+	/// Abort writes of one settings key behind Db's back (BEFORE INSERT
+	/// covers the upsert's insert path for a row that does not exist
+	/// yet; BEFORE DELETE covers a secret clear).
+	fn fail_key_writes(path: &std::path::Path, key: &str, message: &str) {
+		let conn = rusqlite::Connection::open(path).unwrap();
+		conn.execute_batch(&format!(
+			"CREATE TRIGGER fail_{key} BEFORE INSERT ON settings
+			 WHEN NEW.key = '{key}'
+			 BEGIN SELECT RAISE(ABORT, '{message}'); END;"
+		))
+		.unwrap();
+	}
+
+	fn fail_key_deletes(path: &std::path::Path, key: &str, message: &str) {
+		let conn = rusqlite::Connection::open(path).unwrap();
+		conn.execute_batch(&format!(
+			"CREATE TRIGGER keep_{key} BEFORE DELETE ON settings
+			 WHEN OLD.key = '{key}'
+			 BEGIN SELECT RAISE(ABORT, '{message}'); END;"
+		))
+		.unwrap();
+	}
+
+	fn drop_fail_key_trigger(path: &std::path::Path, key: &str) {
+		let conn = rusqlite::Connection::open(path).unwrap();
+		conn.execute_batch(&format!("DROP TRIGGER fail_{key};"))
+			.unwrap();
+	}
+
+	#[test]
+	fn failed_secret_save_leaves_the_cache_on_the_committed_state() {
+		// F06: the settings row commits, then the token write fails.
+		// The cache must not keep serving the pre-save snapshot the
+		// database no longer holds.
+		let (state, dir) = temp_state("f06-truth");
+		let db_path = dir.path().join("f06-truth.db");
+		let _ = state.ai_settings(); // warm the cache
+		fail_key_writes(
+			&db_path,
+			crate::keys::setting::dev_secret::HF_TOKEN,
+			"injected secret write failure",
+		);
+
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"sttLanguage": "fr-FR",
+					"extLlmModel": "changed-before-error",
+					"hfToken": "fake-test-token",
+				}))
+			})
+			.expect_err("the token write fails");
+
+		// the cache reflects what the stores actually hold now
+		assert_eq!(state.ai_settings().stt_language, "fr-FR");
+		assert_eq!(state.ai_settings().ext_llm_model, "changed-before-error");
+		assert_eq!(state.ai_settings().hf_token, "");
+		// cold-restart equivalence: a fresh AppState loads the same state
+		let cold = reopened(dir.path(), "f06-truth");
+		assert_eq!(cold.ai_settings().stt_language, "fr-FR");
+		assert_eq!(cold.ai_settings().ext_llm_model, "changed-before-error");
+		assert_eq!(cold.ai_settings().hf_token, "");
+	}
+
+	#[test]
+	fn secret_failures_name_the_failed_secret_and_keep_later_secrets_unwritten() {
+		use crate::keys::setting::dev_secret;
+		// (dev row to break, secret's error name) in the order save()
+		// writes them; every round's patch touches all three secrets
+		let cases = [
+			(dev_secret::HF_TOKEN, "HuggingFace token"),
+			(dev_secret::EXT_LLM_API_KEY, "external LLM API key"),
+			(dev_secret::EXT_STT_API_KEY, "external STT API key"),
+		];
+		for (round, (row, name)) in cases.iter().enumerate() {
+			let (state, dir) = temp_state(&format!("f06-name{round}"));
+			let db_path = dir.path().join(format!("f06-name{round}.db"));
+			let _ = state.ai_settings();
+			fail_key_writes(&db_path, row, "injected secret write failure");
+
+			let err = state
+				.mutate_ai_settings(|s| {
+					s.apply_updates(&serde_json::json!({
+						"sttLanguage": "fr-FR",
+						"hfToken": "fake-hf-token",
+						"extLlmApiKey": "fake-llm-key",
+						"extSttApiKey": "fake-stt-key",
+					}))
+				})
+				.expect_err("one secret write fails");
+			assert!(
+				err.contains(&format!("storing the {name} failed")),
+				"round {round}: the error must name the failed secret: {err}"
+			);
+			assert!(
+				err.contains("injected secret write failure"),
+				"round {round}: the store's own error must surface: {err}"
+			);
+			assert!(
+				!err.contains("fake-hf-token")
+					&& !err.contains("fake-llm-key")
+					&& !err.contains("fake-stt-key"),
+				"round {round}: no secret value in the error: {err}"
+			);
+
+			// the ordinary row committed; secrets written before the
+			// failing one committed; the failing one and every later
+			// one were not attempted
+			let after = state.ai_settings();
+			assert_eq!(after.stt_language, "fr-FR", "round {round}");
+			let expected = [
+				after.hf_token.as_str(),
+				after.ext_llm_api_key.as_str(),
+				after.ext_stt_api_key.as_str(),
+			];
+			for (index, secret_value) in expected.iter().enumerate() {
+				let committed = index < round;
+				let stored = if committed {
+					vec!["fake-hf-token", "fake-llm-key", "fake-stt-key"][index]
+				} else {
+					""
+				};
+				assert_eq!(
+					*secret_value, stored,
+					"round {round}: secret {index} committed={committed}"
+				);
+			}
+			// and the cache equals what a cold restart loads
+			let cold = reopened(dir.path(), &format!("f06-name{round}"));
+			assert_eq!(cold.ai_settings().stt_language, "fr-FR");
+			assert_eq!(cold.ai_settings().hf_token, after.hf_token);
+			assert_eq!(cold.ai_settings().ext_llm_api_key, after.ext_llm_api_key);
+			assert_eq!(cold.ai_settings().ext_stt_api_key, after.ext_stt_api_key);
+		}
+	}
+
+	#[test]
+	fn clearing_failure_publishes_actual_stores_and_names_the_secret() {
+		let (state, dir) = temp_state("f06-clear");
+		let db_path = dir.path().join("f06-clear.db");
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({ "hfToken": "fake-old-token" }))
+			})
+			.expect("seed token");
+		fail_key_deletes(
+			&db_path,
+			crate::keys::setting::dev_secret::HF_TOKEN,
+			"database is locked",
+		);
+
+		let err = state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"sttLanguage": "fr-FR",
+					"hfToken": "",
+				}))
+			})
+			.expect_err("the clear fails");
+		assert!(
+			err.contains("clearing the HuggingFace token failed"),
+			"the error must name the failed clear: {err}"
+		);
+
+		// ordinary fields committed; the token survived in the store,
+		// and the cache says so instead of claiming it was cleared
+		assert_eq!(state.ai_settings().stt_language, "fr-FR");
+		assert_eq!(state.ai_settings().hf_token, "fake-old-token");
+		let cold = reopened(dir.path(), "f06-clear");
+		assert_eq!(cold.ai_settings().stt_language, "fr-FR");
+		assert_eq!(cold.ai_settings().hf_token, "fake-old-token");
+	}
+
+	#[test]
+	fn settings_row_failure_keeps_cache_on_actual_stores_and_names_the_stage() {
+		// The ordinary row transaction is atomic: nothing commits, so
+		// the pre-save state IS the actual state - but the error must
+		// still name the settings-row stage, not a secret.
+		let (state, dir) = temp_state("f06-row");
+		let db_path = dir.path().join("f06-row.db");
+		let _ = state.ai_settings();
+		fail_key_writes(
+			&db_path,
+			crate::keys::setting::AI_STT_LANGUAGE,
+			"injected row write failure",
+		);
+		let gen_before = state.ai_settings_generation.load(Ordering::SeqCst);
+
+		let err = state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"sttLanguage": "fr-FR",
+					"extLlmModel": "changed",
+				}))
+			})
+			.expect_err("the settings row transaction fails");
+		assert!(
+			err.contains("could not save the settings"),
+			"the error must name the failing stage: {err}"
+		);
+		assert!(!err.contains("token"), "no secret is involved: {err}");
+
+		// nothing committed: cache and stores keep the previous values
+		assert_eq!(state.ai_settings().stt_language, "en-US");
+		assert_eq!(state.ai_settings().ext_llm_model, "");
+		assert_eq!(
+			reopened(dir.path(), "f06-row").ai_settings().stt_language,
+			"en-US"
+		);
+		assert_eq!(
+			state.ai_settings_generation.load(Ordering::SeqCst),
+			gen_before,
+			"a failed save does not bump the generation"
+		);
+	}
+
+	#[test]
+	fn unreadable_store_after_a_failed_save_drops_the_cache() {
+		// The save fails AND the store cannot be read back: the cache
+		// must be dropped (degraded mode) rather than left holding or
+		// republishing unverified values.
+		let (state, dir) = temp_state("f06-degraded");
+		let db_path = dir.path().join("f06-degraded.db");
+		let _ = state.ai_settings();
+		{
+			let conn = rusqlite::Connection::open(&db_path).unwrap();
+			conn.execute_batch("DROP TABLE settings").unwrap();
+		}
+
+		let err = state
+			.mutate_ai_settings(|s| s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" })))
+			.expect_err("the save fails");
+		assert!(
+			err.contains("settings state unavailable after a failed save"),
+			"degraded mode must be named: {err}"
+		);
+		assert!(
+			state.ai_settings_cache.lock().unwrap().is_none(),
+			"a store that cannot be read must force the next read to load cold"
+		);
+	}
+
+	#[test]
+	fn retry_after_partial_commit_preserves_committed_fields_and_retries_the_secret() {
+		let (state, dir) = temp_state("f06-retry");
+		let db_path = dir.path().join("f06-retry.db");
+		let _ = state.ai_settings();
+		fail_key_writes(
+			&db_path,
+			crate::keys::setting::dev_secret::HF_TOKEN,
+			"injected secret write failure",
+		);
+
+		// the user saves; it fails on the token after the ordinary
+		// fields committed
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"sttLanguage": "fr-FR",
+					"hfToken": "fake-test-token",
+				}))
+			})
+			.expect_err("first attempt fails on the token");
+		drop_fail_key_trigger(&db_path, crate::keys::setting::dev_secret::HF_TOKEN);
+
+		// the retry goes through the boundary again: it must build on
+		// the LATEST ACTUAL state, so the committed fr-FR survives and
+		// the token (still absent in the store) is re-attempted
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"extLlmModel": "new-model",
+					"hfToken": "fake-test-token",
+				}))
+			})
+			.expect("retry commits");
+
+		let after = state.ai_settings();
+		assert_eq!(
+			after.stt_language, "fr-FR",
+			"committed fields are not reverted"
+		);
+		assert_eq!(after.ext_llm_model, "new-model");
+		assert_eq!(after.hf_token, "fake-test-token");
+		let cold = reopened(dir.path(), "f06-retry");
+		assert_eq!(cold.ai_settings().stt_language, "fr-FR");
+		assert_eq!(cold.ai_settings().ext_llm_model, "new-model");
+		assert_eq!(cold.ai_settings().hf_token, "fake-test-token");
 	}
 }

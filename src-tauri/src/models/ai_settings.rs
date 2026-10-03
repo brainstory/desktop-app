@@ -347,13 +347,30 @@ impl AiSettings {
 		Ok(())
 	}
 
-	/// Persist these settings. `previous` is what is stored now (the
+	/// Settings-table key nothing ever writes: deleting it is a no-op
+	/// on a healthy store, and fails exactly when the settings table
+	/// cannot serve a statement at all. `Db`'s read API deliberately
+	/// swallows read errors (a broken table reads as empty), so this
+	/// no-op delete is the only way [`AiSettings::reload`] can tell
+	/// "unreadable" apart from "factory defaults".
+	const STORE_HEALTH_KEY: &str = "settings_store_health_probe";
+
+	/// Persist these settings in two stages: the ordinary settings
+	/// row in one transaction (stage 1), then each changed secret
+	/// sequentially (stage 2). `previous` is what is stored now (the
 	/// AppState cache, or a fresh load): secrets equal to it are left
-	/// alone, so a save does no keychain round-trips (each is a syscall
-	/// and can trigger a macOS permission prompt) for secrets the user
-	/// did not touch. Err means the settings row or one of the secrets
-	/// could not be written - callers must not report success.
-	pub fn save(&self, db: &Db, previous: &AiSettings) -> Result<(), String> {
+	/// alone, so a save does no keychain round-trips (each is a
+	/// syscall and can trigger a macOS permission prompt) for secrets
+	/// the user did not touch.
+	///
+	/// Err records the failing stage ([`SaveFailure`]). SQLite cannot
+	/// transact the OS keychain, so the stages cannot be atomic: a
+	/// [`SaveStage::Secret`] failure means the settings row - and
+	/// possibly secrets earlier in the sequence - IS committed while
+	/// Err is returned. Callers must reconcile with the actual stores
+	/// ([`Self::reload`]) instead of reporting success or pretending
+	/// the row transaction rolled the keychain back.
+	pub fn save(&self, db: &Db, previous: &AiSettings) -> Result<(), SaveFailure> {
 		db.set_settings(&[
 			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
 			(setting::AI_LLM_MODEL, self.llm_model.clone()),
@@ -366,18 +383,29 @@ impl AiSettings {
 			(setting::EXT_LLM_MODEL, self.ext_llm_model.clone()),
 			(setting::EXT_STT_BASE_URL, self.ext_stt_base_url.clone()),
 			(setting::EXT_STT_MODEL, self.ext_stt_model.clone()),
-		])?;
-		let save_secret =
-			|secret: crate::secrets::Secret, value: &str, stored: &str| -> Result<(), String> {
-				if value == stored {
-					return Ok(());
-				}
-				if value.is_empty() {
-					crate::secrets::clear(secret, db)
-				} else {
-					crate::secrets::store(secret, value, db)
-				}
+		])
+		.map_err(|error| SaveFailure {
+			stage: SaveStage::SettingsRow,
+			error,
+		})?;
+		let save_secret = |secret: crate::secrets::Secret,
+		                   value: &str,
+		                   stored: &str|
+		 -> Result<(), SaveFailure> {
+			if value == stored {
+				return Ok(());
+			}
+			let clearing = value.is_empty();
+			let result = if clearing {
+				crate::secrets::clear(secret, db)
+			} else {
+				crate::secrets::store(secret, value, db)
 			};
+			result.map_err(|error| SaveFailure {
+				stage: SaveStage::Secret { secret, clearing },
+				error,
+			})
+		};
 		save_secret(
 			crate::secrets::Secret::HfToken,
 			&self.hf_token,
@@ -394,6 +422,79 @@ impl AiSettings {
 			&previous.ext_stt_api_key,
 		)?;
 		Ok(())
+	}
+
+	/// The authoritative state RIGHT NOW: the DB rows plus secret
+	/// stores as they are actually readable. For reconciling after a
+	/// failed save - unlike [`Self::load`], Err means the backing
+	/// store could not be read at all, and the caller must drop its
+	/// cache (degraded mode: the next read loads cold) rather than
+	/// republish values that mask a broken store.
+	pub fn reload(db: &Db) -> Result<Self, String> {
+		db.delete_setting(Self::STORE_HEALTH_KEY)
+			.map_err(|e| format!("settings store unreadable: {e}"))?;
+		Ok(Self::load(db))
+	}
+}
+
+/// Which stage of a staged [`AiSettings::save`] failed. Internal to
+/// the settings persistence boundary - it never crosses IPC, but its
+/// text is what user-facing errors are built from, so it names the
+/// stage/secret without ever including a secret value. Lets callers
+/// tell the three persistence outcomes apart:
+///
+/// - [`SaveStage::SettingsRow`] - the one row transaction failed
+///   atomically, so nothing committed (the state is unchanged);
+/// - [`SaveStage::Secret`] - the row and possibly earlier secrets
+///   committed; the named secret did not (partially committed);
+/// - a failed [`AiSettings::reload`] afterwards - reconciliation
+///   itself failed; the settings state is unknown (degraded mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveStage {
+	SettingsRow,
+	/// Records which secret failed and whether the failed operation
+	/// was clearing it (`clearing: true`) or storing a new value.
+	Secret {
+		secret: crate::secrets::Secret,
+		clearing: bool,
+	},
+}
+
+/// A staged save failure: the stage that failed plus the store's own
+/// error text (row keys and store status - never a secret value).
+#[derive(Debug, Clone)]
+pub struct SaveFailure {
+	pub stage: SaveStage,
+	pub error: String,
+}
+
+/// The settings-form name of a secret, so errors read like the form
+/// ("the HuggingFace token") instead of a store row key, and never
+/// carry the value.
+fn secret_name(secret: crate::secrets::Secret) -> &'static str {
+	match secret {
+		crate::secrets::Secret::HfToken => "HuggingFace token",
+		crate::secrets::Secret::ExtLlmApiKey => "external LLM API key",
+		crate::secrets::Secret::ExtSttApiKey => "external STT API key",
+	}
+}
+
+impl std::fmt::Display for SaveFailure {
+	/// Names the failing stage/secret and, for secret failures, that
+	/// the ordinary settings DID save - the honest partial outcome.
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self.stage {
+			SaveStage::SettingsRow => {
+				write!(f, "could not save the settings: {}", self.error)
+			}
+			SaveStage::Secret { secret, clearing } => write!(
+				f,
+				"saved settings, but {} the {} failed: {}",
+				if clearing { "clearing" } else { "storing" },
+				secret_name(secret),
+				self.error
+			),
+		}
 	}
 }
 
@@ -486,12 +587,21 @@ mod tests {
 			conn.execute_batch("DROP TABLE settings").unwrap();
 		}
 		let loaded = AiSettings::load(&db);
-		let err = loaded
+		let failure = loaded
 			.save(&db, &loaded)
 			.expect_err("save must surface the failure instead of logging it");
+		// the stage is structured, so callers can tell "nothing
+		// committed" (row transaction) from "partially committed"
+		// (secret stage) without parsing text
+		assert_eq!(failure.stage, super::SaveStage::SettingsRow);
+		let err = failure.to_string();
+		assert!(
+			err.contains("could not save the settings"),
+			"the stage is named: {err}"
+		);
 		assert!(
 			err.contains("failed to save setting"),
-			"unexpected error: {err}"
+			"the store's own error surfaces: {err}"
 		);
 	}
 
@@ -517,11 +627,56 @@ mod tests {
 		let previous = AiSettings::load(&db);
 		let mut settings = previous.clone();
 		settings.hf_token = String::new();
-		let err = settings
+		let failure = settings
 			.save(&db, &previous)
 			.expect_err("a secret that survives a clear must not report success");
+		assert_eq!(
+			failure.stage,
+			super::SaveStage::Secret {
+				secret: crate::secrets::Secret::HfToken,
+				clearing: true,
+			}
+		);
+		let err = failure.to_string();
+		assert!(
+			err.contains("clearing the HuggingFace token failed"),
+			"the failed secret is named: {err}"
+		);
 		assert!(err.contains("database is locked"), "unexpected: {err}");
+		assert!(
+			!err.contains("hf_old"),
+			"no secret value in the error: {err}"
+		);
 		assert_eq!(db.get_setting(row).as_deref(), Some("hf_old"));
+	}
+
+	#[test]
+	fn reload_tells_unreadable_stores_from_empty_ones() {
+		let (db, _dir) = temp_db("reload-ok");
+		// a healthy store reloads the same state load() reports
+		db.set_setting(setting::AI_STT_LANGUAGE, "fr-FR")
+			.expect("set");
+		let reloaded = AiSettings::reload(&db).expect("healthy store reloads");
+		assert_eq!(reloaded.stt_language, "fr-FR");
+		// and the health probe leaves no row behind
+		assert_eq!(db.get_setting(super::AiSettings::STORE_HEALTH_KEY), None);
+
+		// a store whose settings table cannot serve a statement at all
+		// must Err: swallowing that would republish factory defaults
+		// that mask a broken store
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("reload-fail.db");
+		let broken = Db::open(&path).expect("open");
+		{
+			let conn = rusqlite::Connection::open(&path).unwrap();
+			conn.execute_batch("DROP TABLE settings").unwrap();
+		}
+		let err = AiSettings::reload(&broken)
+			.expect_err("an unreadable store must not masquerade as defaults");
+		assert!(
+			err.contains("settings store unreadable"),
+			"unexpected: {err}"
+		);
 	}
 
 	#[test]
