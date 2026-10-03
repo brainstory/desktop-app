@@ -235,43 +235,78 @@ fn migrate_one(models_dir: &Path, cache: &Path, spec: &ModelSpec) {
 	}
 }
 
-/// True when some snapshot entry still links to `blobs/<sha>`.
-/// Symlinks are inspected precisely; a non-symlink entry (hardlink or
-/// copied fallback, e.g. on Windows) hides its target, so it is treated
-/// as referencing the blob - never prune what might be in use.
-fn blob_referenced(snapshots_dir: &Path, sha: &str) -> bool {
-	for rev in std::fs::read_dir(snapshots_dir)
-		.into_iter()
-		.flatten()
-		.flatten()
-	{
+/// Whether some snapshot entry still links to `blobs/<sha>`, from a
+/// scan that actually completed. An unreadable directory or entry is
+/// returned as `Err` - uncertainty, never absence: the caller must
+/// retain the blob rather than prune it on a failed scan. A broken
+/// symlink references nothing. A non-symlink entry (hardlink or
+/// copied fallback, e.g. on Windows) hides its target, so it counts
+/// as referencing - never prune what might be in use.
+fn blob_referenced(snapshots_dir: &Path, sha: &str) -> Result<bool, String> {
+	let revs = std::fs::read_dir(snapshots_dir)
+		.map_err(|e| format!("cannot scan {}: {e}", snapshots_dir.display()))?;
+	for rev in revs {
+		let rev = rev.map_err(|e| format!("cannot scan {}: {e}", snapshots_dir.display()))?;
 		let rev_dir = rev.path();
 		if !rev_dir.is_dir() {
 			continue;
 		}
-		for entry in std::fs::read_dir(rev_dir).into_iter().flatten().flatten() {
+		let entries = std::fs::read_dir(&rev_dir)
+			.map_err(|e| format!("cannot scan {}: {e}", rev_dir.display()))?;
+		for entry in entries {
+			let entry = entry.map_err(|e| format!("cannot scan {}: {e}", rev_dir.display()))?;
+			let file_type = entry
+				.file_type()
+				.map_err(|e| format!("cannot inspect {}: {e}", entry.path().display()))?;
 			let path = entry.path();
-			if !path.is_file() {
-				continue; // broken symlink or directory
-			}
-			match std::fs::read_link(&path) {
-				Ok(target) => {
-					if target.file_name().map(|n| n == sha).unwrap_or(false) {
-						return true;
-					}
+			if file_type.is_symlink() {
+				// a link that does not resolve references nothing
+				if !path.is_file() {
+					continue;
 				}
-				Err(_) => return true, // not a symlink: conservatively in use
+				match std::fs::read_link(&path) {
+					Ok(target) => {
+						if target.file_name().map(|n| n == sha).unwrap_or(false) {
+							return Ok(true);
+						}
+					}
+					Err(_) => return Ok(true), // unreadable link: conservatively in use
+				}
+			} else if !file_type.is_dir() {
+				// not a symlink: a hardlink or copied fallback entry
+				// hides its target - conservatively in use
+				return Ok(true);
 			}
 		}
 	}
-	false
+	Ok(false)
 }
 
-/// Remove this model's cache entry: every `snapshots/*/<filename>` link,
-/// then the blob when nothing else in the repo references it. This is
-/// the same rule huggingface's own cache pruning applies, so deleting
-/// in Brainstory never breaks another tool's snapshot (worst case, that
-/// tool re-downloads a blob we removed as unreferenced).
+/// Whether a regular snapshot entry (a hardlink or copied fallback,
+/// e.g. on Windows) holds the pinned content: the catalog size
+/// short-circuits before any hashing, then the streamed sha256 must
+/// match the pin. `None` = could not verify (a read error): the
+/// caller must retain the file.
+fn snapshot_file_is_pinned(
+	target: &Path,
+	meta: &std::fs::Metadata,
+	spec: &ModelSpec,
+) -> Option<bool> {
+	if spec.size_bytes > 0 && meta.len() != spec.size_bytes {
+		return Some(false);
+	}
+	sha256_of_file(target).map(|hash| hash.eq_ignore_ascii_case(spec.sha256))
+}
+
+/// Remove this model's cache entry from its own catalog repo, kept
+/// for the pinned content only - never a same-named file that holds
+/// something else. A snapshot link goes when its target is
+/// `blobs/<pinned sha>`; a regular file only after its size matches
+/// the catalog and its streamed sha256 matches the pin; anything
+/// unidentifiable (read errors, unresolvable links) is retained and
+/// logged, so a delete cannot break another tool's revision (worst
+/// case, a tool whose snapshot was intentionally kept re-downloads a
+/// blob we removed as unreferenced).
 pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, String> {
 	let repo_dir = hf_repo_dir(cache, spec);
 	let snapshots = repo_dir.join("snapshots");
@@ -279,20 +314,77 @@ pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, Strin
 		return Ok(false);
 	}
 	let mut removed = false;
-	for rev in std::fs::read_dir(&snapshots)
-		.map_err(|e| e.to_string())?
-		.flatten()
-	{
+	let revs = match std::fs::read_dir(&snapshots) {
+		Ok(revs) => revs,
+		Err(e) => {
+			log::warn!(
+				"could not list {}: {e}; no snapshot entry was removed",
+				snapshots.display()
+			);
+			return Ok(false);
+		}
+	};
+	for rev in revs {
+		let rev = match rev {
+			Ok(rev) => rev,
+			Err(e) => {
+				log::warn!("could not read a snapshot revision entry: {e}");
+				continue;
+			}
+		};
 		let target = rev.path().join(spec.filename);
-		if target.symlink_metadata().is_ok() {
-			std::fs::remove_file(&target).map_err(|e| e.to_string())?;
-			removed = true;
+		let meta = match target.symlink_metadata() {
+			Ok(meta) => meta,
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+			Err(e) => {
+				log::warn!("skipping {}: cannot inspect it: {e}", target.display());
+				continue;
+			}
+		};
+		let file_type = meta.file_type();
+		if file_type.is_symlink() {
+			let targets_pin = std::fs::read_link(&target)
+				.ok()
+				.and_then(|t| t.file_name().map(|n| n == spec.sha256));
+			match targets_pin {
+				Some(true) => {
+					std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+					removed = true;
+				}
+				Some(false) => {} // a different revision's link to other content
+				None => log::warn!("skipping {}: cannot resolve the link", target.display()),
+			}
+		} else if file_type.is_file() {
+			match snapshot_file_is_pinned(&target, &meta, spec) {
+				Some(true) => {
+					std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+					removed = true;
+				}
+				Some(false) => {} // same name, different content: not ours
+				None => log::warn!("skipping {}: cannot verify its content", target.display()),
+			}
+		} else {
+			log::warn!(
+				"skipping {}: not a file the app published",
+				target.display()
+			);
 		}
 	}
 	let blob = hf_blob_path(cache, spec);
-	if blob.is_file() && !blob_referenced(&snapshots, spec.sha256) {
-		std::fs::remove_file(&blob).map_err(|e| e.to_string())?;
-		removed = true;
+	if blob.is_file() {
+		match blob_referenced(&snapshots, spec.sha256) {
+			Ok(false) => {
+				std::fs::remove_file(&blob).map_err(|e| e.to_string())?;
+				removed = true;
+			}
+			// a completed scan found a live reference, or the scan
+			// itself failed: either way the blob stays
+			Ok(true) => {}
+			Err(e) => log::warn!(
+				"retaining the blob of {}: the reference scan did not complete: {e}",
+				spec.id
+			),
+		}
 	}
 	Ok(removed)
 }
@@ -1694,7 +1786,10 @@ mod hf_cache_tests {
 }
 #[cfg(test)]
 mod cache_storage_tests {
-	use super::{hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, LLM_MODELS};
+	use super::{
+		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, remove_cached_model,
+		LLM_MODELS,
+	};
 	use sha2::{Digest, Sha256};
 
 	fn sha256_hex(bytes: &[u8]) -> String {
@@ -1709,6 +1804,14 @@ mod cache_storage_tests {
 	fn spec_for(content: &[u8]) -> super::ModelSpec {
 		let mut spec = LLM_MODELS[0].clone();
 		spec.sha256 = Box::leak(sha256_hex(content).into_boxed_str());
+		spec
+	}
+
+	/// Like [`spec_for`], with the catalog size pinned to the content
+	/// too, so removal's size short-circuit treats it as real.
+	fn pinned_spec(content: &[u8]) -> super::ModelSpec {
+		let mut spec = spec_for(content);
+		spec.size_bytes = content.len() as u64;
 		spec
 	}
 
@@ -1816,10 +1919,6 @@ mod cache_storage_tests {
 	#[cfg(target_family = "unix")]
 	#[test]
 	fn remove_prunes_snapshots_and_only_unreferenced_blobs() {
-		// imported here: this unix-only test is its only user, and a
-		// module-level import is unused (an error) on Windows
-		use super::remove_cached_model;
-
 		let cache = tempfile::tempdir().expect("tempdir");
 		let content = b"shared model bytes";
 		let spec = spec_for(content);
@@ -1854,6 +1953,206 @@ mod cache_storage_tests {
 		std::fs::remove_file(other.join("different-name.gguf")).unwrap();
 		assert!(remove_cached_model(cache.path(), &spec).expect("prune remove"));
 		assert!(!blob.is_file(), "unreferenced blob is pruned");
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn remove_spares_a_different_revision_with_the_same_filename() {
+		// F10: two revisions carry the same filename; only the pinned
+		// content is ours, so only the pinned revision's entry may go
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+		// a foreign revision with a same-named REGULAR file (different
+		// content, different size)
+		let regular_rev = snapshots.join("regular-rev");
+		std::fs::create_dir_all(&regular_rev).unwrap();
+		std::fs::write(
+			regular_rev.join(spec.filename),
+			b"a foreign revision of the model",
+		)
+		.unwrap();
+		// a foreign revision with a same-named LINK to a different blob
+		let link_rev = snapshots.join("link-rev");
+		std::fs::create_dir_all(&link_rev).unwrap();
+		std::os::unix::fs::symlink(
+			std::path::Path::new("../../blobs").join("deadbeef"),
+			link_rev.join(spec.filename),
+		)
+		.unwrap();
+		// an unrelated file in the pinned revision: never a candidate
+		std::fs::write(snapshots.join(spec.sha256).join("unrelated.txt"), b"notes").unwrap();
+
+		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		// the pinned revision's link is gone...
+		assert!(!snapshots.join(spec.sha256).join(spec.filename).exists());
+		// ...and everything that is not the pinned content survives
+		assert_eq!(
+			std::fs::read(regular_rev.join(spec.filename)).unwrap(),
+			b"a foreign revision of the model".to_vec(),
+			"a different revision's same-named file must not be removed by filename alone"
+		);
+		assert!(
+			link_rev.join(spec.filename).symlink_metadata().is_ok(),
+			"a different revision's same-named link must survive"
+		);
+		assert!(
+			snapshots.join(spec.sha256).join("unrelated.txt").is_file(),
+			"unrelated filenames are untouched"
+		);
+	}
+
+	#[test]
+	fn remove_verifies_regular_file_snapshots_by_content() {
+		// the hardlink/copy fallback layout (e.g. Windows): revisions
+		// hold same-named REGULAR files - only the pinned content goes
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+		let pinned_rev = snapshots.join("pinned-rev");
+		let forged_rev = snapshots.join("forged-rev");
+		let shorter_rev = snapshots.join("shorter-rev");
+		for rev in [&pinned_rev, &forged_rev, &shorter_rev] {
+			std::fs::create_dir_all(rev).unwrap();
+		}
+		std::fs::write(pinned_rev.join(spec.filename), content).unwrap();
+		// same length as the pin, one byte different: only the
+		// streamed sha256 can tell them apart
+		std::fs::write(forged_rev.join(spec.filename), b"pinned model bytez").unwrap();
+		std::fs::write(shorter_rev.join(spec.filename), b"tiny").unwrap();
+
+		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(
+			!pinned_rev.join(spec.filename).exists(),
+			"a regular file whose streamed hash matches the pin is removed"
+		);
+		assert!(
+			forged_rev.join(spec.filename).is_file(),
+			"same size but different content: retained"
+		);
+		assert!(
+			shorter_rev.join(spec.filename).is_file(),
+			"a size that contradicts the catalog: retained without hashing"
+		);
+
+		// repeat deletion: nothing left that identifies as pinned
+		assert!(!remove_cached_model(cache.path(), &spec).expect("no-op remove"));
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn remove_retains_broken_links_that_do_not_target_the_pin() {
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+		// a revision whose same-named entry is a dead link to a
+		// different blob: not the pinned model, so not ours to remove
+		let dead = snapshots.join("dead-rev");
+		std::fs::create_dir_all(&dead).unwrap();
+		std::os::unix::fs::symlink(
+			std::path::Path::new("../../blobs").join("0123dead"),
+			dead.join(spec.filename),
+		)
+		.unwrap();
+		assert!(
+			!dead.join(spec.filename).is_file(),
+			"precondition: the link is broken"
+		);
+
+		remove_cached_model(cache.path(), &spec).expect("remove");
+		assert!(
+			dead.join(spec.filename).symlink_metadata().is_ok(),
+			"a broken link to a different blob is not the pinned model"
+		);
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn an_unreadable_snapshots_dir_skips_removal_and_retains_the_blob() {
+		use std::os::unix::fs::PermissionsExt;
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+
+		let mut perms = std::fs::metadata(&snapshots).unwrap().permissions();
+		perms.set_mode(0o000);
+		std::fs::set_permissions(&snapshots, perms).unwrap();
+		let removed = remove_cached_model(cache.path(), &spec);
+		let mut perms = std::fs::metadata(&snapshots).unwrap().permissions();
+		perms.set_mode(0o755);
+		std::fs::set_permissions(&snapshots, perms).unwrap();
+
+		// a scan that cannot run is not "no cache entry": uncertainty
+		// skips removal (with a warning) instead of failing or pruning
+		assert!(
+			!removed.expect("uncertainty is not a hard failure"),
+			"nothing is removed when the snapshots dir cannot be listed"
+		);
+		assert!(
+			snapshots
+				.join(spec.sha256)
+				.join(spec.filename)
+				.symlink_metadata()
+				.is_ok(),
+			"the pinned snapshot entry is retained"
+		);
+		assert!(blob.is_file(), "the blob is never pruned on a failed scan");
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn an_unreadable_revision_dir_retains_the_blob() {
+		use std::os::unix::fs::PermissionsExt;
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+
+		// a revision another process made unreadable: whether it
+		// references the blob is unknowable
+		let locked = snapshots.join("locked-rev");
+		std::fs::create_dir_all(&locked).unwrap();
+		let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+		perms.set_mode(0o000);
+		std::fs::set_permissions(&locked, perms).unwrap();
+
+		// our own pinned link is still identified and removed
+		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+
+		let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+		perms.set_mode(0o755);
+		std::fs::set_permissions(&locked, perms).unwrap();
+
+		assert!(
+			blob.is_file(),
+			"an unreadable revision is uncertainty, not absence: the blob must not be pruned"
+		);
 	}
 }
 
