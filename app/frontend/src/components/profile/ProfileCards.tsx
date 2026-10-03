@@ -88,15 +88,21 @@ export function timezoneOptions(stored?: string | null): string[] {
 interface GeneralCardProps {
 	userName?: string | null;
 	timezone?: string;
-	saveSettings: (name: string, timezone: string) => void;
+	/** Resolves true once persisted, false if the save failed. */
+	saveSettings: (name: string, timezone: string) => Promise<boolean>;
 }
 
 export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardProps) {
 	const [editedName, setEditedName] = useState(userName ?? "");
 	const [selectedTimezone, setSelectedTimezone] = useState(timezone ?? "");
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
-	const [hasChanged, setHasChanged] = useState(false);
+	const [isSaving, setIsSaving] = useState(false);
 	const timezones = useMemo(() => timezoneOptions(timezone), [timezone]);
+	// the last CONFIRMED-saved snapshot: dirty state is derived from it,
+	// so a failed save stays retryable and edits made while a save was
+	// pending stay dirty without tracking the latest values in a ref
+	const [saved, setSaved] = useState({ name: userName ?? "", timezone: timezone ?? "" });
+	const hasChanged = editedName !== saved.name || selectedTimezone !== saved.timezone;
 
 	const handleNameChange = (e: ChangeEvent<HTMLInputElement>): void => {
 		const input = e.target.value;
@@ -108,25 +114,29 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 		} else {
 			setErrorMessage(undefined);
 		}
-		const updateHasChanged = input !== userName || selectedTimezone !== timezone;
-		setHasChanged(updateHasChanged);
 	};
 
 	const handleTimezoneSelect = (e: ChangeEvent<HTMLSelectElement>): void => {
-		const input = e.target.value;
-		setSelectedTimezone(input);
-		// compare against the *timezone*, not the user name
-		const updateHasChanged = editedName !== userName || input !== timezone;
-		setHasChanged(updateHasChanged);
+		setSelectedTimezone(e.target.value);
 	};
 
 	const handleSaveClick = () => {
+		if (isSaving) return;
 		if (editedName.trim().length > 0 && editedName.length <= 70) {
 			// "Detect automatically" stores the zone detected right now, the
 			// same thing userStore does on first launch; an empty string
 			// would be dropped by saveUserSettingsApi and never persist
-			saveSettings(editedName, selectedTimezone || detectedTimezone());
-			setHasChanged(false);
+			const submitted = { name: editedName, timezone: selectedTimezone };
+			setIsSaving(true);
+			void saveSettings(submitted.name, submitted.timezone || detectedTimezone())
+				.then((savedOutcome) => {
+					if (savedOutcome) {
+						// only the submitted snapshot becomes clean: edits
+						// made while the save was pending stay dirty
+						setSaved(submitted);
+					}
+				})
+				.finally(() => setIsSaving(false));
 		}
 	};
 
@@ -174,7 +184,7 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 			</div>
 			<Button
 				variant="pink"
-				disabled={!hasChanged}
+				disabled={!hasChanged || isSaving}
 				onClick={handleSaveClick}
 				classes="mt-6 mx-auto"
 			>

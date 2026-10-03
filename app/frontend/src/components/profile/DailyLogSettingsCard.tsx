@@ -17,16 +17,25 @@ const getEnabledLogQidsFromData = (apiData: LogSettingsQuestion[]): number[] => 
 
 interface DailyLogSettingsCardProps {
 	logFieldsData?: LogSettingsQuestion[];
-	saveSettings: (ids: number[]) => void;
+	/** Resolves true once persisted, false if the save failed. */
+	saveSettings: (ids: number[]) => Promise<boolean>;
 }
 
 export function DailyLogSettingsCard({
 	logFieldsData = [],
 	saveSettings
 }: DailyLogSettingsCardProps) {
-	const [enabledLogQids, setEnabledLogQids] = useState(getEnabledLogQidsFromData(logFieldsData));
-	const [hasChanged, setHasChanged] = useState(false);
+	const initialQids = getEnabledLogQidsFromData(logFieldsData);
+	const [enabledLogQids, setEnabledLogQids] = useState(initialQids);
+	// the last CONFIRMED-saved snapshot: dirty state is derived from it,
+	// so a failed save stays retryable and toggles made while a save was
+	// pending stay dirty without tracking the latest values in a ref
+	const [savedQids, setSavedQids] = useState(initialQids);
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
+	const [isSaving, setIsSaving] = useState(false);
+	const hasChanged =
+		enabledLogQids.length !== savedQids.length ||
+		!enabledLogQids.every((id) => savedQids.includes(id));
 
 	const handleToggle = (toggledId: number): void => {
 		let updatedEnabledLogQids = [...enabledLogQids];
@@ -36,17 +45,26 @@ export function DailyLogSettingsCard({
 			updatedEnabledLogQids.push(toggledId);
 		}
 		setEnabledLogQids(updatedEnabledLogQids);
-		setHasChanged(true);
 	};
 
 	const handleSaveClick = () => {
+		if (isSaving) return;
 		if (enabledLogQids.length === 0) {
 			setErrorMessage("Must have at least 1 question enabled");
-		} else {
-			saveSettings(enabledLogQids);
-			setHasChanged(false);
-			setErrorMessage(undefined);
+			return;
 		}
+		const submittedQids = enabledLogQids;
+		setIsSaving(true);
+		setErrorMessage(undefined);
+		void saveSettings(submittedQids)
+			.then((saved) => {
+				if (saved) {
+					// only the submitted ids become clean: toggles made
+					// while the save was pending stay dirty
+					setSavedQids(submittedQids);
+				}
+			})
+			.finally(() => setIsSaving(false));
 	};
 
 	return (
@@ -62,7 +80,7 @@ export function DailyLogSettingsCard({
 			{errorMessage && <p className="mt-1 text-pink-600 text-sm">{errorMessage}</p>}
 			<Button
 				variant="pink"
-				disabled={!hasChanged}
+				disabled={!hasChanged || isSaving}
 				onClick={handleSaveClick}
 				classes="mt-6 mx-auto"
 			>

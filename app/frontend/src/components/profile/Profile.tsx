@@ -78,16 +78,17 @@ export default function Profile() {
 		loadSettings();
 	}, [loadSettings]);
 
-	const handleUserSettingsSave = (newName: string, newTimezone: string): void => {
+	const handleUserSettingsSave = (newName: string, newTimezone: string): Promise<boolean> =>
 		saveUserSettingsApi({ name: newName, timezone: newTimezone })
 			.then(() => {
 				loadSettings();
 				openSnackbar(true, SUCCESS_COPY.SAVE);
+				return true;
 			})
 			.catch((e) => {
 				openSnackbar(false, normalizeApiError(e));
+				return false;
 			});
-	};
 
 	const handleNotificationsSave = (notificationFields: NotificationSetting[]): Promise<boolean> =>
 		saveUserSettingsApi({
@@ -102,16 +103,18 @@ export default function Profile() {
 				return false;
 			});
 
-	const handleLogSettingsSave = (enabledLogQids: number[]): void => {
+	const handleLogSettingsSave = (enabledLogQids: number[]): Promise<boolean> => {
 		// copy before sorting (the prop is the child's state) and sort
 		// numerically - lexicographic sort puts 10 before 2
 		const sortedEnabledLogQids = [...enabledLogQids].sort((a, b) => a - b);
-		saveUserSettingsApi({ enabledLogQids: sortedEnabledLogQids })
+		return saveUserSettingsApi({ enabledLogQids: sortedEnabledLogQids })
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
+				return true;
 			})
 			.catch((e) => {
 				openSnackbar(false, normalizeApiError(e));
+				return false;
 			});
 	};
 

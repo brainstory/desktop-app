@@ -10,13 +10,30 @@ import Profile from "./Profile";
 vi.mock("./AiModelsCard", () => ({ default: () => null }));
 
 // Capture the daily-log save callback Profile hands its child.
-const dailyLog = vi.hoisted(() => ({ save: null as ((ids: number[]) => void) | null }));
+const dailyLog = vi.hoisted(() => ({
+	save: null as ((ids: number[]) => Promise<boolean>) | null
+}));
 vi.mock("./DailyLogSettingsCard", () => ({
-	DailyLogSettingsCard: ({ saveSettings }: { saveSettings: (ids: number[]) => void }) => {
+	DailyLogSettingsCard: ({
+		saveSettings
+	}: {
+		saveSettings: (ids: number[]) => Promise<boolean>;
+	}) => {
 		dailyLog.save = saveSettings;
 		return null;
 	}
 }));
+
+/** a backend call whose outcome the test settles explicitly */
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (e: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
 
 const userSettings = {
 	user: { name: "Ada", timezone: "Europe/Berlin" },
@@ -105,12 +122,116 @@ describe("Profile", () => {
 
 		// frozen: an in-place sort of the child's state would throw
 		const childState = Object.freeze([10, 2, 1]) as number[];
-		act(() => dailyLog.save!(childState));
+		await act(async () => {
+			await dailyLog.save!(childState);
+		});
 		await waitFor(() =>
 			expect(vi.mocked(invoke)).toHaveBeenCalledWith("save_user_settings", {
 				enabled_log_question_ids: [1, 2, 10]
 			})
 		);
 		expect(childState).toEqual([10, 2, 1]);
+	});
+
+	it("keeps the General form editable and retryable when a save fails", async () => {
+		const user = userEvent.setup();
+		// an earlier test's tab click left ?tab= in the shared jsdom URL
+		window.history.replaceState(null, "", "/");
+		const failed = deferred<{ id: string }>();
+		const ok = deferred<{ id: string }>();
+		const saves = [failed, ok];
+		let loadCount = 0;
+		mockInvoke({
+			get_user_settings: () => {
+				loadCount += 1;
+				return loadCount === 1
+					? userSettings
+					: { ...userSettings, user: { name: "Bob", timezone: "Europe/Berlin" } };
+			},
+			save_user_settings: () => saves.shift()!.promise
+		});
+		render(<Profile />);
+		const nameInput = await screen.findByRole("textbox", { name: "Your name" });
+		const saveButton = screen.getByRole("button", { name: /save/i });
+
+		await user.clear(nameInput);
+		await user.type(nameInput, "Bob");
+		await user.click(saveButton);
+		await act(async () => failed.reject(new Error("save failed")));
+
+		// error surfaced, unsaved value kept, Save still retryable
+		expect(await screen.findByText("save failed")).toBeInTheDocument();
+		expect(nameInput).toHaveValue("Bob");
+		expect(saveButton).toBeEnabled();
+
+		await user.click(saveButton); // retry with the SAME values
+		await act(async () => ok.resolve({ id: "settings" }));
+		expect(await screen.findByText("Changes Saved!")).toBeInTheDocument();
+		expect(nameInput).toHaveValue("Bob");
+		expect(saveButton).toBeDisabled();
+	});
+
+	it("preserves edits typed during a pending General save when reloaded settings arrive", async () => {
+		const user = userEvent.setup();
+		// an earlier test's tab click left ?tab= in the shared jsdom URL
+		window.history.replaceState(null, "", "/");
+		const save = deferred<{ id: string }>();
+		let loadCount = 0;
+		mockInvoke({
+			get_user_settings: () => {
+				loadCount += 1;
+				return loadCount === 1
+					? userSettings
+					: { ...userSettings, user: { name: "Bob", timezone: "Europe/Berlin" } };
+			},
+			save_user_settings: () => save.promise
+		});
+		render(<Profile />);
+		const nameInput = await screen.findByRole("textbox", { name: "Your name" });
+		const saveButton = screen.getByRole("button", { name: /save/i });
+
+		await user.clear(nameInput);
+		await user.type(nameInput, "Bob");
+		await user.click(saveButton);
+		await user.clear(nameInput);
+		await user.type(nameInput, "Carol"); // typed while the save was in flight
+		await act(async () => save.resolve({ id: "settings" }));
+
+		// two loads + one save; the reload delivered the saved props
+		await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledTimes(3));
+		expect(nameInput).toHaveValue("Carol"); // not clobbered by "Bob"
+		expect(saveButton).toBeEnabled(); // "Carol" is still unsaved
+	});
+
+	it("resolves the daily log save with false and reports the error, then true on retry", async () => {
+		const user = userEvent.setup();
+		// start from the General tab regardless of earlier tab clicks
+		window.history.replaceState(null, "", "/");
+		let calls = 0;
+		mockInvoke({
+			get_user_settings: () => userSettings,
+			save_user_settings: () => {
+				calls += 1;
+				if (calls === 1) throw new Error("log save failed");
+				return { id: "settings" };
+			}
+		});
+		render(<Profile />);
+		await user.click(await screen.findByRole("tab", { name: "Daily Log Settings" }));
+		await waitFor(() => expect(dailyLog.save).not.toBeNull());
+
+		let outcome: boolean | undefined;
+		await act(async () => {
+			outcome = await dailyLog.save!([2, 1]);
+		});
+		expect(outcome).toBe(false);
+		expect(await screen.findByText("log save failed")).toBeInTheDocument();
+
+		let retry: boolean | undefined;
+		await act(async () => {
+			retry = await dailyLog.save!([1, 2]);
+		});
+		expect(retry).toBe(true);
+		expect(await screen.findByText("Changes Saved!")).toBeInTheDocument();
 	});
 });
