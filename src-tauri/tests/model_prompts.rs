@@ -3,6 +3,10 @@
 //! the story result summary prompt through LocalLlm, exactly as the ai
 //! command layer resolves them, and checks that thinking models come back
 //! clean (no `<think>` reasoning in streamed or returned text).
+//! The F21 probes at the bottom drive the context-fit truncation with
+//! oversized payloads; they need a fixture whose trained context is at
+//! least 8192 tokens (smaller windows degenerate: the summarize budget
+//! `trained - 4096 - 64` saturates at zero and generation collapses).
 //! Run: LLM_MODEL_PATH=<gguf> cargo test --test model_prompts -- --nocapture
 #![allow(linker_messages)]
 
@@ -49,6 +53,7 @@ fn model_prompt_suite() {
 	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test").expect("load failed");
 	real_prompts_work_end_to_end(&llm);
 	kv_cache_reuse_produces_completions_and_skips_prefix_decode(&llm);
+	oversized_payload_fit_probes(&llm);
 }
 
 fn real_prompts_work_end_to_end(llm: &LocalLlm) {
@@ -145,4 +150,134 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 		)
 		.expect("generation after divergence");
 	assert!(!fresh.trim().is_empty());
+}
+
+/// A deterministic transcript of roughly `bytes` bytes: alternating
+/// user/assistant turns of realistic sentences. No tag spellings, so
+/// `sanitize_tag_content` leaves the text verbatim inside the JSON.
+fn long_transcript(bytes: usize, multibyte: bool) -> Vec<ChatMessage> {
+	let mut messages = Vec::new();
+	let mut written = 0usize;
+	let mut i = 0;
+	while written < bytes {
+		let role = if i % 2 == 0 { "user" } else { "assistant" };
+		let sentence =
+			if multibyte {
+				format!("第{i}个想法：我一直在权衡这个项目的范围和时间安排。🧠")
+			} else {
+				format!("Note {i}: I keep circling back to the same tradeoff between scope and timing. ")
+			};
+		written += sentence.len();
+		messages.push(ChatMessage {
+			role: role.into(),
+			content: sentence,
+		});
+		i += 1;
+	}
+	messages
+}
+
+/// F21 investigation probes (env-gated, run last so the phases above
+/// keep their existing KV dynamics). Drive `LocalLlm::generate` with
+/// payloads past the context budget so `build_prompt`'s hard
+/// truncation engages, and record what is observable through the
+/// public API:
+///
+/// - oversized summaries (the `<t>` transcript, plus `<oid>` framing
+///   for feedback) must still come back as a decodable prompt and a
+///   non-empty, think-free generation - the fit loop may not collapse
+///   the generation cap to ~0 or fail the decode;
+/// - a multibyte-heavy oversized transcript exercises the byte-based
+///   cut end to end;
+/// - an immutable payload too large for the window (a huge parent
+///   idea, which lives in the SYSTEM prompt and is never truncated)
+///   currently empties the user reply, stays over budget, and fails
+///   at prompt decode. That error is the documented current failure
+///   mode; the proposed fix must replace it with a clear too-large
+///   error before any decode happens (update this assertion then).
+///
+/// What these runs CANNOT show is tag integrity of the final prompt:
+/// `generate` exposes only the token count, so whether the closing
+/// `</t>`/`</oid>` survive a cut is established by reading
+/// `build_prompt` (they do not: the cut keeps a prefix and appends the
+/// notice) - see the task 21 handoff for the proposed test seam.
+///
+/// The already-fitting control is `real_prompts_work_end_to_end`
+/// above: a small transcript that triggers no truncation.
+fn oversized_payload_fit_probes(llm: &LocalLlm) {
+	// ~80 KB is comfortably past the summarize budget (effective
+	// context is clamped to 16384, minus 4096 + 64) for any tokenizer
+	// a fixture would plausibly use.
+	let original = PromptRequest {
+		chat_type: ChatType::Original,
+		messages: long_transcript(80_000, false),
+		summarize: true,
+		react_to: None,
+		react_to_author: None,
+		react_to_is_current_user: false,
+		structured_feedback: false,
+	};
+	let (returned, streamed) = generate(llm, &original);
+	assert_clean(
+		"oversized original summary (truncated <t> payload)",
+		&returned,
+		&streamed,
+	);
+
+	let feedback = PromptRequest {
+		chat_type: ChatType::Feedback,
+		react_to: Some("# Parent idea\n\n## Section\nA reasonably sized parent idea.\n".into()),
+		react_to_author: Some("Ada".into()),
+		..original
+	};
+	let (returned, streamed) = generate(llm, &feedback);
+	assert_clean(
+		"oversized feedback summary (truncated <oid>/<t> payload)",
+		&returned,
+		&streamed,
+	);
+
+	let multibyte = PromptRequest {
+		messages: long_transcript(80_000, true),
+		..feedback
+	};
+	let (returned, streamed) = generate(llm, &multibyte);
+	assert_clean(
+		"oversized multibyte summary (UTF-8-safe cut)",
+		&returned,
+		&streamed,
+	);
+
+	// ~270 KB of idea (~30k+ tokens for any tokenizer) in the system
+	// prompt: past the 16384 window itself, so the message the fitter
+	// CAN truncate is emptied and the prompt still does not fit.
+	let huge_idea = PromptRequest {
+		chat_type: ChatType::Feedback,
+		messages: vec![
+			ChatMessage {
+				role: "assistant".into(),
+				content: "Opening question about the idea.".into(),
+			},
+			ChatMessage {
+				role: "user".into(),
+				content: "My first reaction.".into(),
+			},
+		],
+		summarize: false,
+		react_to: Some("This idea body keeps repeating its core point.\n".repeat(6_000)),
+		react_to_author: Some("Ada".into()),
+		react_to_is_current_user: false,
+		structured_feedback: false,
+	};
+	let cancel = Arc::new(AtomicBool::new(false));
+	let system = huge_idea.system_prompt();
+	let messages = huge_idea.user_messages();
+	let err = llm
+		.generate(&system, &messages, false, &cancel, &mut |_| {})
+		.expect_err("a system payload past the window must fail, not hang or generate");
+	assert!(
+		err.contains("decode"),
+		"expected the documented prompt-decode failure, got: {err}"
+	);
+	println!("[f21] oversized system payload error: {err}");
 }
