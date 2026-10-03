@@ -5,6 +5,8 @@ export interface DailyLogQuestion {
 	id: number;
 	text: string;
 	label: string;
+	/** Today's saved answer; absent when it hasn't been answered yet. */
+	value?: boolean;
 }
 
 export interface LogAnswerItem {
@@ -25,7 +27,9 @@ export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestion[]> {
 	return response.log.map((question) => ({
 		id: question.id,
 		text: question.text,
-		label: question.label
+		label: question.label,
+		// pass today's saved answer through; false only when absent
+		value: question.value
 	}));
 }
 
