@@ -122,9 +122,67 @@ fn whisper_language(locale: &str, english_only: bool) -> String {
 	}
 }
 
+/// Hard cap on audio duration at every decode/convert boundary: decoded
+/// audio may not exceed this many seconds at its source rate, and
+/// resampled 16 kHz output may not exceed `MAX_AUDIO_SECS * 16_000`
+/// samples. Mirrors the device-side capture cap (`voice.rs`
+/// `MAX_CAPTURE_SECS`); a test pins the two together.
+pub(crate) const MAX_AUDIO_SECS: usize = 300;
+
+/// Widest sample rate accepted from WAV metadata or capture devices:
+/// 1 kHz covers telephone audio, 192 kHz covers professional audio.
+/// Rates outside the range are malformed metadata, and a floor on the
+/// rate bounds how far resampling to 16 kHz can multiply the input.
+const MIN_SAMPLE_RATE: u32 = 1_000;
+const MAX_SAMPLE_RATE: u32 = 192_000;
+
+/// The resampling target whisper requires.
+const TARGET_RATE: u32 = 16_000;
+
+/// Pure, allocation-free validation of a resampling budget: may
+/// `input_samples` mono frames recorded at `sample_rate` be converted to
+/// 16 kHz? Returns the exact output length (`input * 16_000 / rate`,
+/// floored) for the caller to allocate with. The rate range, the
+/// `MAX_AUDIO_SECS` duration bound at the source rate and the
+/// `MAX_AUDIO_SECS * 16_000` bound on the output are all enforced with
+/// checked integer arithmetic, so pathological metadata can neither
+/// overflow the budget computation nor drive a huge allocation.
+pub(crate) fn checked_resample_len(
+	input_samples: usize,
+	sample_rate: u32,
+) -> Result<usize, String> {
+	if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
+		return Err(format!(
+			"unsupported sample rate {sample_rate} Hz (supported {MIN_SAMPLE_RATE}-{MAX_SAMPLE_RATE} Hz)"
+		));
+	}
+	let too_long = || format!("audio too long: more than {MAX_AUDIO_SECS} s at {sample_rate} Hz");
+	let max_input = sample_rate
+		.checked_mul(MAX_AUDIO_SECS as u32)
+		.ok_or_else(too_long)? as usize;
+	if input_samples > max_input {
+		return Err(format!(
+			"audio too long: {input_samples} samples at {sample_rate} Hz exceeds the {MAX_AUDIO_SECS} s limit ({max_input} samples)"
+		));
+	}
+	let out_len = input_samples
+		.checked_mul(TARGET_RATE as usize)
+		.and_then(|samples| samples.checked_div(sample_rate as usize))
+		.ok_or_else(too_long)?;
+	let max_output = MAX_AUDIO_SECS * TARGET_RATE as usize;
+	if out_len > max_output {
+		return Err(format!(
+			"audio too long: resampled output of {out_len} samples exceeds the {MAX_AUDIO_SECS} s limit ({max_output} samples)"
+		));
+	}
+	Ok(out_len)
+}
+
 /// Decode a WAV file into 16 kHz mono f32 samples suitable for whisper.
 /// Handles mono folding and naive linear resampling. Malformed or
 /// unsupported files produce errors, never silent empty transcripts.
+/// Audio longer than `MAX_AUDIO_SECS` is rejected before the resample
+/// allocation.
 pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 	let cursor = std::io::Cursor::new(bytes);
 	let mut reader = hound::WavReader::new(cursor).map_err(|e| format!("invalid WAV: {e}"))?;
@@ -138,6 +196,16 @@ pub fn wav_to_samples(bytes: &[u8]) -> Result<Vec<f32>, String> {
 	if sample_rate == 0 {
 		return Err("invalid WAV: zero sample rate".into());
 	}
+	if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
+		return Err(format!(
+			"invalid WAV: sample rate {sample_rate} Hz outside the supported {MIN_SAMPLE_RATE}-{MAX_SAMPLE_RATE} Hz range"
+		));
+	}
+	// Header-level duration bound: the frame count is metadata like the
+	// rate, so reject over-long audio before collecting samples. The
+	// authoritative check on the actual collected count runs in
+	// resample_to_16k before its allocation.
+	checked_resample_len(reader.duration() as usize, sample_rate)?;
 
 	// Collect with error propagation - silently dropping undecodable
 	// samples desyncs stereo channels and hides unsupported formats.
@@ -193,17 +261,15 @@ pub(crate) fn fold_to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
 		.collect()
 }
 
-/// Naive linear resampling to 16 kHz.
+/// Naive linear resampling to 16 kHz. The output length is validated
+/// and computed by [`checked_resample_len`] before any allocation, so
+/// metadata-controlled rates or durations cannot blow up the buffer.
 pub(crate) fn resample_to_16k(mono: Vec<f32>, sample_rate: u32) -> Result<Vec<f32>, String> {
-	const TARGET_RATE: u32 = 16_000;
+	let out_len = checked_resample_len(mono.len(), sample_rate)?;
 	if sample_rate == TARGET_RATE || mono.is_empty() {
 		return Ok(mono);
 	}
 	let ratio = f64::from(sample_rate) / f64::from(TARGET_RATE);
-	if !ratio.is_finite() || ratio <= 0.0 {
-		return Err(format!("invalid sample rate {sample_rate}"));
-	}
-	let out_len = (mono.len() as f64 / ratio) as usize;
 	let mut resampled = Vec::with_capacity(out_len);
 	let mut src_pos = 0.0f64;
 	for _ in 0..out_len {
@@ -287,7 +353,8 @@ pub async fn transcribe_external(
 #[cfg(test)]
 mod tests {
 	use super::{
-		is_non_speech_annotation, is_speech, resample_to_16k, wav_to_samples, whisper_language,
+		checked_resample_len, is_non_speech_annotation, is_speech, resample_to_16k, wav_to_samples,
+		whisper_language,
 	};
 
 	#[test]
@@ -434,6 +501,160 @@ mod tests {
 		// upsampling in frequency terms (8k -> 16k) doubles the length
 		let up = resample_to_16k(vec![0.0f32, 1.0], 8_000).unwrap();
 		assert_eq!(up.len(), 4);
+	}
+
+	#[test]
+	fn rejects_pathological_wav_sample_rates_before_allocating() {
+		// A WAV announcing 1 Hz turns every input sample into 16_000
+		// output samples: 64 samples resample to a million. The rate
+		// must be rejected before any resample allocation.
+		let bytes = wav_bytes(mono_spec(1, 1), &[0i16; 64]);
+		match wav_to_samples(&bytes) {
+			Err(e) => assert!(e.contains("sample rate"), "{e}"),
+			Ok(samples) => panic!(
+				"rate-1 WAV accepted: {} output samples from 64 input (output length = input * 16000, unbounded)",
+				samples.len()
+			),
+		}
+		// below-minimum but nonzero rate: same rejection
+		let bytes = wav_bytes(mono_spec(500, 1), &[0i16; 1_000]);
+		match wav_to_samples(&bytes) {
+			Err(e) => assert!(e.contains("sample rate"), "{e}"),
+			Ok(samples) => panic!(
+				"rate-500 WAV accepted: {} output samples from 1_000 input",
+				samples.len()
+			),
+		}
+	}
+
+	#[test]
+	fn rejects_zero_sample_rate_wav() {
+		// patch the fmt chunk consistently (rate AND byte rate, which
+		// hound cross-checks) so the zero reaches our validation
+		let mut bytes = wav_bytes(mono_spec(16_000, 1), &[0, 0]);
+		bytes[24..28].copy_from_slice(&0u32.to_le_bytes());
+		bytes[28..32].copy_from_slice(&0u32.to_le_bytes());
+		match wav_to_samples(&bytes) {
+			Err(e) => assert!(e.contains("zero sample rate"), "{e}"),
+			Ok(samples) => panic!("zero-rate WAV accepted: {} samples", samples.len()),
+		}
+	}
+
+	#[test]
+	fn resample_bound_is_exactly_300_seconds() {
+		// exactly at the cap passes...
+		let at_bound = resample_to_16k(vec![0.0; 300_000], 1_000).expect("300 s at 1 kHz");
+		assert_eq!(at_bound.len(), 4_800_000);
+		// ...one sample more is rejected before allocating
+		match resample_to_16k(vec![0.0; 300_001], 1_000) {
+			Err(e) => assert!(e.contains("too long"), "{e}"),
+			Ok(out) => panic!(
+				"over-bound resample accepted: {} output samples (300_001 * 16000 / 1000, unbounded)",
+				out.len()
+			),
+		}
+	}
+
+	#[test]
+	fn decodes_common_rates_8k_16k_44k1_48k() {
+		for rate in [8_000u32, 16_000, 44_100, 48_000] {
+			let bytes = wav_bytes(mono_spec(rate, 1), &vec![0i16; rate as usize]);
+			let samples = wav_to_samples(&bytes).unwrap_or_else(|e| panic!("{rate} Hz: {e}"));
+			assert!(
+				(15_800..=16_200).contains(&samples.len()),
+				"{rate} Hz decoded to {} samples",
+				samples.len()
+			);
+		}
+	}
+
+	#[test]
+	fn folds_stereo_to_mono_at_48k_before_resampling() {
+		let mut frames = Vec::new();
+		for _ in 0..6 {
+			frames.extend_from_slice(&[16384, -16384]); // L/R cancel
+		}
+		let bytes = wav_bytes(mono_spec(48_000, 2), &frames);
+		let samples = wav_to_samples(&bytes).expect("decode");
+		assert_eq!(
+			samples.len(),
+			2,
+			"6 frames at 48 kHz -> 2 samples at 16 kHz"
+		);
+		assert!(samples.iter().all(|s| s.abs() < 1e-3), "{samples:?}");
+	}
+
+	#[test]
+	fn checked_resample_len_accepts_the_documented_rate_range() {
+		// one second at any supported rate resamples to 16_000 samples
+		for rate in [1_000u32, 8_000, 16_000, 44_100, 48_000, 192_000] {
+			assert_eq!(
+				checked_resample_len(rate as usize, rate).unwrap(),
+				16_000,
+				"{rate} Hz"
+			);
+		}
+	}
+
+	#[test]
+	fn checked_resample_len_rejects_zero_and_out_of_range_rates() {
+		for rate in [0, 1, 500, 999, 193_000, 1_000_000, u32::MAX] {
+			assert!(
+				checked_resample_len(1_000, rate).is_err(),
+				"{rate} Hz accepted"
+			);
+		}
+	}
+
+	#[test]
+	fn checked_resample_len_allows_exactly_300s_and_rejects_one_sample_more() {
+		for (rate, at_bound) in [
+			(1_000u32, 300_000usize),
+			(16_000, 4_800_000),
+			(44_100, 13_230_000),
+			(48_000, 14_400_000),
+			(192_000, 57_600_000),
+		] {
+			assert_eq!(
+				checked_resample_len(at_bound, rate).unwrap(),
+				4_800_000,
+				"{rate} Hz at bound"
+			);
+			assert!(
+				checked_resample_len(at_bound + 1, rate).is_err(),
+				"{rate} Hz one over accepted"
+			);
+		}
+	}
+
+	#[test]
+	fn checked_resample_len_floors_the_output_length() {
+		assert_eq!(checked_resample_len(1, 48_000).unwrap(), 0);
+		assert_eq!(checked_resample_len(3, 48_000).unwrap(), 1);
+		assert_eq!(checked_resample_len(22_050, 44_100).unwrap(), 8_000);
+		// upsampling in frequency terms (8k -> 16k) doubles
+		assert_eq!(checked_resample_len(4_000, 8_000).unwrap(), 8_000);
+		// the resampler allocates exactly the computed length
+		assert_eq!(
+			resample_to_16k(vec![0.0; 22_050], 44_100).unwrap().len(),
+			checked_resample_len(22_050, 44_100).unwrap()
+		);
+	}
+
+	#[test]
+	fn checked_resample_len_survives_huge_sample_counts_without_overflow() {
+		for (samples, rate) in [
+			(usize::MAX, 1_000u32),
+			(usize::MAX, 16_000),
+			(usize::MAX, 192_000),
+			(usize::MAX / 2, 44_100),
+			(u32::MAX as usize, 48_000),
+		] {
+			assert!(
+				checked_resample_len(samples, rate).is_err(),
+				"{samples} samples at {rate} Hz not rejected"
+			);
+		}
 	}
 }
 

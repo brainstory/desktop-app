@@ -263,7 +263,15 @@ fn capture_to_wav(samples: Vec<f32>, channels: u16, sample_rate: u32) -> Result<
 	if samples.is_empty() {
 		return Err(NO_AUDIO_CAPTURED.to_string());
 	}
-	let mono = crate::stt::fold_to_mono(samples, channels.max(1) as usize);
+	let channels = channels.max(1) as usize;
+	// Defense in depth: the device-side buffer is already capped at
+	// MAX_CAPTURE_SECS, but the conversion validates the same budget
+	// (rate range + duration bound, checked arithmetic) before folding
+	// and resampling, so a bug in the cap cannot turn into an unbounded
+	// allocation here.
+	let frames = samples.len().div_ceil(channels);
+	crate::stt::checked_resample_len(frames, sample_rate)?;
+	let mono = crate::stt::fold_to_mono(samples, channels);
 	let mono = crate::stt::resample_to_16k(mono, sample_rate)?;
 	encode_wav_16k(&mono)
 }
@@ -309,6 +317,36 @@ mod wav_tests {
 	#[test]
 	fn capture_rejects_an_empty_buffer() {
 		assert!(super::capture_to_wav(Vec::new(), 1, 48_000).is_err());
+	}
+
+	#[test]
+	fn capture_conversion_rejects_audio_over_the_300s_bound() {
+		// the device-side buffer is capped at MAX_CAPTURE_SECS, but the
+		// conversion validates the same budget: 300_001 frames at 1 kHz
+		// is one sample past the five-minute bound
+		match super::capture_to_wav(vec![0.0; 300_001], 1, 1_000) {
+			Err(e) => assert!(e.contains("too long"), "{e}"),
+			Ok(wav) => panic!(
+				"over-bound capture accepted: {} byte WAV from 300_001 samples at 1 kHz",
+				wav.len()
+			),
+		}
+	}
+
+	#[test]
+	fn capture_converts_a_short_48k_recording() {
+		let wav = super::capture_to_wav(vec![0.25; 48], 1, 48_000).expect("convert");
+		let mono = crate::stt::wav_to_samples(&wav).expect("decode");
+		assert_eq!(mono.len(), 16, "48 samples at 48 kHz -> 16 at 16 kHz");
+		assert!((mono[0] - 0.25).abs() < 1e-3, "{}", mono[0]);
+	}
+
+	#[test]
+	fn capture_cap_and_conversion_bound_stay_pinned_together() {
+		// the device-side buffer cap and the conversion budget are two
+		// spellings of one limit: drift would let one path accept what
+		// the other rejects
+		assert_eq!(super::MAX_CAPTURE_SECS, crate::stt::MAX_AUDIO_SECS);
 	}
 
 	#[test]
