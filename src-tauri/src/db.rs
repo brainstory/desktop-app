@@ -735,38 +735,55 @@ impl Db {
 	}
 
 	/// Delete an idea and its whole feedback subtree in one transaction
-	/// (recursive, so a child-of-child can never survive as an orphan);
-	/// also clear any daily-intent reference and survey links so nothing
-	/// points at the deleted rows.
+	/// (recursive, so a child-of-child can never survive as an orphan).
+	/// `surveys.idea_id` and `daily.intent_idea_id` are nullable idea
+	/// references with no enforcing foreign key, so both are cleared for
+	/// every subtree member - clearing only the requested id would leave
+	/// links to a deleted descendant dangling. The subtree (the
+	/// requested id plus every descendant) is computed once, before any
+	/// row is removed, and every statement below applies to that same
+	/// set; reactions need no handling here because their foreign keys
+	/// cascade.
 	pub fn delete_idea(&self, id: &str) -> Result<bool, String> {
 		let mut deleted = false;
 		self.with_tx(|conn| {
-			conn.execute(
-				"UPDATE daily SET intent_idea_id = NULL WHERE intent_idea_id = ?1",
-				params![id],
-			)
-			.map_err(|e| format!("failed to delete idea: {e}"))?;
-			conn.execute(
-				"UPDATE surveys SET idea_id = NULL WHERE idea_id = ?1",
-				params![id],
-			)
-			.map_err(|e| format!("failed to delete idea: {e}"))?;
-			conn.execute(
-				"DELETE FROM ideas WHERE id IN (
-					WITH RECURSIVE descendants(id) AS (
-						SELECT id FROM ideas WHERE parent_idea_id = ?1
-						UNION ALL
-						SELECT i.id FROM ideas i JOIN descendants d ON i.parent_idea_id = d.id
+			let subtree: Vec<String> = {
+				let mut stmt = conn
+					.prepare(
+						"WITH RECURSIVE subtree(id) AS (
+							SELECT id FROM ideas WHERE id = ?1
+							UNION ALL
+							SELECT i.id FROM ideas i JOIN subtree s ON i.parent_idea_id = s.id
+						)
+						SELECT id FROM subtree",
 					)
-					SELECT id FROM descendants
-				)",
-				params![id],
-			)
-			.map_err(|e| format!("failed to delete feedback: {e}"))?;
-			deleted = conn
-				.execute("DELETE FROM ideas WHERE id = ?1", params![id])
-				.map(|n| n > 0)
+					.map_err(|e| format!("failed to delete idea: {e}"))?;
+				let ids: Vec<String> = stmt
+					.query_map(params![id], |row| row.get(0))
+					.map_err(|e| format!("failed to delete idea: {e}"))?
+					.collect::<Result<_, _>>()
+					.map_err(|e| format!("failed to delete idea: {e}"))?;
+				ids
+			};
+			// a missing id deletes nothing (but still cleans up any
+			// orphans a pre-foreign-key database left under it)
+			deleted = subtree.iter().any(|sid| sid.as_str() == id);
+			// json_each binds the whole set as one parameter; splicing
+			// ids into the SQL text would let an id containing SQL
+			// syntax change the statement
+			let ids = serde_json::to_string(&subtree)
 				.map_err(|e| format!("failed to delete idea: {e}"))?;
+			for sql in [
+				"UPDATE daily SET intent_idea_id = NULL
+				 WHERE intent_idea_id IN (SELECT value FROM json_each(?1))",
+				"UPDATE surveys SET idea_id = NULL
+				 WHERE idea_id IN (SELECT value FROM json_each(?1))",
+				"DELETE FROM ideas
+				 WHERE id IN (SELECT value FROM json_each(?1))",
+			] {
+				conn.execute(sql, params![ids])
+					.map_err(|e| format!("failed to delete idea: {e}"))?;
+			}
 			Ok(())
 		})?;
 		Ok(deleted)
@@ -1912,6 +1929,230 @@ mod coverage_tests {
 				.optional()
 				.unwrap();
 			assert!(today_row.is_some(), "the daily row itself survives");
+		}
+	}
+
+	#[test]
+	fn delete_idea_clears_links_for_every_deleted_descendant() {
+		let (db, _dir) = db();
+		idea(&db, "parent", "2026-01-01T00:00:00");
+		for (id, parent) in [("child", Some("parent")), ("grandchild", Some("child"))] {
+			db.insert_idea(NewIdea {
+				id,
+				title: id,
+				idea_type: IdeaType::Feedback,
+				result: "r",
+				metadata: &json!({}),
+				parent_idea_id: parent,
+				created_at: Some("2026-01-02T00:00:00"),
+				..Default::default()
+			})
+			.unwrap();
+		}
+		idea(&db, "other", "2026-01-01T00:00:00");
+		// every subtree member is linked to a survey, a past day's
+		// intent points at the grandchild (no production path makes a
+		// descendant an intent, but nothing in the schema forbids it),
+		// and an unrelated idea keeps its own survey link
+		db.insert_survey("s-parent", Some("parent"), &json!({}))
+			.unwrap();
+		db.insert_survey("s-child", Some("child"), &json!({}))
+			.unwrap();
+		db.insert_survey("s-grandchild", Some("grandchild"), &json!({}))
+			.unwrap();
+		db.insert_survey("s-other", Some("other"), &json!({}))
+			.unwrap();
+		db.lock()
+			.execute(
+				"INSERT INTO daily (date, intent_idea_id, is_completed, created_at)
+				 VALUES ('2026-01-02', 'grandchild', 1, '2026-01-02T00:00:00')",
+				[],
+			)
+			.unwrap();
+
+		assert!(db.delete_idea("parent").unwrap());
+
+		{
+			let conn = db.lock();
+			for id in ["parent", "child", "grandchild"] {
+				let linked: i64 = conn
+					.query_row(
+						"SELECT COUNT(*) FROM surveys WHERE idea_id = ?1",
+						params![id],
+						|r| r.get(0),
+					)
+					.unwrap();
+				assert_eq!(linked, 0, "survey still references deleted idea {id}");
+			}
+			let survived: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM surveys WHERE id IN ('s-parent', 's-child', 's-grandchild') AND idea_id IS NULL",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(
+				survived, 3,
+				"survey rows must survive with their link cleared, not be deleted"
+			);
+			let unrelated: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM surveys WHERE id = 's-other' AND idea_id = 'other'",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(unrelated, 1, "the unrelated idea's survey link survives");
+			let intents: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM daily WHERE intent_idea_id IS NOT NULL",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(intents, 0, "a daily intent still names a deleted idea");
+			let day_kept: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM daily WHERE date = '2026-01-02' AND intent_idea_id IS NULL AND is_completed = 1",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(day_kept, 1, "the day row itself survives");
+			let dangling: i64 = conn
+				.query_row(
+					"SELECT COUNT(*) FROM surveys WHERE idea_id IS NOT NULL AND idea_id NOT IN (SELECT id FROM ideas)",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(dangling, 0, "no dangling survey reference remains");
+		}
+		assert!(db.get_idea("other").unwrap().is_some());
+	}
+
+	#[test]
+	fn delete_idea_is_clean_for_repeats_and_missing_ids() {
+		let (db, _dir) = db();
+		idea(&db, "solo", "2026-01-01T00:00:00");
+		db.insert_survey("s1", Some("solo"), &json!({})).unwrap();
+		assert!(db.delete_idea("solo").unwrap());
+		// deleting again, and deleting an id that never existed, are
+		// calm no-ops rather than errors
+		assert!(!db.delete_idea("solo").unwrap());
+		assert!(!db.delete_idea("ghost").unwrap());
+		assert!(db.list_ideas().unwrap().is_empty());
+		let linked: i64 = db
+			.lock()
+			.query_row(
+				"SELECT COUNT(*) FROM surveys WHERE idea_id IS NOT NULL",
+				[],
+				|r| r.get(0),
+			)
+			.unwrap();
+		assert_eq!(linked, 0);
+	}
+
+	#[test]
+	fn failed_delete_idea_rolls_back_rows_and_links() {
+		let (db, _dir) = db();
+		idea(&db, "parent", "2026-01-01T00:00:00");
+		db.insert_idea(NewIdea {
+			id: "child",
+			title: "child",
+			idea_type: IdeaType::Feedback,
+			result: "r",
+			metadata: &json!({}),
+			parent_idea_id: Some("parent"),
+			created_at: Some("2026-01-02T00:00:00"),
+			..Default::default()
+		})
+		.unwrap();
+		db.insert_survey("s-child", Some("child"), &json!({}))
+			.unwrap();
+		db.lock()
+			.execute(
+				"INSERT INTO daily (date, intent_idea_id, is_completed, created_at)
+				 VALUES ('2026-01-02', 'child', 0, '2026-01-02T00:00:00')",
+				[],
+			)
+			.unwrap();
+		db.lock()
+			.execute_batch(
+				"CREATE TRIGGER fail_delete BEFORE DELETE ON ideas
+				 WHEN OLD.id = 'child'
+				 BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;",
+			)
+			.unwrap();
+		// the injected failure must roll back the whole transaction:
+		// rows AND their survey/intent links stay exactly as they were
+		let err = db.delete_idea("parent").unwrap_err();
+		assert!(
+			err.contains("injected delete failure"),
+			"unexpected error: {err}"
+		);
+		{
+			let conn = db.lock();
+			for id in ["parent", "child"] {
+				let kept: i64 = conn
+					.query_row(
+						"SELECT COUNT(*) FROM ideas WHERE id = ?1",
+						params![id],
+						|r| r.get(0),
+					)
+					.unwrap();
+				assert_eq!(kept, 1, "{id} must survive the rollback");
+			}
+			let survey_link: Option<String> = conn
+				.query_row(
+					"SELECT idea_id FROM surveys WHERE id = 's-child'",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(
+				survey_link.as_deref(),
+				Some("child"),
+				"survey link must survive the rollback"
+			);
+			let intent_link: Option<String> = conn
+				.query_row(
+					"SELECT intent_idea_id FROM daily WHERE date = '2026-01-02'",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(
+				intent_link.as_deref(),
+				Some("child"),
+				"daily intent must survive the rollback"
+			);
+		}
+		// with the failure gone the same delete succeeds and clears
+		db.lock().execute_batch("DROP TRIGGER fail_delete").unwrap();
+		assert!(db.delete_idea("parent").unwrap());
+		{
+			let conn = db.lock();
+			let ideas: i64 = conn
+				.query_row("SELECT COUNT(*) FROM ideas", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(ideas, 0);
+			let survey_link: Option<String> = conn
+				.query_row(
+					"SELECT idea_id FROM surveys WHERE id = 's-child'",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(survey_link, None, "survey link cleared on success");
+			let intent_link: Option<String> = conn
+				.query_row(
+					"SELECT intent_idea_id FROM daily WHERE date = '2026-01-02'",
+					[],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(intent_link, None, "daily intent cleared on success");
 		}
 	}
 
