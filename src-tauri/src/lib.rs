@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use chrono::Utc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent, Wry};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent, Wry};
 
 use models::{AiSettings, AppState, ModelKind};
 
@@ -246,10 +246,19 @@ pub fn run() {
 					});
 				}
 			}
-			spawn_migration_and_model_loader(
-				app.handle().clone(),
-				AiSettings::load(&app.state::<AppState>().db),
-			);
+		// Read the generation BEFORE the settings: a save committing
+		// between the two reads must leave this run stale (it defers to
+		// the save's own loader) rather than plan from a superseded
+		// snapshot it mistakes for current.
+		let startup_generation = app
+			.state::<AppState>()
+			.ai_settings_generation
+			.load(std::sync::atomic::Ordering::SeqCst);
+		spawn_migration_and_model_loader(
+			app.handle().clone(),
+			AiSettings::load(&app.state::<AppState>().db),
+			startup_generation,
+		);
 
 			Ok(())
 		})
@@ -484,28 +493,64 @@ fn show_main_window(app: &AppHandle) {
 	}
 }
 
+/// Delivery of engine-status events. Production emits Tauri events to
+/// the webview; tests record or drop them, so the load/reconcile flow
+/// is exercisable without an app handle.
+pub(crate) trait StatusEvents {
+	fn llm_status(&self, status: &models::EngineStatus);
+	fn stt_status(&self, status: &models::EngineStatus);
+}
+
+/// Production event sink: the app's Tauri channels.
+pub(crate) struct AppStatusEvents<'a>(pub &'a AppHandle);
+
+impl StatusEvents for AppStatusEvents<'_> {
+	fn llm_status(&self, status: &models::EngineStatus) {
+		if let Err(e) = self.0.emit("llm-status", status) {
+			log::warn!("failed to emit llm-status: {e}");
+		}
+	}
+	fn stt_status(&self, status: &models::EngineStatus) {
+		if let Err(e) = self.0.emit("stt-status", status) {
+			log::warn!("failed to emit stt-status: {e}");
+		}
+	}
+}
+
+/// Status delivery for one engine kind, as a plain fn so the generic
+/// swap flow can take it as a parameter.
+pub(crate) fn notify_llm(status: &models::EngineStatus, events: &dyn StatusEvents) {
+	events.llm_status(status);
+}
+
+pub(crate) fn notify_stt(status: &models::EngineStatus, events: &dyn StatusEvents) {
+	events.stt_status(status);
+}
+
 /// Load active models at startup / after settings changes. Heavy loading
 /// happens on a background thread so the UI starts instantly.
-pub fn spawn_model_loader(app: AppHandle, settings: AiSettings) {
-	std::thread::spawn(move || run_model_loader(app, settings));
+/// `generation` is the settings generation `settings` was captured at,
+/// so this run can tell newer committed settings from its own snapshot.
+pub fn spawn_model_loader(app: AppHandle, settings: AiSettings, generation: u64) {
+	std::thread::spawn(move || run_model_loader(app, settings, generation));
 }
 
 /// Startup path: migrate legacy app-dir downloads into the hub cache
 /// first (hash-verified, so a corrupt file never poisons a
 /// content-addressed store), then load. Ordered so the loader never
 /// mmaps a file the migration is about to move.
-pub fn spawn_migration_and_model_loader(app: AppHandle, settings: AiSettings) {
+pub fn spawn_migration_and_model_loader(app: AppHandle, settings: AiSettings, generation: u64) {
 	std::thread::spawn(move || {
 		if let Some(state) = app.try_state::<AppState>() {
 			models::migrate_legacy_models(&state.models_dir(), &models::primary_hub_cache());
 		}
-		run_model_loader(app, settings);
+		run_model_loader(app, settings, generation);
 	});
 }
 
 /// What the model loader does with the whisper slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WhisperPlan {
+pub(crate) enum WhisperPlan {
 	/// load this (downloaded) catalog model
 	Load(&'static str),
 	/// unknown or not-downloaded model: unload whatever is resident and
@@ -518,7 +563,7 @@ enum WhisperPlan {
 /// The STT status the loader reports after handling the whisper slot,
 /// when something other than whisper's own load decides it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SttStatusPlan {
+pub(crate) enum SttStatusPlan {
 	/// the external endpoint transcribes
 	External,
 	/// Apple Speech transcribes
@@ -529,23 +574,23 @@ enum SttStatusPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LlmPlan {
+pub(crate) enum LlmPlan {
 	External,
 	Load(&'static str),
 	Missing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LoadPlan {
-	whisper: WhisperPlan,
-	stt_status: Option<SttStatusPlan>,
-	llm: LlmPlan,
+pub(crate) struct LoadPlan {
+	pub(crate) whisper: WhisperPlan,
+	pub(crate) stt_status: Option<SttStatusPlan>,
+	pub(crate) llm: LlmPlan,
 }
 
 /// The loader's whole decision, pure: which engines to load or unload
 /// and which status to report, given the settings, whether Apple Speech
 /// exists here, and which catalog models are downloaded.
-fn plan_model_load(
+pub(crate) fn plan_model_load(
 	settings: &AiSettings,
 	apple_available: bool,
 	downloaded: impl Fn(&models::ModelSpec) -> bool,
@@ -589,72 +634,205 @@ fn plan_model_load(
 	}
 }
 
-fn run_model_loader(app: AppHandle, settings: AiSettings) {
+fn run_model_loader(app: AppHandle, settings: AiSettings, generation: u64) {
 	let Some(state) = app.try_state::<AppState>() else {
 		return;
 	};
-	let plan = plan_model_load(&settings, apple::speech_available(), |spec| {
+	let events = AppStatusEvents(&app);
+	let stt_load = |spec: &models::ModelSpec| state.load_stt_events(&events, spec, generation);
+	let llm_load = |spec: &models::ModelSpec| state.load_llm_events(&events, spec, generation);
+	reconcile_model_state(
+		&state,
+		&events,
+		&settings,
+		generation,
+		SLOT_WAIT,
+		apple::speech_available(),
+		&stt_load,
+		&llm_load,
+	);
+}
+
+/// Wait this long for an in-flight engine load before giving up on
+/// reconciling that slot in this run.
+const SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// True when `generation` is obsolete: a newer committed settings save
+/// exists, so work captured at `generation` must not mutate the runtime
+/// or publish status - the newer run owns the outcome. Equal
+/// generations mean the same settings: same plan, harmless.
+fn settings_stale(state: &AppState, generation: u64) -> bool {
+	state
+		.ai_settings_generation
+		.load(std::sync::atomic::Ordering::SeqCst)
+		> generation
+}
+
+/// Bring the runtime in line with `settings` captured at `generation`:
+/// the one publication path for both engine slots. Stale runs install
+/// nothing and publish nothing; a slot that stays busy past `slot_wait`
+/// aborts this run's arm for it rather than mutating unclaimed.
+///
+/// `stt_load`/`llm_load` perform the claimed engine loads (the test
+/// seam; production uses [`AppState::load_stt_events`]/
+/// [`AppState::load_llm_events`], which claim the slot themselves and
+/// re-verify the generation under that claim, closing the interval
+/// between this run releasing its claim and the load reacquiring it).
+#[allow(clippy::too_many_arguments)]
+fn reconcile_model_state(
+	state: &AppState,
+	events: &dyn StatusEvents,
+	settings: &AiSettings,
+	generation: u64,
+	slot_wait: std::time::Duration,
+	apple_available: bool,
+	stt_load: &dyn Fn(&models::ModelSpec) -> Result<(), String>,
+	llm_load: &dyn Fn(&models::ModelSpec) -> Result<(), String>,
+) {
+	// Stale before any work: a newer committed save exists and its own
+	// loader owns the outcome.
+	if settings_stale(state, generation) {
+		return;
+	}
+	let plan = plan_model_load(settings, apple_available, |spec| {
 		state.is_model_downloaded(spec)
 	});
-	// Each slot change first waits for an in-flight load of that engine
-	// (an activation, a download's auto-load) and holds the slot while
-	// unloading: an unload racing a running load would be undone when
-	// that load installs its engine, contradicting the reported status.
-	const SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+	// The catalog scan above is file-system work; still current?
+	if settings_stale(state, generation) {
+		return;
+	}
 
-	let stt_slot = models::EngineSlotClaim::acquire(&state.stt_loading, SLOT_WAIT);
+	reconcile_whisper_slot(state, events, &plan, generation, slot_wait, stt_load);
+	reconcile_llm_slot(state, events, &plan, generation, slot_wait, llm_load);
+}
+
+/// The whisper slot's share of one reconciliation run.
+fn reconcile_whisper_slot(
+	state: &AppState,
+	events: &dyn StatusEvents,
+	plan: &LoadPlan,
+	generation: u64,
+	slot_wait: std::time::Duration,
+	stt_load: &dyn Fn(&models::ModelSpec) -> Result<(), String>,
+) {
 	match plan.whisper {
 		WhisperPlan::Load(id) => {
-			// load_stt claims the slot itself
-			stt_slot.release();
-			if let Some(spec) = models::find_model(id, ModelKind::Stt) {
-				if let Err(e) = state.load_stt(&app, spec) {
-					log::error!("startup STT load failed: {e}");
+			// Wait out any in-flight load of this slot, then hand the
+			// slot to the load path itself: it re-claims and re-verifies
+			// the generation under that claim, so nothing can slip
+			// through the release-and-reacquire handoff below.
+			match models::EngineSlotClaim::acquire(&state.stt_loading, slot_wait) {
+				Some(claim) => {
+					if !settings_stale(state, generation) {
+						claim.release();
+						if let Some(spec) = models::find_model(id, ModelKind::Stt) {
+							if let Err(e) = stt_load(spec) {
+								log::error!("startup STT load failed: {e}");
+							}
+						}
+					}
+				}
+				None => {
+					log::warn!(
+						"stt slot still busy after {slot_wait:?}; aborting this run's whisper reconciliation"
+					);
 				}
 			}
 		}
-		WhisperPlan::Missing => {
-			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
-			*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				models::EngineStatus::missing();
-			state.emit_stt_status(&app);
-		}
-		WhisperPlan::Unload => {
-			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
+		WhisperPlan::Missing | WhisperPlan::Unload => {
+			// Hold the slot while unloading: an unload racing a running
+			// load would be undone when that load installs its engine,
+			// contradicting the reported status. A wedged holder aborts
+			// this arm instead of authorizing an unclaimed mutation.
+			match models::EngineSlotClaim::acquire(&state.stt_loading, slot_wait) {
+				Some(_claim) => {
+					// Re-check under the claim: a newer run may have
+					// committed while this one waited for the slot.
+					if !settings_stale(state, generation) {
+						state.runtime.lock().unwrap_or_else(|e| e.into_inner()).stt = None;
+						if plan.whisper == WhisperPlan::Missing {
+							*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+								models::EngineStatus::missing();
+							state.emit_stt_status_events(events);
+						}
+						if let Some(status) = plan.stt_status {
+							*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
+								match status {
+									SttStatusPlan::External => models::EngineStatus::external(),
+									SttStatusPlan::AppleReady => {
+										models::EngineStatus::ready(Some("apple-speech"))
+									}
+									SttStatusPlan::AppleUnsupported => models::EngineStatus::error(
+										Some("apple-speech"),
+										"Apple Speech requires macOS 26+ - using whisper instead",
+									),
+								};
+							state.emit_stt_status_events(events);
+						}
+					}
+				}
+				None => {
+					log::warn!(
+						"stt slot still busy after {slot_wait:?}; aborting this run's whisper reconciliation"
+					);
+				}
+			}
 		}
 	}
-	if let Some(status) = plan.stt_status {
-		*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) = match status {
-			SttStatusPlan::External => models::EngineStatus::external(),
-			SttStatusPlan::AppleReady => models::EngineStatus::ready(Some("apple-speech")),
-			SttStatusPlan::AppleUnsupported => models::EngineStatus::error(
-				Some("apple-speech"),
-				"Apple Speech requires macOS 26+ - using whisper instead",
-			),
-		};
-		state.emit_stt_status(&app);
-	}
+}
 
-	let llm_slot = models::EngineSlotClaim::acquire(&state.llm_loading, SLOT_WAIT);
+/// The LLM slot's share of one reconciliation run.
+fn reconcile_llm_slot(
+	state: &AppState,
+	events: &dyn StatusEvents,
+	plan: &LoadPlan,
+	generation: u64,
+	slot_wait: std::time::Duration,
+	llm_load: &dyn Fn(&models::ModelSpec) -> Result<(), String>,
+) {
 	match plan.llm {
 		LlmPlan::Load(id) => {
-			// load_llm claims the slot itself
-			llm_slot.release();
-			if let Some(spec) = models::find_model(id, ModelKind::Llm) {
-				if let Err(e) = state.load_llm(&app, spec) {
-					log::error!("startup LLM load failed: {e}");
+			// Same handoff as the whisper slot above: wait out any
+			// in-flight load, then the load path re-claims and
+			// re-verifies under its own claim.
+			match models::EngineSlotClaim::acquire(&state.llm_loading, slot_wait) {
+				Some(claim) => {
+					if !settings_stale(state, generation) {
+						claim.release();
+						if let Some(spec) = models::find_model(id, ModelKind::Llm) {
+							if let Err(e) = llm_load(spec) {
+								log::error!("startup LLM load failed: {e}");
+							}
+						}
+					}
+				}
+				None => {
+					log::warn!(
+						"llm slot still busy after {slot_wait:?}; aborting this run's llm reconciliation"
+					);
 				}
 			}
 		}
 		LlmPlan::External | LlmPlan::Missing => {
-			state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
-			*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
-				if plan.llm == LlmPlan::External {
-					models::EngineStatus::external()
-				} else {
-					models::EngineStatus::missing()
-				};
-			state.emit_llm_status(&app);
+			match models::EngineSlotClaim::acquire(&state.llm_loading, slot_wait) {
+				Some(_claim) => {
+					if !settings_stale(state, generation) {
+						state.runtime.lock().unwrap_or_else(|e| e.into_inner()).llm = None;
+						*state.llm_status.lock().unwrap_or_else(|e| e.into_inner()) =
+							if plan.llm == LlmPlan::External {
+								models::EngineStatus::external()
+							} else {
+								models::EngineStatus::missing()
+							};
+						state.emit_llm_status_events(events);
+					}
+				}
+				None => {
+					log::warn!(
+						"llm slot still busy after {slot_wait:?}; aborting this run's llm reconciliation"
+					);
+				}
+			}
 		}
 	}
 }
@@ -757,6 +935,376 @@ mod loader_plan_tests {
 		let plan = plan_model_load(&s, false, NONE);
 		assert_eq!(plan.whisper, WhisperPlan::Missing);
 		assert_eq!(plan.stt_status, Some(SttStatusPlan::AppleUnsupported));
+	}
+}
+
+#[cfg(test)]
+mod loader_reconcile_tests {
+	use super::{reconcile_model_state, StatusEvents};
+	use crate::models::{self, AiSettings, AppState, LlmMode, ModelKind, SpeechEngine, SttMode};
+	use std::sync::{Arc, Mutex};
+	use std::time::Duration;
+
+	/// The slot wait for tests: long enough to observe a real wait,
+	/// short enough that a wedged slot aborts quickly.
+	const SHORT_WAIT: Duration = Duration::from_millis(200);
+
+	/// Records every published status event, tagged by engine kind.
+	struct RecordingEvents(Mutex<Vec<String>>);
+
+	impl RecordingEvents {
+		fn new() -> Arc<Self> {
+			Arc::new(Self(Mutex::new(Vec::new())))
+		}
+		fn snapshot(&self) -> Vec<String> {
+			self.0.lock().unwrap().clone()
+		}
+	}
+
+	impl StatusEvents for RecordingEvents {
+		fn llm_status(&self, status: &models::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("llm:{:?}:{:?}", status.state, status.model_id));
+		}
+		fn stt_status(&self, status: &models::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("stt:{:?}:{:?}", status.state, status.model_id));
+		}
+	}
+
+	/// Stand-in for the claimed engine load: records each requested
+	/// model and leaves statuses untouched, so tests observe exactly
+	/// what the reconciliation itself publishes.
+	#[derive(Default)]
+	struct LoadRecorder {
+		requests: Mutex<Vec<String>>,
+	}
+
+	impl LoadRecorder {
+		fn record(&self, spec: &models::ModelSpec) -> Result<(), String> {
+			self.requests.lock().unwrap().push(spec.id.to_string());
+			Ok(())
+		}
+		fn requests(&self) -> Vec<String> {
+			self.requests.lock().unwrap().clone()
+		}
+	}
+
+	fn loader_state(name: &str) -> (Arc<AppState>, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("models dir");
+		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("db");
+		(Arc::new(AppState::new(db, dir.path().to_path_buf())), dir)
+	}
+
+	/// A downloaded catalog model is a stub file in the models dir:
+	/// `is_model_downloaded` only checks existence.
+	fn mark_downloaded(state: &AppState, id: &str, kind: ModelKind) {
+		let spec = models::find_model(id, kind).expect("catalog model");
+		std::fs::write(state.model_path(spec), b"stub").expect("write stub model file");
+	}
+
+	/// Local-routing settings naming the given models.
+	fn local_settings(state: &AppState, stt: &str, llm: &str) -> AiSettings {
+		let mut s = state.ai_settings();
+		s.stt_engine = SpeechEngine::Whisper;
+		s.stt_mode = SttMode::Local;
+		s.stt_model = stt.into();
+		s.llm_mode = LlmMode::Local;
+		s.llm_model = llm.into();
+		s.ext_stt_base_url = String::new();
+		s
+	}
+
+	fn external_settings(state: &AppState) -> AiSettings {
+		let mut s = state.ai_settings();
+		s.stt_mode = SttMode::External;
+		s.ext_stt_base_url = "http://localhost:9000".into();
+		s.llm_mode = LlmMode::External;
+		s.ext_llm_base_url = "http://localhost:9001".into();
+		s
+	}
+
+	#[test]
+	fn a_stale_run_loads_nothing_and_publishes_nothing() {
+		let (state, _dir) = loader_state("stale-run");
+		mark_downloaded(&state, "whisper-small-en", ModelKind::Stt);
+		mark_downloaded(&state, "gemma-4-E4B", ModelKind::Llm);
+		// this run was decided at generation 0 from local settings...
+		let captured = local_settings(&state, "whisper-small-en", "gemma-4-E4B");
+		// ...then the user saved external routing (generation 1) before
+		// the run got any further
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_mode = SttMode::External;
+				s.ext_stt_base_url = "http://localhost:9000".into();
+				s.llm_mode = LlmMode::External;
+				s.ext_llm_base_url = "http://localhost:9001".into();
+				Ok(())
+			})
+			.expect("save external settings");
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&captured,
+			0,
+			SHORT_WAIT,
+			false,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		assert!(
+			stt_loads.requests().is_empty() && llm_loads.requests().is_empty(),
+			"a stale run must start no engine loads (stt: {:?}, llm: {:?})",
+			stt_loads.requests(),
+			llm_loads.requests()
+		);
+		assert!(
+			events.snapshot().is_empty(),
+			"a stale run must publish no status: {:?}",
+			events.snapshot()
+		);
+	}
+
+	#[test]
+	fn aba_model_changes_end_on_the_newest_choice_without_stale_work() {
+		let (state, _dir) = loader_state("aba");
+		mark_downloaded(&state, "whisper-small-en", ModelKind::Stt);
+		mark_downloaded(&state, "whisper-tiny-en", ModelKind::Stt);
+		let a = local_settings(&state, "whisper-small-en", "gemma-4-E4B");
+		let b = local_settings(&state, "whisper-tiny-en", "gemma-4-E4B");
+
+		// three saves commit in order A, B, A; the loaders only run
+		// after the newest save, so the first two runs are stale
+		let generations: Vec<u64> = ["whisper-small-en", "whisper-tiny-en", "whisper-small-en"]
+			.iter()
+			.map(|id| {
+				state
+					.mutate_ai_settings(|s| {
+						s.stt_model = id.to_string();
+						Ok(())
+					})
+					.expect("commit")
+					.1
+			})
+			.collect();
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		for (captured, generation) in [
+			(&a, generations[0]),
+			(&b, generations[1]),
+			(&a, generations[2]),
+		] {
+			let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+			let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+			reconcile_model_state(
+				&state,
+				&*events,
+				captured,
+				generation,
+				SHORT_WAIT,
+				false,
+				&stt_runner,
+				&llm_runner,
+			);
+		}
+
+		assert_eq!(
+			stt_loads.requests(),
+			vec!["whisper-small-en".to_string()],
+			"only the newest run may load; the stale A and B runs must not"
+		);
+		// gemma was never downloaded: the newest run plans Missing for
+		// the LLM, so no LLM load starts either
+		assert!(
+			llm_loads.requests().is_empty(),
+			"{:?}",
+			llm_loads.requests()
+		);
+	}
+
+	#[test]
+	fn a_stalled_slot_timeout_aborts_instead_of_mutating_unclaimed() {
+		let (state, _dir) = loader_state("stalled");
+		let captured = external_settings(&state);
+		// wedged in-flight loads hold both slots
+		state
+			.stt_loading
+			.store(true, std::sync::atomic::Ordering::SeqCst);
+		state
+			.llm_loading
+			.store(true, std::sync::atomic::Ordering::SeqCst);
+		// the currently working engines are reported ready
+		*state.stt_status.lock().unwrap() = models::EngineStatus::ready(Some("whisper-small-en"));
+		*state.llm_status.lock().unwrap() = models::EngineStatus::ready(Some("gemma-4-E4B"));
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&captured,
+			0,
+			SHORT_WAIT,
+			false,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		// a timed-out run must leave every observable exactly as it was
+		assert_eq!(
+			*state.stt_status.lock().unwrap(),
+			models::EngineStatus::ready(Some("whisper-small-en")),
+			"a stalled slot must not authorize an unclaimed status change"
+		);
+		assert_eq!(
+			*state.llm_status.lock().unwrap(),
+			models::EngineStatus::ready(Some("gemma-4-E4B")),
+			"a stalled slot must not authorize an unclaimed status change"
+		);
+		assert!(state.stt_loading.load(std::sync::atomic::Ordering::SeqCst));
+		assert!(state.llm_loading.load(std::sync::atomic::Ordering::SeqCst));
+		assert!(stt_loads.requests().is_empty() && llm_loads.requests().is_empty());
+		assert!(events.snapshot().is_empty(), "{:?}", events.snapshot());
+	}
+
+	#[test]
+	fn a_secret_only_save_publications_stay_silent_on_ready_engines() {
+		// A save that changed nothing about routing (here: only a
+		// secret) must not make the loader publish anything itself: its
+		// plans are loads of already-working engines, and the
+		// already-resident skip is proven at the swap level.
+		let (state, _dir) = loader_state("secret-only");
+		mark_downloaded(&state, "whisper-small-en", ModelKind::Stt);
+		mark_downloaded(&state, "gemma-4-E4B", ModelKind::Llm);
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Whisper;
+				s.stt_mode = SttMode::Local;
+				s.stt_model = "whisper-small-en".into();
+				s.llm_mode = LlmMode::Local;
+				s.llm_model = "gemma-4-E4B".into();
+				Ok(())
+			})
+			.expect("commit local routing");
+		// ...then the user saves ONLY a secret
+		let (captured, generation) = state
+			.mutate_ai_settings(|s| {
+				s.hf_token = "fake-test-token".into();
+				Ok(())
+			})
+			.expect("secret-only save");
+		assert_eq!(captured.hf_token, "fake-test-token");
+		// the engines this run reconciles toward are already loaded and
+		// ready - what the previous run left behind
+		*state.stt_status.lock().unwrap() = models::EngineStatus::ready(Some("whisper-small-en"));
+		*state.llm_status.lock().unwrap() = models::EngineStatus::ready(Some("gemma-4-E4B"));
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&captured,
+			generation,
+			SHORT_WAIT,
+			false,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		assert_eq!(
+			*state.stt_status.lock().unwrap(),
+			models::EngineStatus::ready(Some("whisper-small-en")),
+			"a same-plan run must not republish or disturb the ready engine"
+		);
+		assert_eq!(
+			*state.llm_status.lock().unwrap(),
+			models::EngineStatus::ready(Some("gemma-4-E4B")),
+			"a same-plan run must not republish or disturb the ready engine"
+		);
+		assert!(events.snapshot().is_empty(), "{:?}", events.snapshot());
+	}
+
+	#[test]
+	fn startup_reconciliation_plans_from_committed_settings() {
+		// A previous session committed external STT routing; a cold
+		// restart must reconcile from exactly those committed settings.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db_path = dir.path().join("startup.db");
+		{
+			let db = crate::db::Db::open(&db_path).expect("db");
+			let state = AppState::new(db, dir.path().to_path_buf());
+			state
+				.mutate_ai_settings(|s| {
+					s.stt_mode = SttMode::External;
+					s.ext_stt_base_url = "http://localhost:9000".into();
+					Ok(())
+				})
+				.expect("commit external stt");
+		}
+
+		let db = crate::db::Db::open(&db_path).expect("reopen db");
+		let state = Arc::new(AppState::new(db, dir.path().to_path_buf()));
+		let committed = AiSettings::load(&state.db);
+		// the startup capture: nothing has mutated the fresh state yet
+		let generation = state
+			.ai_settings_generation
+			.load(std::sync::atomic::Ordering::SeqCst);
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&committed,
+			generation,
+			SHORT_WAIT,
+			false,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		// committed external STT: published as external, no whisper load
+		assert_eq!(
+			*state.stt_status.lock().unwrap(),
+			models::EngineStatus::external()
+		);
+		// the LLM was never downloaded: the committed default reports missing
+		assert_eq!(
+			*state.llm_status.lock().unwrap(),
+			models::EngineStatus::missing()
+		);
+		assert!(stt_loads.requests().is_empty() && llm_loads.requests().is_empty());
+		assert_eq!(
+			events.snapshot(),
+			vec![
+				"stt:External:None".to_string(),
+				"llm:Missing:None".to_string(),
+			]
+		);
 	}
 }
 

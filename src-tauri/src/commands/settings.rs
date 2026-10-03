@@ -283,12 +283,14 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 		// one critical section over read-latest, apply and persist, so a
 		// concurrent writer (model activation, another save) can never be
 		// overwritten by a stale full snapshot
-		let (settings, _generation) = state.mutate_ai_settings(|s| s.apply_updates(&ai))?;
+		let (settings, generation) = state.mutate_ai_settings(|s| s.apply_updates(&ai))?;
 
 		// Activate models that are ready to go with the new settings.
 		// Started only after the mutation committed, never under its
-		// lock.
-		crate::spawn_model_loader(app.clone(), settings);
+		// lock. The returned generation is the pair of the settings
+		// snapshot: the loader treats any later generation as newer and
+		// lets that run own the outcome.
+		crate::spawn_model_loader(app.clone(), settings, generation);
 		Ok(())
 	})
 	.await

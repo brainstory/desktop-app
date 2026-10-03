@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::ai_settings::AiSettings;
 use super::catalog::{find_model, ModelSpec};
@@ -32,7 +32,7 @@ pub enum EngineState {
 	External,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EngineStatus {
 	pub state: EngineState,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -128,30 +128,25 @@ fn rollback_candidate(
 /// engine. Released on drop.
 pub struct EngineSlotClaim<'a> {
 	flag: &'a AtomicBool,
-	claimed: bool,
 }
 
 impl<'a> EngineSlotClaim<'a> {
 	/// Wait for an in-flight load of this slot to finish, then hold the
 	/// slot. An unload racing a running load is undone when the load
 	/// installs its engine, leaving a runtime that contradicts the
-	/// reported status. Gives up waiting after `max_wait` (a load that
-	/// long is wedged; proceed unclaimed rather than block forever).
-	pub fn acquire(flag: &'a AtomicBool, max_wait: std::time::Duration) -> Self {
+	/// reported status. Returns None after `max_wait` (a load that long
+	/// is wedged): a timed-out caller must ABORT - mutating without the
+	/// claim would race whatever still holds the slot, so the holder
+	/// keeps the slot and the caller leaves the runtime untouched.
+	pub fn acquire(flag: &'a AtomicBool, max_wait: std::time::Duration) -> Option<Self> {
 		let deadline = std::time::Instant::now() + max_wait;
 		loop {
 			if !flag.swap(true, Ordering::SeqCst) {
-				return Self {
-					flag,
-					claimed: true,
-				};
+				return Some(Self { flag });
 			}
 			if std::time::Instant::now() >= deadline {
-				log::warn!("engine slot still busy after {max_wait:?}; proceeding unclaimed");
-				return Self {
-					flag,
-					claimed: false,
-				};
+				log::warn!("engine slot still busy after {max_wait:?}; aborting without the claim");
+				return None;
 			}
 			std::thread::sleep(std::time::Duration::from_millis(50));
 		}
@@ -164,9 +159,49 @@ impl<'a> EngineSlotClaim<'a> {
 
 impl Drop for EngineSlotClaim<'_> {
 	fn drop(&mut self) {
-		if self.claimed {
-			self.flag.store(false, Ordering::SeqCst);
-		}
+		self.flag.store(false, Ordering::SeqCst);
+	}
+}
+
+/// One engine kind's home in the runtime, so the generic load/swap
+/// flow stays independent of the engine type (and testable against a
+/// stand-in slot with fake engines).
+pub(crate) trait EngineSlot<E> {
+	/// The resident engine, if any.
+	fn installed(&self) -> Option<Arc<E>>;
+	/// Drop the resident engine (peak memory stays at one model).
+	fn vacate(&self);
+	/// Make `engine` the resident one.
+	fn install(&self, engine: Arc<E>);
+}
+
+/// The whisper slot: `runtime.stt` behind its lock.
+pub(crate) struct SttSlot<'a>(pub &'a AppState);
+
+impl EngineSlot<SttEngine> for SttSlot<'_> {
+	fn installed(&self) -> Option<Arc<SttEngine>> {
+		lock(&self.0.runtime).stt.clone()
+	}
+	fn vacate(&self) {
+		lock(&self.0.runtime).stt = None;
+	}
+	fn install(&self, engine: Arc<SttEngine>) {
+		lock(&self.0.runtime).stt = Some(engine);
+	}
+}
+
+/// The local LLM slot: `runtime.llm` behind its lock.
+pub(crate) struct LlmSlot<'a>(pub &'a AppState);
+
+impl EngineSlot<LocalLlm> for LlmSlot<'_> {
+	fn installed(&self) -> Option<Arc<LocalLlm>> {
+		lock(&self.0.runtime).llm.clone()
+	}
+	fn vacate(&self) {
+		lock(&self.0.runtime).llm = None;
+	}
+	fn install(&self, engine: Arc<LocalLlm>) {
+		lock(&self.0.runtime).llm = Some(engine);
 	}
 }
 
@@ -306,6 +341,13 @@ impl AppState {
 		if app_copy.is_file() {
 			return Some(app_copy);
 		}
+		if cfg!(test) {
+			// The hub cache is shared with other tools and may hold the
+			// developer's real models: consulting it would make catalog
+			// decisions (and these tests) machine-dependent. Tests only
+			// ever see the app-managed copy in their temp dirs.
+			return None;
+		}
 		hf_hub_cache_candidates()
 			.iter()
 			.find_map(|cache| hf_cache_model_path(cache, spec))
@@ -316,17 +358,23 @@ impl AppState {
 	}
 
 	pub fn emit_llm_status(&self, app: &AppHandle) {
+		self.emit_llm_status_events(&crate::AppStatusEvents(app));
+	}
+
+	/// [`Self::emit_llm_status`] over an injectable event sink.
+	pub(crate) fn emit_llm_status_events(&self, events: &dyn crate::StatusEvents) {
 		let status = lock(&self.llm_status).clone();
-		if let Err(e) = app.emit("llm-status", status) {
-			log::warn!("failed to emit llm-status: {e}");
-		}
+		events.llm_status(&status);
 	}
 
 	pub fn emit_stt_status(&self, app: &AppHandle) {
+		self.emit_stt_status_events(&crate::AppStatusEvents(app));
+	}
+
+	/// [`Self::emit_stt_status`] over an injectable event sink.
+	pub(crate) fn emit_stt_status_events(&self, events: &dyn crate::StatusEvents) {
 		let status = lock(&self.stt_status).clone();
-		if let Err(e) = app.emit("stt-status", status) {
-			log::warn!("failed to emit stt-status: {e}");
-		}
+		events.stt_status(&status);
 	}
 
 	/// Load the given LLM model file into the runtime. Blocking; call from a
@@ -341,6 +389,23 @@ impl AppState {
 	/// failed and could not be rolled back to); callers must not persist
 	/// the new model as active on Err.
 	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+		// An explicit activation acts on the newest committed settings at
+		// the moment it starts; a save landing while it loads makes this
+		// load stale under the slot claim, so it aborts rather than
+		// install an engine the newer decision superseded.
+		let generation = self.ai_settings_generation.load(Ordering::SeqCst);
+		self.load_llm_events(&crate::AppStatusEvents(app), spec, generation)
+	}
+
+	/// [`Self::load_llm`] over an injectable event sink, decided at the
+	/// given settings generation (how the loader and the post-download
+	/// auto-load pass their captured generation).
+	pub(crate) fn load_llm_events(
+		&self,
+		events: &dyn crate::StatusEvents,
+		spec: &ModelSpec,
+		generation: u64,
+	) -> Result<(), String> {
 		// One load at a time: a second activate while the first is running
 		// would mmap two multi-GB models simultaneously. Refuse instead of
 		// silently ignoring, so callers can't persist a divergent active
@@ -352,10 +417,62 @@ impl AppState {
 			);
 			return Err("a model is already loading - try again in a moment".into());
 		}
-		let result = self.load_llm_inner(app, spec);
+		let result = self.load_llm_claimed(events, spec, generation);
 		self.llm_loading.store(false, Ordering::SeqCst);
-		self.emit_llm_status(app);
+		self.emit_llm_status_events(events);
 		result
+	}
+
+	fn load_llm_claimed(
+		&self,
+		events: &dyn crate::StatusEvents,
+		spec: &ModelSpec,
+		generation: u64,
+	) -> Result<(), String> {
+		// Newer settings were committed since this load was decided (a
+		// save, an activation): refuse under the claim, before any
+		// status change or engine work, so the newer decision's loader
+		// owns the outcome. This is the re-verification that closes the
+		// loader's release-and-reacquire interval.
+		if self.ai_settings_generation.load(Ordering::SeqCst) > generation {
+			log::info!(
+				"llm load of {0} skipped: newer settings were committed",
+				spec.id
+			);
+			return Err(
+				"settings changed while the model was loading - it was not activated".into(),
+			);
+		}
+		self.swap_engine(
+			events,
+			spec,
+			&self.llm_status,
+			crate::notify_llm,
+			&LlmSlot(self),
+			|engine| engine.model_id.as_str(),
+			|| {
+				// The llama backend is initialized once and kept for the
+				// process lifetime; engines come and go on top of it.
+				let mut runtime = lock(&self.runtime);
+				if runtime.backend.is_none() {
+					let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+						.map_err(|e| format!("failed to init llama backend: {e}"))?;
+					runtime.backend = Some(Arc::new(backend));
+				}
+				Ok(())
+			},
+			|path| {
+				let backend = lock(&self.runtime)
+					.backend
+					.clone()
+					.ok_or_else(|| "llama backend missing".to_string())?;
+				LocalLlm::load(backend, path, spec.id)
+			},
+			|prev| self.reload_llm(prev),
+			LLM_ROLLBACK_ON_SAME,
+			true,
+			|| self.ai_settings_generation.load(Ordering::SeqCst) <= generation,
+		)
 	}
 
 	/// Generic load/swap flow shared by both engine kinds: mark loading,
@@ -368,49 +485,59 @@ impl AppState {
 	/// on the same mmap, so it does not.
 	/// `missing_when_vanished`: the llm path distinguishes "file deleted
 	/// mid-load" (Missing) from a genuine load failure (Error).
+	/// `fresh`: re-checked under the slot claim right before installing,
+	/// publishing or rolling back - a load that finished after newer
+	/// settings committed is obsolete and must touch none of them.
+	///
+	/// The slot and engine construction are parameters (the fake-engine
+	/// seam): the production callers pass the real runtime slots and
+	/// constructors, tests pass stand-ins.
 	#[allow(clippy::too_many_arguments)]
 	fn swap_engine<E>(
 		&self,
-		app: &AppHandle,
+		events: &dyn crate::StatusEvents,
 		spec: &ModelSpec,
 		status: &std::sync::Mutex<EngineStatus>,
-		emit: fn(&Self, &AppHandle),
-		slot: fn(&mut Runtime) -> &mut Option<Arc<E>>,
+		notify: fn(&EngineStatus, &dyn crate::StatusEvents),
+		slot: &dyn EngineSlot<E>,
 		model_id_of: fn(&E) -> &str,
-		prepare: impl FnOnce(&mut Runtime) -> Result<(), String>,
+		prepare: impl FnOnce() -> Result<(), String>,
 		load: impl Fn(&Path) -> Result<E, String>,
 		rollback: impl Fn(&ModelSpec) -> Result<(), String>,
 		rollback_on_same: bool,
 		missing_when_vanished: bool,
+		fresh: impl Fn() -> bool,
 	) -> Result<(), String> {
+		// The wanted engine is already resident under this claim: nothing
+		// to load and nothing to publish - e.g. a same-model activation
+		// or a save that changed nothing about routing must not reload a
+		// working engine (or blip its status through loading).
+		if slot.installed().as_ref().map(|engine| model_id_of(engine)) == Some(spec.id) {
+			return Ok(());
+		}
 		{
 			let mut s = lock(status);
 			*s = EngineStatus::loading(spec.id);
 		}
-		emit(self, app);
+		notify(&lock(status).clone(), events);
 
 		// App-managed copy first; fall back to a file already present in
 		// the user's HuggingFace hub cache (no app copy to create).
 		let path = self
 			.resolve_model_file(spec)
 			.unwrap_or_else(|| self.model_path(spec));
-		let prev_spec: Option<ModelSpec> = {
-			let mut runtime = lock(&self.runtime);
-			slot(&mut runtime)
-				.as_ref()
-				.map(|engine| model_id_of(engine).to_string())
-				.and_then(|id| find_model(&id, spec.kind))
-				.cloned()
-		};
+		let prev_spec: Option<ModelSpec> = slot
+			.installed()
+			.as_ref()
+			.map(|engine| model_id_of(engine).to_string())
+			.and_then(|id| find_model(&id, spec.kind))
+			.cloned();
 
 		// Engine-specific setup (llama backend init), then drop the
 		// previous engine so peak memory stays at one model.
 		let result = (|| -> Result<E, String> {
-			{
-				let mut runtime = lock(&self.runtime);
-				prepare(&mut runtime)?;
-				*slot(&mut runtime) = None;
-			}
+			prepare()?;
+			slot.vacate();
 			load(&path)
 		})();
 		let loaded = match result {
@@ -421,14 +548,27 @@ impl AppState {
 			}
 		};
 
+		// Re-check under the claim (held since before the engine work),
+		// immediately before installing, publishing or rolling back: a
+		// settings save that committed while the file loaded makes this
+		// whole outcome obsolete. Install nothing, publish nothing, do
+		// not touch rollback - the newer decision owns the outcome.
+		if !fresh() {
+			log::info!(
+				"{} finished loading after newer settings were saved; installing nothing",
+				spec.id
+			);
+			return Err(
+				"settings changed while the model was loading - it was not activated".into(),
+			);
+		}
+
 		// Install the new engine, or roll back to the previous one.
 		let had_loaded = loaded.is_some();
 		let install = loaded.filter(|_| path.is_file());
 		match install {
 			Some(engine) => {
-				let mut runtime = lock(&self.runtime);
-				*slot(&mut runtime) = Some(Arc::new(engine));
-				drop(runtime);
+				slot.install(Arc::new(engine));
 				let mut s = lock(status);
 				*s = EngineStatus::ready(Some(spec.id));
 				Ok(())
@@ -478,37 +618,6 @@ impl AppState {
 		}
 	}
 
-	fn load_llm_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
-		self.swap_engine(
-			app,
-			spec,
-			&self.llm_status,
-			Self::emit_llm_status,
-			|runtime| &mut runtime.llm,
-			|engine| &engine.model_id,
-			|runtime| {
-				// The llama backend is initialized once and kept for the
-				// process lifetime; engines come and go on top of it.
-				if runtime.backend.is_none() {
-					let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
-						.map_err(|e| format!("failed to init llama backend: {e}"))?;
-					runtime.backend = Some(Arc::new(backend));
-				}
-				Ok(())
-			},
-			|path| {
-				let backend = lock(&self.runtime)
-					.backend
-					.clone()
-					.ok_or_else(|| "llama backend missing".to_string())?;
-				LocalLlm::load(backend, path, spec.id)
-			},
-			|prev| self.reload_llm(prev),
-			LLM_ROLLBACK_ON_SAME,
-			true,
-		)
-	}
-
 	/// Best-effort reload of a previously working model (rollback path).
 	fn reload_llm(&self, spec: &ModelSpec) -> Result<(), String> {
 		let path = self
@@ -525,8 +634,21 @@ impl AppState {
 	}
 
 	/// Load the given whisper model file. Blocking; call from a background
-	/// thread. Same staging/rollback contract as `load_llm`.
+	/// thread. Same staging/rollback contract as [`Self::load_llm`],
+	/// including the at-entry settings generation.
 	pub fn load_stt(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+		let generation = self.ai_settings_generation.load(Ordering::SeqCst);
+		self.load_stt_events(&crate::AppStatusEvents(app), spec, generation)
+	}
+
+	/// [`Self::load_stt`] over an injectable event sink, decided at the
+	/// given settings generation.
+	pub(crate) fn load_stt_events(
+		&self,
+		events: &dyn crate::StatusEvents,
+		spec: &ModelSpec,
+		generation: u64,
+	) -> Result<(), String> {
 		if self.stt_loading.swap(true, Ordering::SeqCst) {
 			log::warn!(
 				"stt load already in progress; refusing request for {}",
@@ -534,21 +656,36 @@ impl AppState {
 			);
 			return Err("a model is already loading - try again in a moment".into());
 		}
-		let result = self.load_stt_inner(app, spec);
+		let result = self.load_stt_claimed(events, spec, generation);
 		self.stt_loading.store(false, Ordering::SeqCst);
-		self.emit_stt_status(app);
+		self.emit_stt_status_events(events);
 		result
 	}
 
-	fn load_stt_inner(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
+	fn load_stt_claimed(
+		&self,
+		events: &dyn crate::StatusEvents,
+		spec: &ModelSpec,
+		generation: u64,
+	) -> Result<(), String> {
+		// Same under-the-claim re-verification as the llm path above.
+		if self.ai_settings_generation.load(Ordering::SeqCst) > generation {
+			log::info!(
+				"stt load of {0} skipped: newer settings were committed",
+				spec.id
+			);
+			return Err(
+				"settings changed while the model was loading - it was not activated".into(),
+			);
+		}
 		self.swap_engine(
-			app,
+			events,
 			spec,
 			&self.stt_status,
-			Self::emit_stt_status,
-			|runtime| &mut runtime.stt,
-			|engine| &engine.model_id,
-			|_runtime| Ok(()),
+			crate::notify_stt,
+			&SttSlot(self),
+			|engine| engine.model_id.as_str(),
+			|| Ok(()),
 			|path| SttEngine::load(path, spec.id),
 			|prev| {
 				let prev_path = self
@@ -561,7 +698,437 @@ impl AppState {
 			},
 			STT_ROLLBACK_ON_SAME,
 			false,
+			|| self.ai_settings_generation.load(Ordering::SeqCst) <= generation,
 		)
+	}
+}
+
+#[cfg(test)]
+mod swap_flow_tests {
+	use super::{AppState, EngineSlot, EngineState, EngineStatus};
+	use crate::StatusEvents;
+	use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+	use std::sync::{mpsc, Arc, Mutex};
+
+	/// A stand-in engine: nothing whisper/llama-shaped, just the id the
+	/// swap flow reads.
+	struct FakeEngine {
+		id: String,
+	}
+
+	/// A stand-in engine slot: what swap_engine installs into.
+	struct FakeSlot(Mutex<Option<Arc<FakeEngine>>>);
+
+	impl FakeSlot {
+		fn empty() -> Self {
+			Self(Mutex::new(None))
+		}
+		fn with(engine: FakeEngine) -> Self {
+			Self(Mutex::new(Some(Arc::new(engine))))
+		}
+	}
+
+	impl EngineSlot<FakeEngine> for FakeSlot {
+		fn installed(&self) -> Option<Arc<FakeEngine>> {
+			self.0.lock().unwrap().clone()
+		}
+		fn vacate(&self) {
+			*self.0.lock().unwrap() = None;
+		}
+		fn install(&self, engine: Arc<FakeEngine>) {
+			*self.0.lock().unwrap() = Some(engine);
+		}
+	}
+
+	struct RecordingEvents(Mutex<Vec<String>>);
+
+	impl RecordingEvents {
+		fn new() -> Self {
+			Self(Mutex::new(Vec::new()))
+		}
+		fn snapshot(&self) -> Vec<String> {
+			self.0.lock().unwrap().clone()
+		}
+	}
+
+	impl StatusEvents for RecordingEvents {
+		fn llm_status(&self, status: &EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("llm:{:?}:{:?}", status.state, status.model_id));
+		}
+		fn stt_status(&self, status: &EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("stt:{:?}:{:?}", status.state, status.model_id));
+		}
+	}
+
+	fn temp_state(name: &str) -> (AppState, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("models dir");
+		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	fn stt_spec(id: &str) -> super::super::catalog::ModelSpec {
+		super::super::catalog::find_model(id, super::super::catalog::ModelKind::Stt)
+			.expect("catalog model")
+			.clone()
+	}
+
+	fn model_id_of(engine: &FakeEngine) -> &str {
+		&engine.id
+	}
+
+	#[test]
+	fn a_fresh_load_installs_and_publishes_ready() {
+		let (state, _dir) = temp_state("swap-fresh");
+		let spec = stt_spec("whisper-small-en");
+		// the install step checks the file still exists on disk
+		std::fs::write(state.model_path(&spec), b"stub").expect("model file");
+		let slot = FakeSlot::empty();
+		let status = Mutex::new(EngineStatus::missing());
+		let events = RecordingEvents::new();
+
+		state
+			.swap_engine(
+				&events,
+				&spec,
+				&status,
+				crate::notify_stt,
+				&slot,
+				model_id_of,
+				|| Ok(()),
+				|_path| {
+					Ok(FakeEngine {
+						id: spec.id.to_string(),
+					})
+				},
+				|_prev| panic!("a successful load never rolls back"),
+				true,
+				false,
+				|| true,
+			)
+			.expect("a fresh load installs");
+
+		assert!(slot.installed().is_some(), "the engine is resident");
+		assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
+		// event order: loading first (the wrapper emits the final status)
+		assert_eq!(
+			events.snapshot(),
+			vec![format!("stt:Loading:Some({:?})", spec.id)]
+		);
+	}
+
+	#[test]
+	fn a_load_completing_after_a_newer_save_installs_publishes_and_rolls_back_nothing() {
+		let (state, _dir) = temp_state("swap-stale");
+		let spec = stt_spec("whisper-small-en");
+		std::fs::write(state.model_path(&spec), b"stub").expect("model file");
+		let slot = Arc::new(FakeSlot::empty());
+		let status = Arc::new(Mutex::new(EngineStatus::missing()));
+		let events = Arc::new(RecordingEvents::new());
+		let rollbacks = Arc::new(Mutex::new(Vec::<String>::new()));
+		let factory_called = Arc::new(AtomicBool::new(false));
+
+		// the settings generation moves while the old plan's engine
+		// load is in flight (the barrier inside the factory)
+		let current_generation = Arc::new(AtomicU64::new(1));
+		let captured_generation = 1u64;
+		let (loaded_tx, loaded_rx) = mpsc::channel::<()>();
+		let (release_tx, release_rx) = mpsc::channel::<()>();
+		let release_rx = Arc::new(Mutex::new(release_rx));
+		let state = Arc::new(state);
+		let spec_id = spec.id;
+
+		let worker = {
+			let state = state.clone();
+			let release_rx = release_rx.clone();
+			let rollbacks = rollbacks.clone();
+			let factory_called = factory_called.clone();
+			let current_generation = current_generation.clone();
+			let events = events.clone();
+			let slot = slot.clone();
+			let status = status.clone();
+			std::thread::spawn(move || {
+				state.swap_engine(
+					&*events,
+					&spec,
+					&status,
+					crate::notify_stt,
+					&*slot,
+					model_id_of,
+					|| Ok(()),
+					|_path| {
+						factory_called.store(true, Ordering::SeqCst);
+						loaded_tx.send(()).expect("test alive");
+						// the multi-second engine load: the newer save
+						// commits before this returns
+						release_rx.lock().unwrap().recv().expect("released");
+						Ok(FakeEngine {
+							id: spec.id.to_string(),
+						})
+					},
+					|prev| {
+						rollbacks.lock().unwrap().push(prev.id.to_string());
+						Ok(())
+					},
+					true,
+					false,
+					|| current_generation.load(Ordering::SeqCst) <= captured_generation,
+				)
+			})
+		};
+
+		loaded_rx.recv().expect("engine construction started");
+		// the user saves newer settings while the old load runs
+		current_generation.store(2, Ordering::SeqCst);
+		release_tx.send(()).expect("release the old load");
+
+		let result = worker.join().expect("swap thread");
+		result.expect_err("a load that finished after a newer save must not activate");
+		assert!(factory_called.load(Ordering::SeqCst));
+		assert!(
+			slot.installed().is_none(),
+			"a stale load installs nothing: the newer loader owns the outcome"
+		);
+		assert!(
+			rollbacks.lock().unwrap().is_empty(),
+			"a stale load must not touch rollback"
+		);
+		// the only publication is the loading event from before the
+		// save; nothing is published after it
+		assert_eq!(
+			events.snapshot(),
+			vec![format!("stt:Loading:Some({:?})", spec_id)]
+		);
+		assert_eq!(*status.lock().unwrap(), EngineStatus::loading(spec_id));
+	}
+
+	#[test]
+	fn an_already_resident_engine_is_not_reloaded() {
+		let (state, _dir) = temp_state("swap-resident");
+		let spec = stt_spec("whisper-small-en");
+		let resident = Arc::new(FakeEngine {
+			id: spec.id.to_string(),
+		});
+		let slot = FakeSlot::empty();
+		slot.install(resident.clone());
+		let status = Mutex::new(EngineStatus::ready(Some(spec.id)));
+		let events = RecordingEvents::new();
+		let factory_called = AtomicBool::new(false);
+
+		let result = state.swap_engine(
+			&events,
+			&spec,
+			&status,
+			crate::notify_stt,
+			&slot,
+			model_id_of,
+			|| Ok(()),
+			|_path| {
+				factory_called.store(true, Ordering::SeqCst);
+				Ok(FakeEngine {
+					id: spec.id.to_string(),
+				})
+			},
+			|_prev| panic!("no load happens: no rollback"),
+			true,
+			false,
+			|| true,
+		);
+
+		result.expect("the wanted engine is already there");
+		assert!(
+			!factory_called.load(Ordering::SeqCst),
+			"an already-correct resident engine must not be reloaded"
+		);
+		assert!(
+			Arc::ptr_eq(&slot.installed().expect("engine kept"), &resident),
+			"the very same engine instance stays resident"
+		);
+		assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
+		assert!(events.snapshot().is_empty(), "{:?}", events.snapshot());
+	}
+
+	#[test]
+	fn a_failed_switch_rolls_back_and_reports_the_previous_model() {
+		let (state, _dir) = temp_state("swap-rollback");
+		let spec = stt_spec("whisper-small-en");
+		let prev = stt_spec("whisper-tiny-en");
+		let slot = FakeSlot::with(FakeEngine {
+			id: prev.id.to_string(),
+		});
+		let status = Mutex::new(EngineStatus::missing());
+		let events = RecordingEvents::new();
+		let rollbacks: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+		let result = state.swap_engine(
+			&events,
+			&spec,
+			&status,
+			crate::notify_stt,
+			&slot,
+			model_id_of,
+			|| Ok(()),
+			|_path| Err("corrupt file".into()),
+			|restore| {
+				rollbacks.lock().unwrap().push(restore.id.to_string());
+				slot.install(Arc::new(FakeEngine {
+					id: restore.id.to_string(),
+				}));
+				Ok(())
+			},
+			true,
+			false,
+			|| true,
+		);
+
+		let err = result.expect_err("the switch failed");
+		assert!(
+			err.contains("could not load whisper-small-en - whisper-tiny-en is still active"),
+			"{err}"
+		);
+		assert_eq!(*rollbacks.lock().unwrap(), vec![prev.id.to_string()]);
+		let after = status.lock().unwrap().clone();
+		assert_eq!(after.state, EngineState::Ready);
+		assert_eq!(after.model_id.as_deref(), Some(prev.id));
+		assert!(
+			after
+				.error
+				.unwrap()
+				.contains("whisper-tiny-en is still active"),
+			"the status says the previous model is active again"
+		);
+	}
+
+	#[test]
+	fn a_failed_first_load_without_rollback_publishes_error() {
+		let (state, _dir) = temp_state("swap-error");
+		let spec = stt_spec("whisper-small-en");
+		let slot = FakeSlot::empty();
+		let status = Mutex::new(EngineStatus::missing());
+		let events = RecordingEvents::new();
+
+		let result = state.swap_engine(
+			&events,
+			&spec,
+			&status,
+			crate::notify_stt,
+			&slot,
+			model_id_of,
+			|| Ok(()),
+			|_path| Err("corrupt file".into()),
+			|_prev| panic!("nothing was loaded before: no rollback candidate"),
+			true,
+			false,
+			|| true,
+		);
+
+		let err = result.expect_err("the load failed");
+		assert_eq!(err, "model failed to load");
+		assert!(slot.installed().is_none());
+		assert_eq!(
+			*status.lock().unwrap(),
+			EngineStatus::error(Some(spec.id), "model failed to load")
+		);
+	}
+}
+
+#[cfg(test)]
+mod load_path_tests {
+	use super::{AppState, EngineStatus};
+	use crate::StatusEvents;
+	use std::sync::Mutex;
+
+	struct RecordingEvents(Mutex<Vec<String>>);
+
+	impl RecordingEvents {
+		fn new() -> Self {
+			Self(Mutex::new(Vec::new()))
+		}
+	}
+
+	impl StatusEvents for RecordingEvents {
+		fn llm_status(&self, status: &super::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("llm:{:?}:{:?}", status.state, status.model_id));
+		}
+		fn stt_status(&self, status: &super::EngineStatus) {
+			self.0
+				.lock()
+				.unwrap()
+				.push(format!("stt:{:?}:{:?}", status.state, status.model_id));
+		}
+	}
+
+	fn temp_state(name: &str) -> (AppState, tempfile::TempDir) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(dir.path().join("models")).expect("models dir");
+		let db = crate::db::Db::open(&dir.path().join(format!("{name}.db"))).expect("db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	fn stt_spec() -> super::super::catalog::ModelSpec {
+		super::super::catalog::find_model("whisper-small-en", super::super::catalog::ModelKind::Stt)
+			.expect("catalog model")
+			.clone()
+	}
+
+	#[test]
+	fn a_stale_load_request_is_refused_before_any_status_change() {
+		let (state, _dir) = temp_state("load-stale");
+		let spec = stt_spec();
+		// the load was decided at generation 0; a save has since bumped
+		// the generation to 1
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_language = "fr-FR".into();
+				Ok(())
+			})
+			.expect("newer save commits");
+		let events = RecordingEvents::new();
+
+		let result = state.load_stt_events(&events, &spec, 0);
+
+		let err = result.expect_err("a stale load request must be refused");
+		assert!(err.contains("settings changed"), "{err}");
+		// refused before any status change: the status mutex still says
+		// missing, and the only event (the wrapper's unconditional
+		// final emit, unchanged from before) re-states that same
+		// missing status - no loading blip ever published
+		assert_eq!(*state.stt_status.lock().unwrap(), EngineStatus::missing());
+		assert_eq!(
+			events.0.lock().unwrap().as_slice(),
+			["stt:Missing:None".to_string()].as_slice(),
+			"no loading/ready/error may be published for a stale load"
+		);
+		// ...and the slot claim was released on the way out
+		assert!(!state.stt_loading.load(std::sync::atomic::Ordering::SeqCst));
+	}
+
+	#[test]
+	fn a_busy_slot_refuses_a_load_without_touching_status() {
+		let (state, _dir) = temp_state("load-busy");
+		let spec = stt_spec();
+		state
+			.stt_loading
+			.store(true, std::sync::atomic::Ordering::SeqCst);
+		let events = RecordingEvents::new();
+
+		let result = state.load_stt_events(&events, &spec, 0);
+
+		let err = result.expect_err("a busy slot must refuse the load");
+		assert!(err.contains("already loading"), "{err}");
+		assert_eq!(*state.stt_status.lock().unwrap(), EngineStatus::missing());
+		assert!(events.0.lock().unwrap().is_empty());
+		// the running load keeps its slot
+		assert!(state.stt_loading.load(std::sync::atomic::Ordering::SeqCst));
 	}
 }
 
@@ -581,7 +1148,9 @@ mod slot_claim_tests {
 			running.store(false, Ordering::SeqCst); // the load finishes
 		});
 		let started = Instant::now();
-		let claim = EngineSlotClaim::acquire(&loading, Duration::from_secs(5));
+		let Some(claim) = EngineSlotClaim::acquire(&loading, Duration::from_secs(5)) else {
+			panic!("the claim must succeed once the running load finishes");
+		};
 		assert!(
 			started.elapsed() >= Duration::from_millis(150),
 			"the claim must wait for the running load"
@@ -594,10 +1163,10 @@ mod slot_claim_tests {
 	}
 
 	#[test]
-	fn a_wedged_slot_is_not_released_by_a_claim_that_gave_up() {
+	fn a_wedged_slot_times_out_to_none_and_stays_owned_by_its_holder() {
 		let loading = AtomicBool::new(true);
 		let claim = EngineSlotClaim::acquire(&loading, Duration::from_millis(100));
-		claim.release();
+		assert!(claim.is_none(), "a wedged slot must not authorize mutation");
 		assert!(
 			loading.load(Ordering::SeqCst),
 			"an unclaimed slot stays owned by whoever holds it"

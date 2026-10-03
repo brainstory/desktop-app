@@ -273,13 +273,9 @@ pub async fn download_model(
 					finish_download_progress(&app_handle.state::<AppState>(), &model_id);
 					// If this model is the active one, load it right away.
 					let state = app_handle.state::<AppState>();
-					let settings = state.ai_settings();
-					let is_active_llm = spec.kind == ModelKind::Llm
-						&& !settings.uses_external_llm()
-						&& settings.llm_model == spec.id;
-					let is_active_stt =
-						spec.kind == ModelKind::Stt && settings.stt_model == spec.id;
-					if is_active_llm || is_active_stt {
+					if let Some(generation) =
+						download_auto_load_plan(&state, &spec, crate::apple::speech_available())
+					{
 						// A load failure must not read as a successful
 						// activation (the runtime-status event fires from
 						// inside the loader too); report it on the same
@@ -288,9 +284,10 @@ pub async fn download_model(
 						let spec_id = spec.id;
 						let load_result = tauri::async_runtime::spawn_blocking(move || {
 							let state = app2.state::<AppState>();
+							let events = crate::AppStatusEvents(&app2);
 							match spec.kind {
-								ModelKind::Llm => state.load_llm(&app2, &spec),
-								ModelKind::Stt => state.load_stt(&app2, &spec),
+								ModelKind::Llm => state.load_llm_events(&events, &spec, generation),
+								ModelKind::Stt => state.load_stt_events(&events, &spec, generation),
 							}
 						})
 						.await
@@ -432,6 +429,36 @@ pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(
 			Ok(())
 		}
 		None => Err(format!("no download in progress for {model_id}")),
+	}
+}
+
+/// Whether a finished download of `spec` should load right now, and
+/// the settings generation the decision was made at (None: no load).
+/// Routed through the same plan the model loader uses instead of
+/// comparing model ids, so the auto-load can never contradict the
+/// selected routing: external STT or an explicit Apple Speech selection
+/// loads no whisper even when it is the recorded stt model, and
+/// external LLM mode loads no local engine. Explicit Apple on an
+/// unsupported system keeps the whisper fallback (the plan stands
+/// whisper in), and auto keeps a downloaded whisper hot behind Apple.
+fn download_auto_load_plan(
+	state: &AppState,
+	spec: &crate::models::ModelSpec,
+	apple_available: bool,
+) -> Option<u64> {
+	let generation = state.ai_settings_generation.load(Ordering::SeqCst);
+	let settings = state.ai_settings();
+	let plan = crate::plan_model_load(&settings, apple_available, |candidate| {
+		state.is_model_downloaded(candidate)
+	});
+	let wanted = match spec.kind {
+		ModelKind::Llm => plan.llm == crate::LlmPlan::Load(spec.id),
+		ModelKind::Stt => plan.whisper == crate::WhisperPlan::Load(spec.id),
+	};
+	if wanted {
+		Some(generation)
+	} else {
+		None
 	}
 }
 
@@ -626,6 +653,117 @@ mod tests {
 		assert_eq!(state.ai_settings().stt_language, "fr-FR");
 		assert_eq!(state.ai_settings().llm_model, "gemma-4-E4B");
 		assert_eq!(state.ai_settings().llm_mode, LlmMode::Local);
+	}
+
+	#[test]
+	fn a_finished_stt_download_auto_loads_only_when_the_plan_loads_whisper() {
+		use crate::models::{SpeechEngine, SttMode};
+		let (state, _dir) = temp_state("auto-stt");
+		let spec = crate::models::find_model("whisper-small-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		std::fs::write(state.model_path(spec), b"stub").expect("downloaded file");
+
+		// local whisper routing: the plan loads it
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Whisper;
+				s.stt_mode = SttMode::Local;
+				s.stt_model = spec.id.to_string();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_some(),
+			"whisper routing loads the downloaded whisper model"
+		);
+
+		// external STT selected: no whisper load even though it is the
+		// recorded stt model
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_mode = SttMode::External;
+				s.ext_stt_base_url = "http://localhost:9000".into();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_none(),
+			"external STT routing must not load whisper"
+		);
+
+		// explicit Apple speech on a supporting system: whisper freed
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_mode = SttMode::Local;
+				s.stt_engine = SpeechEngine::Apple;
+				s.ext_stt_base_url = String::new();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_none(),
+			"explicit Apple speech must not load whisper"
+		);
+
+		// explicit Apple on an unsupported system: whisper stands in
+		assert!(
+			super::download_auto_load_plan(&state, spec, false).is_some(),
+			"the Apple-unsupported fallback loads whisper"
+		);
+
+		// auto keeps a downloaded whisper hot behind Apple
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Auto;
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_some(),
+			"auto keeps whisper loaded as the fallback"
+		);
+
+		// a download of a model the plan would not pick loads nothing
+		let other = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		std::fs::write(state.model_path(other), b"stub").expect("downloaded file");
+		assert!(
+			super::download_auto_load_plan(&state, other, true).is_none(),
+			"only the plan's model auto-loads"
+		);
+	}
+
+	#[test]
+	fn a_finished_llm_download_respects_the_current_llm_mode() {
+		use crate::models::LlmMode;
+		let (state, _dir) = temp_state("auto-llm");
+		let spec = crate::models::find_model("gemma-4-E4B", crate::models::ModelKind::Llm)
+			.expect("catalog model");
+		std::fs::write(state.model_path(spec), b"stub").expect("downloaded file");
+
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_mode = LlmMode::Local;
+				s.llm_model = spec.id.to_string();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_some(),
+			"local mode loads the downloaded llm"
+		);
+
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_mode = LlmMode::External;
+				s.ext_llm_base_url = "http://localhost:9001".into();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			super::download_auto_load_plan(&state, spec, true).is_none(),
+			"external llm routing must not load the local engine"
+		);
 	}
 
 	/// A download that ends (or never really starts) must release its slot,
