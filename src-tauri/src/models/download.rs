@@ -199,6 +199,17 @@ fn migrate_one(models_dir: &Path, cache: &Path, spec: &ModelSpec) {
 	let app_file = models_dir.join(spec.filename);
 	let blob = hf_blob_path(cache, spec);
 
+	// Fast path: nothing to migrate and the cache is already in its
+	// final state. This runs on EVERY launch for EVERY catalog model,
+	// so it must stay cheap: re-verifying the multi-GB blobs below on
+	// every startup cost tens of seconds before the engines could
+	// load, leaving the UI reporting "no model set up" for most of a
+	// minute. The hash-verified paths only run when there is actual
+	// migration or healing work to decide.
+	if !app_file.is_file() && hf_cache_model_path(cache, spec).is_some() {
+		return;
+	}
+
 	// An existing hash-named blob is trusted only after its BYTES
 	// verify (size short-circuit + streamed sha256) against the pin:
 	// the name alone proves nothing, and a corrupt blob must never get
@@ -2201,6 +2212,38 @@ mod cache_storage_tests {
 			hf_cache_model_path(&cache, &corrupt).is_none(),
 			"corrupt bytes are never published as a model"
 		);
+	}
+
+	#[test]
+	fn an_already_resolving_cache_skips_blob_verification_at_startup() {
+		// no app file and a snapshot that already resolves: the cache is
+		// in its final state, so startup migration does NOTHING - in
+		// particular it must not re-hash the multi-GB blobs of every
+		// downloaded model on every launch, which kept the engines from
+		// loading for most of a minute. Even a blob whose bytes went bad
+		// under the pinned name is left untouched here: with no
+		// migration decision to make, verification has nothing to say,
+		// and a genuinely bad model is caught at engine-load time.
+		let (_dir, models, cache) = migration_fixture("f14-fast-path");
+		let spec = pinned_spec(b"original content");
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, b"original content").unwrap();
+		materialize_snapshot(&cache, &spec).expect("snapshot");
+		// the blob's bytes silently go bad under the pinned name after
+		// the snapshot already resolves
+		std::fs::write(&blob, b"rotten bytes!!").unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		// nothing was rewritten or "repaired", and the model still
+		// resolves through the snapshot
+		assert_eq!(
+			std::fs::read(&blob).unwrap(),
+			b"rotten bytes!!".to_vec(),
+			"startup must not rewrite cache content it has no migration decision about"
+		);
+		assert!(hf_cache_model_path(&cache, &spec).is_some());
 	}
 
 	#[test]
