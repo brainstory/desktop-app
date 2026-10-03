@@ -2,18 +2,64 @@
 //! silent audio in some TCC/permission states, so recording happens in the
 //! Rust process (which holds the app's macOS microphone permission).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+	atomic::{AtomicU64, Ordering},
+	Arc, Mutex,
+};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+/// Idle / stale stop sentinel. The frontend hook matches this exact
+/// string to classify a stop as already-released (idempotent, not a
+/// user-facing failure); a typed IPC error enum was considered and
+/// deferred, so the string is the contract (pinned by tests below).
+const NOT_RECORDING: &str = "not recording";
+/// Empty-buffer sentinel returned after the stream was already dropped
+/// (the device is already released when this surfaces).
+const NO_AUDIO_CAPTURED: &str = "no audio captured";
+
 struct Capture {
 	_stream: cpal::Stream,
+	/// the page generation (see PAGE_GENERATION) that started this
+	/// capture: only that generation may stop it and receive the WAV
+	generation: u64,
 	sample_rate: u32,
 	channels: u16,
 	samples: Arc<Mutex<Vec<f32>>>,
 }
 
 static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
+
+/// Generation of the main webview's current page. Every page
+/// abandonment bumps it; a capture remembers the generation it started
+/// under, so cleanup belonging to a dead page can neither transcribe
+/// abandoned audio nor stop a newer page's capture.
+static PAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// What a stop request means for the active capture. Pure decision
+/// over generations (no audio hardware) so the ownership rules are
+/// unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopDecision {
+	/// the caller still owns the capture: stop it and convert to WAV
+	Proceed,
+	/// idle, or a capture belonging to another generation: report the
+	/// existing "not recording" error; a newer capture stays untouched
+	NotRecording,
+}
+
+/// May a stop issued by `caller_generation` take the capture started
+/// by `capture_generation` (None = idle)? The live stop path always
+/// passes the CURRENT page generation as the caller (per-stop IPC
+/// tokens were considered and deferred); the unit tests also pass
+/// stale generations to prove a dead page's late stop cannot take a
+/// capture started by a newer page.
+fn resolve_stop(capture_generation: Option<u64>, caller_generation: u64) -> StopDecision {
+	match capture_generation {
+		Some(g) if g == caller_generation => StopDecision::Proceed,
+		_ => StopDecision::NotRecording,
+	}
+}
 
 /// Append converted samples to the capture buffer unless the length cap is
 /// hit. Runs in the audio callback: lock briefly, no heavy work.
@@ -36,6 +82,11 @@ const MAX_CAPTURE_SECS: usize = 300;
 /// or if macOS microphone permission has not been granted.
 pub fn start_capture() -> Result<(), String> {
 	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
+	// Read under the CAPTURE lock so this cannot race abandon_capture
+	// (which empties the slot and bumps the generation under the same
+	// lock): the capture is filed under the page generation that
+	// actually owns it.
+	let generation = PAGE_GENERATION.load(Ordering::SeqCst);
 	if guard.is_some() {
 		// Already recording - treat as success so a double-press of the
 		// record button (first press still starting the stream) is harmless.
@@ -147,6 +198,7 @@ pub fn start_capture() -> Result<(), String> {
 
 	*guard = Some(Capture {
 		_stream: stream,
+		generation,
 		sample_rate,
 		channels: channel_count,
 		samples,
@@ -154,11 +206,46 @@ pub fn start_capture() -> Result<(), String> {
 	Ok(())
 }
 
-/// Stop capturing and return the recording as a 16 kHz mono WAV file.
-/// Dropping the cpal stream stops the device.
-pub fn stop_capture() -> Result<Vec<u8>, String> {
+/// The page that owns the microphone is going away (new page load,
+/// window destroyed, app exit): stop any active capture and DISCARD
+/// the audio - no WAV conversion, it must never be transcribed - and
+/// bump the page generation so a late stop from the dead page reads
+/// "not recording" instead of stealing a newer capture. Idempotent:
+/// no error when idle (every ordinary page load lands here).
+pub fn abandon_capture() {
 	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
-	let capture = guard.take().ok_or_else(|| "not recording".to_string())?;
+	// dropping the cpal stream stops the device; the samples are dropped
+	*guard = None;
+	PAGE_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Stop capturing and return the recording as a 16 kHz mono WAV file.
+/// Dropping the cpal stream stops the device. Only a capture belonging
+/// to the CURRENT page generation may be stopped: audio from an
+/// abandoned page is never converted, and a capture started by a newer
+/// page is never touched by a stop that was issued under an older one.
+pub fn stop_capture() -> Result<Vec<u8>, String> {
+	// Read the caller's generation BEFORE taking the CAPTURE lock: a
+	// stop racing a page abandonment then carries the generation it
+	// was issued under, so it cannot take a capture the new page
+	// started in the meantime.
+	let caller_generation = PAGE_GENERATION.load(Ordering::SeqCst);
+	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
+	let capture_generation = guard.as_ref().map(|capture| capture.generation);
+	if resolve_stop(capture_generation, caller_generation) == StopDecision::NotRecording {
+		if matches!(capture_generation, Some(g) if g < caller_generation) {
+			// Unreachable while abandon_capture empties the slot under
+			// this same lock before the generation can move past a
+			// capture - but if a stale capture ever survives anyway,
+			// discard it here too: its audio must never be transcribed.
+			// A capture from a NEWER generation is never touched.
+			*guard = None;
+		}
+		return Err(NOT_RECORDING.to_string());
+	}
+	let capture = guard
+		.take()
+		.expect("resolve_stop only proceeds with an active capture");
 	drop(capture._stream);
 
 	// take (not clone): the capture is gone after this call anyway, and
@@ -174,7 +261,7 @@ pub fn stop_capture() -> Result<Vec<u8>, String> {
 /// the channels to mono, resample, encode.
 fn capture_to_wav(samples: Vec<f32>, channels: u16, sample_rate: u32) -> Result<Vec<u8>, String> {
 	if samples.is_empty() {
-		return Err("no audio captured".into());
+		return Err(NO_AUDIO_CAPTURED.to_string());
 	}
 	let mono = crate::stt::fold_to_mono(samples, channels.max(1) as usize);
 	let mono = crate::stt::resample_to_16k(mono, sample_rate)?;
@@ -236,5 +323,70 @@ mod wav_tests {
 				"{original} vs {roundtripped}"
 			);
 		}
+	}
+}
+
+/// Page-generation ownership of the microphone: hardware-free tests.
+/// The live statics (CAPTURE, PAGE_GENERATION) are process-global and
+/// tests run in parallel threads, so the ones touching them serialize
+/// on LIVE; the pure resolve_stop tests never touch hardware or
+/// statics.
+#[cfg(test)]
+mod generation_tests {
+	use std::sync::atomic::Ordering;
+
+	use super::{abandon_capture, resolve_stop, stop_capture, StopDecision, PAGE_GENERATION};
+
+	static LIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+	#[test]
+	fn abandon_bumps_the_generation_and_a_late_stop_is_not_recording() {
+		let _live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+		let before = PAGE_GENERATION.load(Ordering::SeqCst);
+		// abandoning while idle must not error: every ordinary page
+		// load, window destroy and app exit calls this
+		abandon_capture();
+		abandon_capture();
+		assert_eq!(
+			PAGE_GENERATION.load(Ordering::SeqCst),
+			before + 2,
+			"every abandonment starts a new page generation"
+		);
+		// a stop landing after its page went away reads as the existing
+		// already-stopped error, not a new failure mode
+		assert_eq!(stop_capture().unwrap_err(), "not recording");
+	}
+
+	#[test]
+	fn the_generation_that_started_a_capture_may_stop_it() {
+		assert_eq!(resolve_stop(Some(3), 3), StopDecision::Proceed);
+		// idle: "not recording" for any caller
+		assert_eq!(resolve_stop(None, 3), StopDecision::NotRecording);
+	}
+
+	#[test]
+	fn a_stale_generation_stop_never_takes_a_newer_capture() {
+		// page 1 (generation 0) records; the navigation abandons its
+		// audio and bumps the generation (tested live above); page 2
+		// starts its own capture under generation 1
+		let page1 = 0;
+		let page2 = page1 + 1;
+		let page2_capture = Some(page2);
+		// page 1's late stop: "not recording", and the newer capture is
+		// untouched - its owner can still stop it normally afterwards
+		assert_eq!(
+			resolve_stop(page2_capture, page1),
+			StopDecision::NotRecording
+		);
+		assert_eq!(resolve_stop(page2_capture, page2), StopDecision::Proceed);
+	}
+
+	#[test]
+	fn frontend_matched_error_strings_stay_exact() {
+		// the frontend hook classifies stop errors by these exact
+		// strings (a typed IPC error enum was considered and deferred):
+		// rewording one silently breaks its return-to-idle path
+		assert_eq!(super::NOT_RECORDING, "not recording");
+		assert_eq!(super::NO_AUDIO_CAPTURED, "no audio captured");
 	}
 }

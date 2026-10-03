@@ -123,4 +123,105 @@ describe("useVoiceCapture", () => {
 		expect(callbacks.onError).toHaveBeenCalledWith("no audio captured");
 		expect(callbacks.onWavCaptured).not.toHaveBeenCalled();
 	});
+
+	it("releases the mic on pagehide during a recording (F03)", async () => {
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: () => new ArrayBuffer(0)
+		});
+		const { result, callbacks } = renderCapture();
+		await act(() => result.current.toggleRecording());
+		await act(async () => {
+			window.dispatchEvent(new Event("pagehide"));
+		});
+		expect(callsTo("stop_voice_capture")).toHaveLength(1);
+		// abandoned audio is never handed off for transcription
+		expect(callbacks.onWavCaptured).not.toHaveBeenCalled();
+	});
+
+	it("pagehide teardown is idempotent: a later unmount does not double-stop", async () => {
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: () => new ArrayBuffer(0)
+		});
+		const { result, unmount } = renderCapture();
+		await act(() => result.current.toggleRecording());
+		await act(async () => {
+			window.dispatchEvent(new Event("pagehide"));
+		});
+		expect(callsTo("stop_voice_capture")).toHaveLength(1);
+		unmount();
+		expect(callsTo("stop_voice_capture")).toHaveLength(1);
+	});
+
+	it("releases the mic when the start resolves after pagehide", async () => {
+		vi.useFakeTimers();
+		let started!: (v: unknown) => void;
+		mockInvoke({
+			start_voice_capture: () => new Promise((res) => (started = res)),
+			stop_voice_capture: () => new ArrayBuffer(0)
+		});
+		const { result } = renderCapture();
+		let toggling!: Promise<void>;
+		act(() => {
+			toggling = result.current.toggleRecording();
+		});
+		await act(async () => {
+			window.dispatchEvent(new Event("pagehide"));
+			started(null);
+			await toggling;
+		});
+		// stopped right away, not armed as a 4-minute recording on a
+		// page that is already going away
+		expect(callsTo("stop_voice_capture")).toHaveLength(1);
+		await act(() => vi.advanceTimersByTimeAsync(300_000));
+		expect(callsTo("stop_voice_capture")).toHaveLength(1);
+	});
+
+	it("returns to idle when the stop reports 'no audio captured' (device already released)", async () => {
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: () => {
+				throw "no audio captured";
+			}
+		});
+		const { result, callbacks } = renderCapture();
+		await act(() => result.current.toggleRecording());
+		await act(() => result.current.toggleRecording());
+		expect(callbacks.onError).toHaveBeenCalledTimes(1);
+		expect(callbacks.onStopError).not.toHaveBeenCalled();
+		expect(result.current.isRecording).toBe(false);
+		expect(result.current.status).toBe("idle");
+	});
+
+	it("returns to idle when the stop reports 'not recording' (already stopped)", async () => {
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: () => {
+				throw "not recording";
+			}
+		});
+		const { result, callbacks } = renderCapture();
+		await act(() => result.current.toggleRecording());
+		await act(() => result.current.toggleRecording());
+		expect(callbacks.onError).toHaveBeenCalledTimes(1);
+		expect(callbacks.onStopError).not.toHaveBeenCalled();
+		expect(result.current.isRecording).toBe(false);
+		expect(result.current.status).toBe("idle");
+	});
+
+	it("keeps the permission-denied path for a failed start", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockInvoke({
+			start_voice_capture: () => {
+				throw "not authorized";
+			}
+		});
+		const { result, callbacks } = renderCapture();
+		await act(() => result.current.toggleRecording());
+		expect(callbacks.onError).toHaveBeenCalledWith("not authorized");
+		expect(result.current.isRecording).toBe(false);
+		expect(result.current.status).toBe("idle");
+		vi.mocked(console.error).mockRestore();
+	});
 });

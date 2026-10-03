@@ -117,6 +117,12 @@ pub fn run() {
 			match payload.event() {
 				tauri::webview::PageLoadEvent::Started => {
 					log::info!("page load started: {}", payload.url());
+					// A new page load discards the previous page (Astro
+					// full-document navigation, reload): its capture belongs
+					// to a dead page, so release the microphone and abandon
+					// the audio - it must never be transcribed. No-op when
+					// nothing is recording (every ordinary page load).
+					voice::abandon_capture();
 				}
 				tauri::webview::PageLoadEvent::Finished => {
 					log::info!("page load finished: {}", payload.url());
@@ -248,21 +254,34 @@ pub fn run() {
 			Ok(())
 		})
 		.on_window_event(|window, event| {
-			if let WindowEvent::CloseRequested { api, .. } = event {
-				let app = window.app_handle();
-				let quit_on_close = app
-					.state::<AppState>()
-					.quit_on_close
-					.load(std::sync::atomic::Ordering::Relaxed);
-				if quit_on_close {
-					// tray hidden: closing the window is the way out
-					crate::force_exit();
-				} else {
-					// Closing the window hides it to the tray so daily
-					// reminders keep working; quit via the tray menu.
-					window.hide().ok();
-					api.prevent_close();
+			match event {
+				WindowEvent::CloseRequested { api, .. } => {
+					let app = window.app_handle();
+					let quit_on_close = app
+						.state::<AppState>()
+						.quit_on_close
+						.load(std::sync::atomic::Ordering::Relaxed);
+					if quit_on_close {
+						// tray hidden: closing the window is the way out
+						crate::force_exit();
+					} else {
+						// Closing the window hides it to the tray so daily
+						// reminders keep working; quit via the tray menu.
+						// Deliberately NOT abandoning a capture here: the
+						// page stays alive, so the recorder hook's timer
+						// still fires and voice::MAX_CAPTURE_SECS caps the
+						// buffer while the window is hidden.
+						window.hide().ok();
+						api.prevent_close();
+					}
 				}
+				WindowEvent::Destroyed => {
+					// The webview is gone for good, so its page can never
+					// run cleanup JS: release the microphone and discard
+					// the recording (never transcribed).
+					voice::abandon_capture();
+				}
+				_ => {}
 			}
 		})
 		.build(tauri::generate_context!())
@@ -277,6 +296,8 @@ pub fn run() {
 			// through here before AppKit calls exit(). _exit() skips C++
 			// static destructors, which abort on the vendored ggml teardown.
 			if let tauri::RunEvent::Exit = event {
+				// release the microphone on the way out
+				voice::abandon_capture();
 				crate::force_exit();
 			}
 		});
