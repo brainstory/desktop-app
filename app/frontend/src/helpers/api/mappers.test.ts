@@ -146,6 +146,199 @@ describe("getIdeaChildrenApi item index", () => {
 	});
 });
 
+describe("getIdeaChildrenApi malformed structured feedback (F01)", () => {
+	// stored structured_result is unknown-typed: only the backend's own
+	// serialization of the other fields is trustworthy. These cases pin
+	// the malformed-data policy: skip unusable MEMBERS (never the whole
+	// list), keep the child visible, and never renumber survivors
+	// (comment reactions are keyed by itemIndex).
+	it("a malformed feedback_items container does not reject the child list", async () => {
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "broken",
+						created_at: "2026-10-02T12:00:00",
+						result: "Feedback",
+						structured_result: { feedback_items: {} }
+					}
+				]
+			})
+		});
+		const children = await getIdeaChildrenApi("parent");
+		expect(children).toHaveLength(1);
+		expect(children[0]!.id).toBe("broken");
+		expect(children[0]!.feedbackComments).toEqual([]);
+	});
+
+	it("keeps a malformed child beside a valid child and maps the valid one", async () => {
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "broken",
+						created_at: "2026-10-02T12:00:00",
+						result: "Feedback",
+						structured_result: { feedback_items: {} }
+					},
+					{
+						id: "valid",
+						created_at: "2026-10-02T12:00:00",
+						result: "Feedback",
+						structured_result: {
+							feedback_items: [
+								{
+									oid_heading_text: "1## Point one",
+									matched_spans: [],
+									feedback_text: "good point"
+								}
+							]
+						}
+					}
+				]
+			})
+		});
+		const children = await getIdeaChildrenApi("parent");
+		expect(children).toHaveLength(2);
+		expect(children[0]!.feedbackComments).toEqual([]);
+		expect(children[1]!.feedbackComments).toEqual([
+			{
+				oidHeadingText: "1## Point one",
+				matchedSpans: [],
+				feedbackText: "good point",
+				itemIndex: 0
+			}
+		]);
+	});
+
+	it("skips null, number and object members; later members keep their ORIGINAL itemIndex", async () => {
+		// a reaction placed on "second" is keyed by itemIndex 3; skipping
+		// the two unusable members before it must not move it to 1
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "c1",
+						created_at: "2026-10-02T12:00:00",
+						result: "Feedback",
+						structured_result: {
+							feedback_items: [
+								null,
+								{
+									oid_heading_text: "1## A",
+									matched_spans: [],
+									feedback_text: "first"
+								},
+								9,
+								{ oid_heading_text: "2## B", feedback_text: "second" },
+								{ oid_heading_text: "3## C", feedback_text: { nested: true } }
+							]
+						}
+					}
+				]
+			})
+		});
+		const [child] = await getIdeaChildrenApi("parent");
+		expect(child!.feedbackComments).toEqual([
+			{
+				oidHeadingText: "1## A",
+				matchedSpans: [],
+				feedbackText: "first",
+				itemIndex: 1
+			},
+			{
+				oidHeadingText: "2## B",
+				matchedSpans: [],
+				feedbackText: "second",
+				itemIndex: 3
+			}
+		]);
+	});
+
+	it("skips non-string heading/text fields but keeps a member without a heading", async () => {
+		// absent/null oid_heading_text is a tolerated legacy shape
+		// (aggregation logs and skips it); a NUMBER/OBJECT heading would
+		// crash parseHeadingIndex at render time, and empty feedback
+		// text has nothing to display - both are unusable members
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "c1",
+						created_at: "2026-10-02T12:00:00",
+						result: "Feedback",
+						structured_result: {
+							feedback_items: [
+								{
+									oid_heading_text: 7,
+									matched_spans: [],
+									feedback_text: "numbered"
+								},
+								{
+									oid_heading_text: { a: 1 },
+									matched_spans: [],
+									feedback_text: "object heading"
+								},
+								{ oid_heading_text: "1## A", matched_spans: [], feedback_text: 5 },
+								{ matched_spans: [], feedback_text: "anon" },
+								{
+									oid_heading_text: null,
+									matched_spans: "not an array",
+									feedback_text: "null heading"
+								}
+							]
+						}
+					}
+				]
+			})
+		});
+		const [child] = await getIdeaChildrenApi("parent");
+		expect(child!.feedbackComments).toEqual([
+			{
+				oidHeadingText: undefined,
+				matchedSpans: [],
+				feedbackText: "anon",
+				itemIndex: 3
+			},
+			{
+				oidHeadingText: undefined,
+				matchedSpans: [],
+				feedbackText: "null heading",
+				itemIndex: 4
+			}
+		]);
+	});
+
+	it("treats a non-object structured_result as no comments without throwing", async () => {
+		for (const structured_result of [null, "nope", 42, [1, 2]]) {
+			mockInvoke({
+				get_idea_children: () => ({
+					ideas: [{ id: "c1", created_at: "", result: "Feedback", structured_result }]
+				})
+			});
+			const children = await getIdeaChildrenApi("parent");
+			expect(children[0]!.feedbackComments).toEqual([]);
+		}
+	});
+
+	it("an empty feedback_items array stays a valid document", async () => {
+		mockInvoke({
+			get_idea_children: () => ({
+				ideas: [
+					{
+						id: "c1",
+						created_at: "",
+						result: "Feedback",
+						structured_result: { feedback_items: [] }
+					}
+				]
+			})
+		});
+		const children = await getIdeaChildrenApi("parent");
+		expect(children[0]!.feedbackComments).toEqual([]);
+	});
+});
+
 describe("getAllIdeasApi", () => {
 	it("sets isDraft and draftSummary from the last user message", async () => {
 		mockInvoke({

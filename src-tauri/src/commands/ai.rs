@@ -447,8 +447,9 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 /// object with a feedback_items key holding an array. Output that is not
 /// JSON, lacks the key, or holds a non-array is logged and treated as
 /// absent (structured_result becomes null) rather than stored broken.
-/// Items without feedback text, and exact repeats of an earlier item, are
-/// dropped: each item becomes a comment bubble on the idea.
+/// Unusable items (no feedback text, a non-string heading) and exact
+/// repeats of an earlier item are dropped: each item becomes a comment
+/// bubble on the idea.
 fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
 	let Some(mut value) = extract_json(text) else {
 		// length only: the output is the user's own feedback text
@@ -468,14 +469,21 @@ fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
 			if let Some(items) = value["feedback_items"].as_array_mut() {
 				let mut seen = std::collections::HashSet::new();
 				items.retain(|item| {
-					let text = item["feedback_text"].as_str().unwrap_or_default().trim();
-					!text.is_empty()
+					// same member contract as the share import: non-empty
+					// string feedback_text and a string-or-absent heading
+					// (a non-string heading can never be placed on a
+					// section and would crash the heading parser later)
+					super::share::is_usable_feedback_item(item)
 						&& seen.insert((
 							item["oid_heading_text"]
 								.as_str()
 								.unwrap_or_default()
 								.to_owned(),
-							text.to_owned(),
+							item["feedback_text"]
+								.as_str()
+								.unwrap_or_default()
+								.trim()
+								.to_owned(),
 						))
 				});
 			}
@@ -628,5 +636,35 @@ mod feedback_json_tests {
 		assert!(extract_feedback_json(r#"{"something": "else"}"#).is_none());
 		assert!(extract_feedback_json(r#"{"feedback_items": "nope"}"#).is_none());
 		assert!(extract_feedback_json("no json at all").is_none());
+	}
+
+	/// Members whose oid_heading_text is not a string (number/object)
+	/// can never be placed on a section and crash the frontend heading
+	/// parser at display time: they are dropped here, at the generation
+	/// boundary, before the document is ever stored. Absent or null
+	/// headings stay (aggregation logs and skips those comments).
+	#[test]
+	fn non_string_heading_members_are_dropped() {
+		let v = extract_feedback_json(
+			r#"{"feedback_items": [
+				{"oid_heading_text": 1, "matched_spans": [], "feedback_text": "one"},
+				{"oid_heading_text": {"n": 2}, "feedback_text": "two"},
+				{"oid_heading_text": null, "matched_spans": [], "feedback_text": "null heading stays"},
+				{"matched_spans": [], "feedback_text": "absent heading stays"},
+				{"oid_heading_text": "2## B", "matched_spans": [], "feedback_text": "kept"}
+			]}"#,
+		)
+		.expect("valid document");
+		let kept: Vec<&str> = v["feedback_items"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|i| i["feedback_text"].as_str().unwrap())
+			.collect();
+		assert_eq!(
+			kept,
+			["null heading stays", "absent heading stays", "kept"],
+			"non-string headings dropped, everything else kept"
+		);
 	}
 }

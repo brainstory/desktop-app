@@ -198,10 +198,9 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 				target_title: feedback["target_title"].as_str().unwrap_or("").to_string(),
 				title: title.to_string(),
 				result: result.to_string(),
-				// only objects are accepted as structured documents
-				structured_result: feedback["structured_result"]
-					.as_object()
-					.map(|_| feedback["structured_result"].clone()),
+				// only feedback-contract documents are stored; a malformed
+				// one degrades to none, keeping the readable feedback
+				structured_result: sanitize_structured_feedback(&feedback["structured_result"]),
 				created_at: parse_created_at(feedback["created_at"].as_str()),
 				reactions: parse_reactions(&feedback["reactions"])?,
 			}
@@ -209,6 +208,55 @@ pub fn parse_share_payload(raw: &str) -> Result<ParsedShare, String> {
 		other => return Err(format!("unknown share kind: {other}")),
 	};
 	Ok(ParsedShare { author, payload })
+}
+
+/// Validate an imported structured feedback document against the
+/// feedback contract (an object with a `feedback_items` array of
+/// members; the model-generated twin is `extract_feedback_json` in
+/// commands/ai.rs). A document whose container is unusable - not an
+/// object, no `feedback_items` key, or a non-array value - is degraded
+/// to none, exactly like unparseable model output, so the readable
+/// feedback idea still imports. Unusable members are skipped instead so
+/// the valid ones beside them survive; survivors keep their original
+/// order (comment reactions are keyed by index into the stored array, so
+/// a skipped member must never renumber them). Other top-level keys of
+/// a valid document pass through unchanged.
+fn sanitize_structured_feedback(value: &serde_json::Value) -> Option<serde_json::Value> {
+	let mut doc = value.as_object()?.clone();
+	let items = doc.get("feedback_items")?.as_array()?.clone();
+	doc.insert(
+		"feedback_items".into(),
+		serde_json::Value::Array(
+			items
+				.iter()
+				.filter(|item| is_usable_feedback_item(item))
+				.cloned()
+				.collect(),
+		),
+	);
+	Some(serde_json::Value::Object(doc))
+}
+
+/// A structured feedback member is usable when it is an object whose
+/// `feedback_text` is a non-empty string (the visible comment) and whose
+/// `oid_heading_text`, when present, is a string: a non-string heading
+/// can never be placed on a section and crashes the frontend heading
+/// parser at display time. An absent or null heading is fine
+/// (aggregation logs and skips those comments), matching the model
+/// pipeline's historical tolerance.
+pub(crate) fn is_usable_feedback_item(item: &serde_json::Value) -> bool {
+	let Some(obj) = item.as_object() else {
+		return false;
+	};
+	let text = obj.get("feedback_text").and_then(|t| t.as_str());
+	match text.map(str::trim) {
+		Some(t) if !t.is_empty() => {}
+		_ => return false,
+	}
+	match obj.get("oid_heading_text") {
+		None | Some(serde_json::Value::Null) => true,
+		Some(heading) => heading.is_string(),
+	}
 }
 
 /// The optional section reactions of a feedback file. Like the other
@@ -765,7 +813,12 @@ mod tests {
 
 	#[test]
 	fn feedback_roundtrip_preserves_fields_including_structured() {
-		let structured = serde_json::json!({ "sections": [ { "heading": "# H", "body": "b" } ] });
+		// a conforming feedback document survives byte-for-byte
+		let structured = serde_json::json!({
+			"feedback_items": [
+				{ "oid_heading_text": "1## H", "matched_spans": ["span"], "feedback_text": "b" }
+			]
+		});
 		let parsed = roundtrip(
 			SharePayload::Feedback {
 				target_share_id: "target-1".into(),
@@ -1073,5 +1126,109 @@ mod tests {
 		assert_eq!(parsed_reactions(&feedback_file(entries(cap))).len(), cap);
 		let err = parse_share_payload(&feedback_file(entries(cap + 1))).expect_err("over the cap");
 		assert!(err.contains("too many reactions"), "unexpected: {err}");
+	}
+
+	fn structured_feedback_file(structured: serde_json::Value) -> String {
+		json_string(serde_json::json!({
+			"format": "brainstory-share", "version": 1, "kind": "feedback", "author": "Grace",
+			"feedback": {
+				"target_share_id": "share-1", "title": "F", "result": "notes",
+				"structured_result": structured,
+			}
+		}))
+	}
+
+	fn parsed_structured(raw: &str) -> Option<serde_json::Value> {
+		match parse_share_payload(raw).expect("parses").payload {
+			SharePayload::Feedback {
+				structured_result, ..
+			} => structured_result,
+			_ => panic!("wrong payload kind"),
+		}
+	}
+
+	/// F01: a malformed structured document must not take the readable
+	/// feedback down with it. An unusable container (non-array
+	/// feedback_items, a document without the key, a non-object
+	/// document) degrades the document to none - exactly what
+	/// extract_feedback_json does with unparseable model output - and
+	/// the feedback idea itself still imports with its result intact.
+	#[test]
+	fn malformed_structured_feedback_container_degrades_to_no_document() {
+		for broken in [
+			serde_json::json!({ "feedback_items": {} }),
+			serde_json::json!({ "feedback_items": "nope" }),
+			serde_json::json!({ "sections": [{ "heading": "# H" }] }),
+			serde_json::json!([1, 2]),
+			serde_json::Value::Null,
+		] {
+			let raw = structured_feedback_file(broken.clone());
+			assert_eq!(
+				parsed_structured(&raw),
+				None,
+				"container {broken} must degrade to no document"
+			);
+		}
+		// the feedback itself still lands in the library, readable
+		let (db, _dir) = temp_db("broken-container");
+		local_idea(&db, "idea", "Plan", Some("share-1"));
+		let raw = structured_feedback_file(serde_json::json!({ "feedback_items": {} }));
+		let imported = import_parsed(&db, parse_share_payload(&raw).unwrap()).expect("imports");
+		assert_eq!(imported["parent_id"], "idea");
+		let children = db.get_idea_children("idea").unwrap();
+		assert_eq!(children.len(), 1, "the malformed child is not hidden");
+		assert_eq!(children[0].result.as_deref(), Some("notes"));
+		assert_eq!(children[0].structured_result, None);
+	}
+
+	/// Unusable MEMBERS are skipped, never the whole list, and survivors
+	/// are stored in their original order (comment reactions are keyed
+	/// by index into the stored array, so a skipped member must not
+	/// renumber them). A member needs an object shape, non-empty string
+	/// feedback_text, and a string (or absent/null) oid_heading_text - a
+	/// non-string heading can never be placed on a section.
+	#[test]
+	fn unusable_structured_feedback_members_are_skipped_not_the_list() {
+		let structured = serde_json::json!({
+			"feedback_items": [
+				{ "oid_heading_text": "1## A", "matched_spans": [], "feedback_text": "keep" },
+				null,
+				42,
+				"note",
+				[],
+				{ "oid_heading_text": "2## B", "feedback_text": "" },
+				{ "oid_heading_text": "2## B", "feedback_text": "  " },
+				{ "oid_heading_text": 3, "feedback_text": "numbered heading" },
+				{ "oid_heading_text": { "a": 1 }, "feedback_text": "object heading" },
+				{ "feedback_text": "keep without heading" },
+				{ "oid_heading_text": null, "feedback_text": "keep with null heading" },
+				{ "oid_heading_text": "3## C", "matched_spans": "not an array", "feedback_text": "keep" },
+			]
+		});
+		let expected = serde_json::json!({
+			"feedback_items": [
+				{ "oid_heading_text": "1## A", "matched_spans": [], "feedback_text": "keep" },
+				{ "feedback_text": "keep without heading" },
+				{ "oid_heading_text": null, "feedback_text": "keep with null heading" },
+				{ "oid_heading_text": "3## C", "matched_spans": "not an array", "feedback_text": "keep" },
+			]
+		});
+		let raw = structured_feedback_file(structured);
+		assert_eq!(parsed_structured(&raw), Some(expected));
+
+		// and the filtered document is what lands in the database
+		let (db, _dir) = temp_db("filtered-members");
+		local_idea(&db, "idea", "Plan", Some("share-1"));
+		import_parsed(&db, parse_share_payload(&raw).unwrap()).expect("imports");
+		let children = db.get_idea_children("idea").unwrap();
+		assert_eq!(children.len(), 1);
+		assert_eq!(
+			children[0].structured_result.as_ref().unwrap()["feedback_items"]
+				.as_array()
+				.unwrap()
+				.len(),
+			4,
+			"valid members survive beside invalid ones"
+		);
 	}
 }

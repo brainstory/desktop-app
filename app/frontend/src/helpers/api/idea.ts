@@ -60,15 +60,58 @@ export interface RawFeedbackChild {
 	creator_name?: string;
 	is_unread?: boolean;
 	transcript?: ChatMessage[];
-	structured_result?: {
-		feedback_items?: {
-			oid_heading_text: string;
-			matched_spans: unknown[];
-			feedback_text: string;
-			// older imports may still carry the LLM's emoji `labels`; they
-			// are deliberately not mapped (reactions are chosen by people)
-		}[];
-	} | null;
+	// free-form JSON from the database: model-generated, imported or
+	// written by an older build - unknown shape, validate before mapping
+	// (older items may still carry the LLM's emoji `labels`; they are
+	// deliberately not mapped - reactions are chosen by people)
+	structured_result?: unknown;
+}
+
+/**
+ * Map a feedback idea's stored structured_result into display comments,
+ * treating the stored JSON as unknown-typed. The contract (see the
+ * feedback JSON prompt and the share import) is an object with a
+ * feedback_items array of members carrying string oid_heading_text and
+ * feedback_text. A non-object document or non-array container yields no
+ * comments; unusable MEMBERS (null/number/object members, non-string
+ * heading or empty/non-string text) are skipped one by one so valid
+ * members beside them stay visible. A skipped member never renumbers
+ * the survivors: itemIndex keeps the member's ORIGINAL position in the
+ * stored array because comment reactions are keyed by it. An
+ * absent/null oid_heading_text stays a comment (aggregation logs and
+ * skips it); a non-string one is dropped instead of crashing
+ * parseHeadingIndex at render time. A non-array matched_spans degrades
+ * to [] - it is display-only.
+ */
+function feedbackCommentsOf(structuredResult: unknown): IdeaFeedbackItem["feedbackComments"] {
+	if (typeof structuredResult !== "object" || structuredResult === null) return [];
+	if (Array.isArray(structuredResult)) return [];
+	const { feedback_items } = structuredResult as { feedback_items?: unknown };
+	if (!Array.isArray(feedback_items)) return [];
+	const comments: IdeaFeedbackItem["feedbackComments"] = [];
+	feedback_items.forEach((member: unknown, itemIndex: number) => {
+		if (typeof member !== "object" || member === null || Array.isArray(member)) return;
+		const { oid_heading_text, feedback_text, matched_spans } = member as {
+			oid_heading_text?: unknown;
+			feedback_text?: unknown;
+			matched_spans?: unknown;
+		};
+		if (
+			oid_heading_text !== undefined &&
+			oid_heading_text !== null &&
+			typeof oid_heading_text !== "string"
+		) {
+			return;
+		}
+		if (typeof feedback_text !== "string" || feedback_text.trim() === "") return;
+		comments.push({
+			oidHeadingText: typeof oid_heading_text === "string" ? oid_heading_text : undefined,
+			matchedSpans: Array.isArray(matched_spans) ? matched_spans : [],
+			feedbackText: feedback_text,
+			itemIndex
+		});
+	});
+	return comments;
 }
 
 /** Get idea's children (ideas that branched off from idea_id) */
@@ -76,14 +119,6 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 	const response = await invokeCommand("getIdeaChildren", { ideaId: idea_id });
 
 	return response?.ideas.map((idea) => {
-		const feedbackComments = idea?.structured_result?.feedback_items
-			? idea.structured_result.feedback_items.map((feedbackComment, itemIndex) => ({
-					oidHeadingText: feedbackComment.oid_heading_text,
-					matchedSpans: feedbackComment.matched_spans,
-					feedbackText: feedbackComment.feedback_text,
-					itemIndex
-				}))
-			: [];
 		return {
 			id: idea.id,
 			title: idea?.title,
@@ -94,7 +129,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 			creatorEmail: idea?.creator_email,
 			creatorName: idea?.creator_name,
 			isUnread: idea?.is_unread,
-			feedbackComments: feedbackComments,
+			feedbackComments: feedbackCommentsOf(idea?.structured_result),
 			draftSummary: draftSummaryOf(idea?.result, idea?.transcript)
 		};
 	});
