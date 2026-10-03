@@ -9,12 +9,16 @@ import Button from "@ds/Button";
 
 interface NotificationsCardProps {
 	notificationsData?: NotificationSetting[];
+	/** The stored user timezone: the reminder hour is wall-clock time
+	 * in this zone (the OS zone when none is stored). */
+	timeZone?: string | null;
 	/** Resolves true once persisted, false if the save failed. */
 	saveSettings: (fields: NotificationSetting[]) => Promise<boolean>;
 }
 
 export function NotificationsCard({
 	notificationsData = [],
+	timeZone,
 	saveSettings
 }: NotificationsCardProps) {
 	const [notificationFields, setNotificationFields] =
@@ -89,6 +93,13 @@ export function NotificationsCard({
 								<p className="font-mono tabular-nums text-sm" aria-hidden="true">
 									:00
 								</p>
+								{/* the hour the picker edits is wall-clock time in
+								the user's chosen zone, not the machine's */}
+								{timeZone && (
+									<p className="text-xs text-stone-600">
+										{timeZone.replaceAll("_", " ")} time
+									</p>
+								)}
 							</div>
 						</div>
 					</div>

@@ -7,7 +7,7 @@ import type { LogSettingsQuestion, NotificationSetting } from "@helpers/api/sett
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
-import { PhotoNameCard, GeneralCard } from "./ProfileCards";
+import { PhotoNameCard, GeneralCard, detectedTimezone } from "./ProfileCards";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
@@ -134,8 +134,11 @@ export default function Profile() {
 						saveSettings={handleUserSettingsSave}
 					/>
 					<NotificationsCard
-						key={userTimezone} // rerender when timezone changes
 						notificationsData={notifications}
+						// the reminder hour is wall-clock time in this zone
+						// (the OS zone when none is stored); passed
+						// explicitly, so no key-remount is needed to refresh it
+						timeZone={userTimezone || detectedTimezone()}
 						saveSettings={handleNotificationsSave}
 					/>
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />

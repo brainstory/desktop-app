@@ -65,6 +65,7 @@ fs4 = "1.1.0"
 dirs = "7.0.0"
 # physical core count for whisper's thread pool (std only reports logical)
 num_cpus = "1"
+chrono-tz = "0.10.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "=0.16.0", features = ["metal"] }

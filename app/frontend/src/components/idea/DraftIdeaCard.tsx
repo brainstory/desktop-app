@@ -1,4 +1,6 @@
+import { useStore } from "@nanostores/react";
 import { formatISO8601ToHumanReadable } from "../../helpers/helpers";
+import { $userState } from "@components/global/userStore";
 import { deleteIdeaApi } from "@helpers/api/idea";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick } from "@src/hooks/useTimeout";
 import { useSnackbar } from "@ds/Snackbar";
@@ -27,7 +29,13 @@ export default function DraftIdeaCard({
 	parentTitle,
 	onDeleted
 }: DraftIdeaCardProps) {
-	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
+	// dates render in the stored user timezone (OS zone until one is set)
+	const { timezone } = useStore($userState);
+	const humanReadableDate = formatISO8601ToHumanReadable(
+		createdAt ?? "",
+		undefined,
+		timezone ?? undefined
+	);
 	const isFeedback = Boolean(parentId);
 	const href = isFeedback ? `/chat?parentId=${parentId}&id=${id}` : `/chat?id=${id}`;
 	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();

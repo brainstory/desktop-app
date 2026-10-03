@@ -1,7 +1,9 @@
 import { useMemo, useState, type ChangeEvent } from "react";
+import { useStore } from "@nanostores/react";
 
 import Button from "@ds/Button";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
+import { $userState } from "@components/global/userStore";
 
 interface CardProps {
 	children?: React.ReactNode;
@@ -41,6 +43,9 @@ interface PhotoNameCardProps {
 }
 
 export function PhotoNameCard({ userName, createdAt }: PhotoNameCardProps) {
+	// the join date renders in the stored user timezone (OS zone until
+	// one is set)
+	const { timezone } = useStore($userState);
 	return (
 		<Card columns={1}>
 			<div className="bg-stone-200 flex items-center justify-center rounded-md text-4xl text-pink-600 relative w-32 h-32">
@@ -50,11 +55,15 @@ export function PhotoNameCard({ userName, createdAt }: PhotoNameCardProps) {
 			<p className="text-stone-600 mb-1 truncate">Local account</p>
 			<p className="text-xs text-stone-600 mt-4 mb-1 truncate">
 				Joined on{" "}
-				{formatISO8601ToHumanReadable(createdAt ?? "", {
-					month: "short",
-					day: "numeric",
-					year: "numeric"
-				})}
+				{formatISO8601ToHumanReadable(
+					createdAt ?? "",
+					{
+						month: "short",
+						day: "numeric",
+						year: "numeric"
+					},
+					timezone ?? undefined
+				)}
 			</p>
 		</Card>
 	);
@@ -181,6 +190,9 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 						</option>
 					))}
 				</select>
+				<p className="mt-1 text-xs text-stone-600">
+					Drives when your day starts (daily log, streak) and when reminders fire.
+				</p>
 			</div>
 			<Button
 				variant="pink"

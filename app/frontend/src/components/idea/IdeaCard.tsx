@@ -1,5 +1,7 @@
+import { useStore } from "@nanostores/react";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 import { finishedFeedback } from "@helpers/ideas";
+import { $userState } from "@components/global/userStore";
 import type { IdeaListItem } from "@src/types";
 
 interface IdeaCardProps {
@@ -29,7 +31,13 @@ export default function IdeaCard({
 	// an unfinished feedback draft is not feedback yet: it is resumed from
 	// its own draft card, never counted or stacked here
 	const feedbackList = finishedFeedback(feedback);
-	const humanReadableDate = formatISO8601ToHumanReadable(createdAt ?? "");
+	// dates render in the stored user timezone (OS zone until one is set)
+	const { timezone } = useStore($userState);
+	const humanReadableDate = formatISO8601ToHumanReadable(
+		createdAt ?? "",
+		undefined,
+		timezone ?? undefined
+	);
 	// Feedback cards don't show shared / feedback sections. Cards without
 	// feedback don't need the extra room the feedback stack effect reserves.
 	const cardHeight = isFeedback

@@ -29,7 +29,10 @@ export function formatISO8601ToHumanReadable(
 		day: "numeric",
 		hour: "numeric",
 		minute: "2-digit"
-	}
+	},
+	/** IANA zone name (the stored user timezone). Omitted = the
+	 * runtime's local zone, the behavior before the setting existed. */
+	timeZone?: string
 ): string {
 	const date = parseBackendUtc(iso8601Date);
 	if (!date) {
@@ -37,7 +40,7 @@ export function formatISO8601ToHumanReadable(
 		// a placeholder, not "Invalid Date"
 		return "—";
 	}
-	return date.toLocaleDateString("en-US", options);
+	return date.toLocaleDateString("en-US", timeZone ? { ...options, timeZone } : options);
 }
 
 /**

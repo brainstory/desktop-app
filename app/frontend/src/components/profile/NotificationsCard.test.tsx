@@ -24,6 +24,39 @@ describe("NotificationsCard", () => {
 		);
 	});
 
+	it("labels the reminder hour with the stored timezone", () => {
+		render(
+			<NotificationsCard
+				notificationsData={[reminder]}
+				saveSettings={async () => true}
+				timeZone="Asia/Tokyo"
+			/>
+		);
+		// the hour the picker edits is wall-clock time in the user's
+		// chosen zone, not the machine's
+		expect(screen.getByText("Asia/Tokyo time")).toBeInTheDocument();
+	});
+
+	it("follows a timezone change without remounting", () => {
+		const view = render(
+			<NotificationsCard
+				notificationsData={[reminder]}
+				saveSettings={async () => true}
+				timeZone="Europe/Berlin"
+			/>
+		);
+		expect(screen.getByText("Europe/Berlin time")).toBeInTheDocument();
+		view.rerender(
+			<NotificationsCard
+				notificationsData={[reminder]}
+				saveSettings={async () => true}
+				timeZone="Asia/Tokyo"
+			/>
+		);
+		expect(screen.getByText("Asia/Tokyo time")).toBeInTheDocument();
+		expect(screen.queryByText("Europe/Berlin time")).not.toBeInTheDocument();
+	});
+
 	it("keeps Save available when saving fails, so it can be retried", async () => {
 		const user = userEvent.setup();
 		const saveSettings = vi.fn(async () => false);

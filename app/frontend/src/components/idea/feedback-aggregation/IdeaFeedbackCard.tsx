@@ -1,10 +1,12 @@
 import type { FeedbackComment } from "@src/types";
 import { useState, useEffect, useRef } from "react";
+import { useStore } from "@nanostores/react";
 import { cn } from "@helpers/cn";
 
 import Avatar from "@ds/Avatar";
 import ReactionBar from "@components/idea/reactions/ReactionBar";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
+import { $userState } from "@components/global/userStore";
 
 interface IdeaFeedbackCardProps {
 	feedback: FeedbackComment & {
@@ -30,6 +32,8 @@ export default function IdeaFeedbackCard({
 }: IdeaFeedbackCardProps) {
 	const { ideaId, creatorEmail, creatorName, createdAt, feedbackText } = feedback;
 	const authorName = creatorName ?? creatorEmail ?? null;
+	// dates render in the stored user timezone (OS zone until one is set)
+	const { timezone } = useStore($userState);
 	const ref = useRef<HTMLDivElement | null>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
 	// derived: this card is the one the sidebar currently has focused,
@@ -84,7 +88,11 @@ export default function IdeaFeedbackCard({
 						<p className="ml-1 text-xs font-medium text-stone-700">{authorName}</p>
 					)}
 					<p className="ml-1 text-xs text-stone-500">
-						{formatISO8601ToHumanReadable(createdAt ?? "")}
+						{formatISO8601ToHumanReadable(
+							createdAt ?? "",
+							undefined,
+							timezone ?? undefined
+						)}
 					</p>
 				</div>
 				<p

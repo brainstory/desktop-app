@@ -114,6 +114,14 @@ struct UserSettingsUpdate {
 	kv: Vec<(&'static str, String)>,
 	reminder_enabled_after: Option<bool>,
 	time_changed: bool,
+	timezone_changed: bool,
+}
+
+/// Whether this save must re-arm the reminder scheduler: a reminder
+/// field (enabled/time, as before) OR the timezone - the daily boundary
+/// and the due instant both move with the zone.
+fn wakes_scheduler(update: &UserSettingsUpdate) -> bool {
+	update.reminder_enabled_after.is_some() || update.time_changed || update.timezone_changed
 }
 
 /// Validate the whole form and persist it in ONE transaction: an invalid
@@ -137,12 +145,23 @@ fn collect_user_settings(
 	notifications: Option<&[serde_json::Value]>,
 ) -> Result<UserSettingsUpdate, String> {
 	let mut kv: Vec<(&'static str, String)> = Vec::new();
+	let mut timezone_changed = false;
 	if let Some(user) = user {
 		if let Some(name) = user["name"].as_str() {
 			kv.push((keys::setting::USER_NAME, name.to_string()));
 		}
 		if let Some(timezone) = user["timezone"].as_str() {
+			// A non-empty zone must name a zone this build's embedded
+			// tz database knows, or day boundaries and reminders would
+			// silently follow the OS zone instead of the saved value.
+			// Empty stays allowed (= follow the OS zone).
+			if !timezone.is_empty() && crate::db::parse_zone(timezone).is_none() {
+				return Err(format!(
+					"invalid timezone '{timezone}' (expected an IANA zone name like Europe/Berlin, or empty to follow this computer's zone)"
+				));
+			}
 			kv.push((keys::setting::USER_TIMEZONE, timezone.to_string()));
+			timezone_changed = true;
 		}
 	}
 
@@ -195,6 +214,7 @@ fn collect_user_settings(
 		kv,
 		reminder_enabled_after,
 		time_changed,
+		timezone_changed,
 	})
 }
 
@@ -206,22 +226,18 @@ pub async fn save_user_settings(
 	notifications: Option<Vec<serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
 	// Side effects only run once the whole form is persisted.
-	let UserSettingsUpdate {
-		reminder_enabled_after,
-		time_changed,
-		..
-	} = persist_user_settings(
+	let update = persist_user_settings(
 		&state.db,
 		user.as_ref(),
 		enabled_log_question_ids.as_deref(),
 		notifications.as_deref(),
 	)?;
-	if let Some(enabled) = reminder_enabled_after {
+	if let Some(enabled) = update.reminder_enabled_after {
 		// keep the tray menu checkmark in sync with the persisted setting
 		crate::sync_tray_reminder_check(enabled);
 	}
-	if reminder_enabled_after.is_some() || time_changed {
-		// wake the scheduler so a new time/state applies immediately
+	if wakes_scheduler(&update) {
+		// wake the scheduler so a new time/state/zone applies immediately
 		crate::reminders::notify_settings_changed();
 	}
 
@@ -577,6 +593,89 @@ mod tests {
 		assert_eq!(
 			db.get_setting(setting::REMINDER_TIME).as_deref(),
 			Some("08:00")
+		);
+	}
+
+	#[test]
+	fn an_invalid_timezone_rejects_the_whole_form() {
+		let (db, _path, _dir) = temp_db();
+		let err = persist_user_settings(
+			&db,
+			Some(&json!({ "name": "Ada", "timezone": "Mars/Olympus_Mons" })),
+			None,
+			Some(&reminder("08:00")),
+		)
+		.expect_err("a non-empty timezone must parse as an IANA zone name");
+		assert!(err.contains("invalid timezone"), "unexpected: {err}");
+		for key in [
+			setting::USER_NAME,
+			setting::USER_TIMEZONE,
+			setting::REMINDER_TIME,
+		] {
+			assert_eq!(
+				db.get_setting(key),
+				None,
+				"{key} leaked from a rejected form"
+			);
+		}
+	}
+
+	#[test]
+	fn an_empty_timezone_stays_allowed_as_the_os_local_fallback() {
+		let (db, _path, _dir) = temp_db();
+		persist_user_settings(
+			&db,
+			Some(&json!({ "name": "Ada", "timezone": "" })),
+			None,
+			None,
+		)
+		.expect("empty means 'follow the OS zone', not an error");
+		assert_eq!(db.get_setting(setting::USER_NAME).as_deref(), Some("Ada"));
+		assert_eq!(
+			db.get_setting(setting::USER_TIMEZONE).as_deref(),
+			Some(""),
+			"the empty value persists (no OS-local zone is substituted here)"
+		);
+	}
+
+	#[test]
+	fn a_zone_save_switches_the_active_zone_without_restart() {
+		let (db, _path, _dir) = temp_db();
+		persist_user_settings(&db, Some(&json!({ "timezone": "Asia/Tokyo" })), None, None)
+			.expect("save Tokyo");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("Asia/Tokyo".to_string()),
+			"the zone takes effect on the open database, not after a restart"
+		);
+		persist_user_settings(
+			&db,
+			Some(&json!({ "timezone": "America/New_York" })),
+			None,
+			None,
+		)
+		.expect("switch zone");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("America/New_York".to_string()),
+			"a later save replaces the earlier zone"
+		);
+	}
+
+	#[test]
+	fn a_timezone_only_save_re_arms_the_scheduler() {
+		let zone_only =
+			super::collect_user_settings(Some(&json!({ "timezone": "Asia/Tokyo" })), None, None)
+				.expect("valid zone-only form");
+		assert!(
+			super::wakes_scheduler(&zone_only),
+			"the due instant moves with the zone"
+		);
+		let nothing = super::collect_user_settings(Some(&json!({ "name": "Ada" })), None, None)
+			.expect("name-only form");
+		assert!(
+			!super::wakes_scheduler(&nothing),
+			"a name-only save must not wake the loop"
 		);
 	}
 }

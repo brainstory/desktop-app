@@ -95,6 +95,33 @@ describe("formatISO8601ToHumanReadable", () => {
 		});
 		expect(formatISO8601ToHumanReadable("2026-09-15T10:30:00")).toBe(expected);
 	});
+
+	it("formats in the stored user timezone when one is given", () => {
+		// 10:30 UTC is 19:30 in Tokyo - a different calendar day+hour
+		// than any western runner zone renders
+		const expected = new Date("2026-09-15T10:30:00Z").toLocaleDateString("en-US", {
+			year: "numeric",
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
+			timeZone: "Asia/Tokyo"
+		});
+		expect(formatISO8601ToHumanReadable("2026-09-15T10:30:00", undefined, "Asia/Tokyo")).toBe(
+			expected
+		);
+		// 19:30 in Tokyo, not the runner's local hour
+		expect(expected).toContain("7:30 PM");
+	});
+
+	it("keeps the local-zone default when no timezone is given", () => {
+		const local = new Date("2026-09-15T10:30:00Z").toLocaleDateString("en-US", {
+			hour: "numeric"
+		});
+		expect(formatISO8601ToHumanReadable("2026-09-15T10:30:00", { hour: "numeric" })).toBe(
+			local
+		);
+	});
 });
 
 describe("callApiWithRetry", () => {

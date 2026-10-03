@@ -71,6 +71,26 @@ describe("Profile", () => {
 		expect(await screen.findByRole("combobox", { name: "Your timezone" })).toHaveValue("");
 	});
 
+	it("labels the reminder hour with the stored timezone", async () => {
+		mockInvoke({
+			get_user_settings: () => ({
+				...userSettings,
+				notifications: [
+					{
+						title: "Daily intention reminder",
+						description: "A daily reminder.",
+						value: "09:00",
+						value_type: "time",
+						enabled: false
+					}
+				]
+			})
+		});
+		render(<Profile />);
+		// the hour the picker edits is wall-clock time in the stored zone
+		expect(await screen.findByText("Europe/Berlin time")).toBeInTheDocument();
+	});
+
 	it("shows the Updates card with the stored opt-out", async () => {
 		mockInvoke({
 			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })

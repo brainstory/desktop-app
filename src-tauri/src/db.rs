@@ -2,8 +2,10 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::{NaiveDate, Utc};
+use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::keys::setting::USER_TIMEZONE;
 use crate::reactions::{
 	validate_reaction, CommentReaction, IdeaReactions, SectionReaction, SharedSectionReaction,
 };
@@ -28,6 +30,13 @@ pub const SURVEY_QUESTIONS: [&str; 3] = ["focused", "creative", "articulate"];
 
 pub struct Db {
 	conn: Mutex<Connection>,
+	/// The resolved user timezone (None = OS-local). An in-memory mirror
+	/// of the stored `user_timezone` row, read at open and refreshed by
+	/// the settings save path; `today_local`/`local_date_for` and the
+	/// reminder scheduler compute day boundaries from it. Never locked
+	/// while the connection lock is held the other way around (a zone
+	/// guard is never held across a database operation).
+	zone: Mutex<Option<Tz>>,
 }
 
 /// Failure to open (and migrate) the database file.
@@ -71,23 +80,41 @@ fn now_iso() -> String {
 		.to_string()
 }
 
-fn today_local() -> NaiveDate {
-	// date_naive() is infallible; no unwrap needed.
-	chrono::Local::now().date_naive()
+/// Resolve a stored `user_timezone` value to a chrono-tz zone. Empty
+/// and unknown names (a hand-edited row, a zone this build's embedded
+/// tz database does not know) fall back to None = OS-local, which is
+/// exactly the behavior before the setting became authoritative.
+pub(crate) fn parse_zone(value: &str) -> Option<Tz> {
+	if value.is_empty() {
+		return None;
+	}
+	value.parse::<Tz>().ok()
 }
 
-/// The local calendar day a UTC timestamp falls on. Computed at write time
-/// so each activity's day is frozen under the timezone it happened in
-/// (traveling later must not rewrite history).
-fn local_date_for(utc: &str) -> String {
+/// Today's calendar date in the active zone.
+fn today_in(zone: Option<Tz>) -> NaiveDate {
+	match zone {
+		Some(tz) => Utc::now().with_timezone(&tz).date_naive(),
+		None => chrono::Local::now().date_naive(),
+	}
+}
+
+/// The local calendar day a UTC timestamp falls on, in the active zone.
+/// Computed at write time so each activity's day is frozen under the
+/// timezone it happened in (a later zone change must not rewrite
+/// history - only future writes use the new zone).
+fn local_date_for(utc: &str, zone: Option<Tz>) -> String {
 	let date = chrono::NaiveDateTime::parse_from_str(utc, "%Y-%m-%dT%H:%M:%S")
 		.ok()
 		.map(|naive| {
-			chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
-				.with_timezone(&chrono::Local)
-				.date_naive()
+			let utc_dt =
+				chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc);
+			match zone {
+				Some(tz) => utc_dt.with_timezone(&tz).date_naive(),
+				None => utc_dt.with_timezone(&chrono::Local).date_naive(),
+			}
 		})
-		.unwrap_or_else(today_local);
+		.unwrap_or_else(|| today_in(zone));
 	date.format("%Y-%m-%d").to_string()
 }
 
@@ -354,9 +381,44 @@ impl Db {
 				own_activity_filter(table)
 			))?;
 		}
+		// The authoritative user timezone: read once at open so day
+		// boundaries resolve without a settings query on every write.
+		// Empty/missing/unparseable rows mean OS-local (the behavior
+		// before the setting existed).
+		let stored_zone: Option<String> = conn
+			.query_row(
+				"SELECT value FROM settings WHERE key = ?1",
+				params![USER_TIMEZONE],
+				|row| row.get(0),
+			)
+			.optional()?
+			.flatten();
+		let zone = stored_zone.as_deref().and_then(parse_zone);
 		Ok(Self {
 			conn: Mutex::new(conn),
+			zone: Mutex::new(zone),
 		})
+	}
+
+	/// The active zone: the parsed stored `user_timezone`, or None when
+	/// unset, empty or unparseable (= OS-local). The reminder scheduler
+	/// reads the same source so its wall clock and the daily boundaries
+	/// can never disagree.
+	pub fn active_zone(&self) -> Option<Tz> {
+		*self.zone.lock().unwrap_or_else(|e| e.into_inner())
+	}
+
+	/// Keep the zone mirror in lockstep with a just-written
+	/// `user_timezone` row. Called only after the write committed, so a
+	/// failed or rolled-back save leaves the previous zone active.
+	fn store_zone(&self, value: &str) {
+		*self.zone.lock().unwrap_or_else(|e| e.into_inner()) = parse_zone(value);
+	}
+
+	/// Today's calendar date in the active zone (the stored user
+	/// timezone, or the OS zone).
+	fn today_local(&self) -> NaiveDate {
+		today_in(self.active_zone())
 	}
 
 	fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -412,6 +474,10 @@ impl Db {
 				params![key, value],
 			)
 			.map_err(|e| format!("failed to save setting '{key}': {e}"))?;
+		if key == USER_TIMEZONE {
+			// after the write committed, never before
+			self.store_zone(value);
+		}
 		Ok(())
 	}
 
@@ -426,7 +492,14 @@ impl Db {
 				.map_err(|e| format!("failed to save setting '{key}': {e}"))?;
 			}
 			Ok(())
-		})
+		})?;
+		// Same-save hook for the authoritative timezone: refresh the
+		// resolved zone only after the transaction committed, so a
+		// failed save leaves the previous zone active.
+		if let Some((_, value)) = kv.iter().find(|(key, _)| *key == USER_TIMEZONE) {
+			self.store_zone(value);
+		}
+		Ok(())
 	}
 
 	/// Remove a setting row entirely (used when secrets move to the
@@ -547,7 +620,11 @@ impl Db {
 	const IDEA_COLS: &'static str =
 		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";
 
-	fn insert_idea_tx(conn: &Connection, idea: NewIdea<'_>) -> Result<(), String> {
+	fn insert_idea_tx(
+		conn: &Connection,
+		idea: NewIdea<'_>,
+		zone: Option<Tz>,
+	) -> Result<(), String> {
 		let transcript_json =
 			serde_json::to_string(idea.transcript).unwrap_or_else(|_| "[]".into());
 		let structured_json = idea.structured_result.map(|v| v.to_string());
@@ -559,7 +636,7 @@ impl Db {
 		let local_date = if idea.imported {
 			String::new()
 		} else {
-			local_date_for(created_at)
+			local_date_for(created_at, zone)
 		};
 		conn.execute(
 			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at, local_date)
@@ -629,7 +706,7 @@ impl Db {
 					return Err(format!("parent idea {parent_id} not found"));
 				}
 			}
-			Self::insert_idea_tx(conn, idea)
+			Self::insert_idea_tx(conn, idea, self.active_zone())
 		})
 	}
 
@@ -644,8 +721,9 @@ impl Db {
 		transcript: &[ChatMessage],
 		metadata: &serde_json::Value,
 	) -> Result<(), String> {
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let mark_completed = !result.is_empty();
+		let zone = self.active_zone();
 		self.with_tx(|conn| {
 			Self::insert_idea_tx(
 				conn,
@@ -658,6 +736,7 @@ impl Db {
 					metadata,
 					..Default::default()
 				},
+				zone,
 			)?;
 			conn.execute(
 				// A new intent for the day replaces the old one as a fresh
@@ -732,7 +811,8 @@ impl Db {
 			// day's) daily association matches zero rows and is a no-op.
 			if let Some(r) = result {
 				if !r.is_empty() {
-					Self::complete_daily_tx(conn, id)?;
+					let today = self.today_local();
+					Self::complete_daily_tx(conn, id, today)?;
 				}
 			}
 			Ok(())
@@ -1136,7 +1216,7 @@ impl Db {
 		answers: &[crate::types::LogAnswerItem],
 	) -> Result<(), String> {
 		let json = serde_json::to_string(answers).unwrap_or_else(|_| "[]".into());
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		self.with_tx(|conn| {
 			conn.execute(
 				"INSERT INTO log_entries (id, answers, created_at, local_date) VALUES (?1, ?2, ?3, ?4)",
@@ -1154,7 +1234,7 @@ impl Db {
 	}
 
 	pub fn get_log_answers_today(&self) -> Option<Vec<crate::types::LogAnswerItem>> {
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		let log_id: Option<String> = conn
 			.query_row(
@@ -1184,7 +1264,7 @@ impl Db {
 		idea_id: Option<&str>,
 		answers: &serde_json::Value,
 	) -> Result<(), String> {
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		self.with_tx(|conn| {
 			conn.execute(
 				"INSERT INTO surveys (id, idea_id, answers, created_at, local_date) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1208,24 +1288,24 @@ impl Db {
 	/// Mark today's daily row complete when `idea_id` is its intent.
 	/// Ideas without a (today's) daily association match zero rows; the
 	/// day/timezone semantics stay exactly as they were.
-	fn complete_daily_tx(conn: &Connection, idea_id: &str) -> Result<(), String> {
-		let today = today_local().format("%Y-%m-%d").to_string();
+	fn complete_daily_tx(conn: &Connection, idea_id: &str, today: NaiveDate) -> Result<(), String> {
 		conn.execute(
 			"UPDATE daily SET is_completed = 1 WHERE date = ?1 AND intent_idea_id = ?2",
-			params![today, idea_id],
+			params![today.format("%Y-%m-%d").to_string(), idea_id],
 		)
 		.map_err(|e| format!("failed to complete daily intent: {e}"))?;
 		Ok(())
 	}
 
 	pub fn mark_daily_completed(&self, idea_id: &str) -> Result<(), String> {
-		self.with_tx(|conn| Self::complete_daily_tx(conn, idea_id))
+		let today = self.today_local();
+		self.with_tx(|conn| Self::complete_daily_tx(conn, idea_id, today))
 	}
 
 	/// True if any idea, log or survey was recorded today (local time) -
 	/// used to skip the daily reminder on already-active days.
 	pub fn has_activity_today(&self) -> bool {
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		for table in ["ideas", "log_entries", "surveys"] {
 			// Imports are filtered explicitly, not only through their empty
@@ -1243,7 +1323,7 @@ impl Db {
 	}
 
 	pub fn get_daily_status(&self) -> DailyStatus {
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		let row = conn
 			.query_row(
@@ -1312,7 +1392,7 @@ impl Db {
 		// Walk back from today; if today has no activity yet the streak
 		// isn't broken (it continues from yesterday).
 		let mut streak = 0i64;
-		let mut day = Some(today_local());
+		let mut day = Some(self.today_local());
 		if day.map(|d| !activity.contains(&d)).unwrap_or(true) {
 			day = day.and_then(|d| d.pred_opt());
 		}
@@ -1982,7 +2062,7 @@ mod coverage_tests {
 	fn streak_counts_consecutive_days_and_stops_at_gap() {
 		let (db, _dir) = db();
 		let ts = |offset: i64| {
-			(today_local() - chrono::Duration::days(offset))
+			(db.today_local() - chrono::Duration::days(offset))
 				.and_hms_opt(12, 0, 0)
 				.unwrap()
 				.format("%Y-%m-%dT%H:%M:%S")
@@ -2088,7 +2168,7 @@ mod coverage_tests {
 		db.create_daily_intent_idea("target", "target", "r", &[], &json!({}))
 			.unwrap();
 		db.insert_survey("s1", Some("target"), &json!({})).unwrap();
-		let today = today_local().format("%Y-%m-%d").to_string();
+		let today = db.today_local().format("%Y-%m-%d").to_string();
 		{
 			let conn = db.lock();
 			let linked: i64 = conn
@@ -2369,6 +2449,152 @@ mod coverage_tests {
 		assert_eq!(arr.len(), 2);
 		assert_eq!(arr[0]["body"], "intro line");
 		assert_eq!(arr[1]["heading"], "## Only");
+	}
+}
+
+#[cfg(test)]
+mod timezone_tests {
+	use super::*;
+	use crate::keys::setting::USER_TIMEZONE;
+
+	fn insert_dated_idea(db: &Db, id: &str, created_at: &str) {
+		db.insert_idea(NewIdea {
+			id,
+			title: id,
+			idea_type: IdeaType::Original,
+			result: "r",
+			metadata: &serde_json::json!({}),
+			created_at: Some(created_at),
+			..Default::default()
+		})
+		.expect("insert");
+	}
+
+	fn local_date_of(db: &Db, id: &str) -> String {
+		db.lock()
+			.query_row(
+				"SELECT local_date FROM ideas WHERE id = ?1",
+				params![id],
+				|r| r.get(0),
+			)
+			.unwrap()
+	}
+
+	#[test]
+	fn day_boundaries_follow_the_stored_zone_not_the_os_zone() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join("tz.db")).expect("open");
+		db.set_settings(&[(USER_TIMEZONE, "Asia/Tokyo".to_string())])
+			.expect("store zone");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("Asia/Tokyo".to_string())
+		);
+		// 20:30 UTC on July 10 is already July 11 at UTC+9; the frozen
+		// activity day must follow the stored zone
+		insert_dated_idea(&db, "i", "2026-07-10T20:30:00");
+		assert_eq!(
+			local_date_of(&db, "i"),
+			"2026-07-11",
+			"the stored timezone must drive the day boundary"
+		);
+	}
+
+	#[test]
+	fn the_stored_zone_is_resolved_again_at_open() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("tz-reopen.db");
+		{
+			let db = Db::open(&path).expect("open");
+			db.set_settings(&[(USER_TIMEZONE, "Asia/Tokyo".to_string())])
+				.expect("store zone");
+		}
+		let db = Db::open(&path).expect("reopen");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("Asia/Tokyo".to_string()),
+			"the zone is read from the stored row on every open"
+		);
+		insert_dated_idea(&db, "i", "2026-07-10T20:30:00");
+		assert_eq!(
+			local_date_of(&db, "i"),
+			"2026-07-11",
+			"a reopened database keeps freezing days in the stored zone"
+		);
+	}
+
+	#[test]
+	fn changing_the_zone_affects_only_future_writes() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join("tz-switch.db")).expect("open");
+		db.set_settings(&[(USER_TIMEZONE, "Asia/Tokyo".to_string())])
+			.expect("Tokyo");
+		insert_dated_idea(&db, "tokyo", "2026-07-10T20:30:00");
+		// a later save switches the active zone without a restart...
+		db.set_settings(&[(USER_TIMEZONE, "America/New_York".to_string())])
+			.expect("New York");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("America/New_York".to_string())
+		);
+		// ...and the same UTC instant now freezes to the new zone's day
+		insert_dated_idea(&db, "ny", "2026-07-10T20:30:00");
+		assert_eq!(
+			local_date_of(&db, "ny"),
+			"2026-07-10",
+			"20:30 UTC is still July 10 at UTC-4"
+		);
+		// ...while already-frozen history is NOT recomputed
+		assert_eq!(
+			local_date_of(&db, "tokyo"),
+			"2026-07-11",
+			"a zone switch must never rewrite frozen local dates"
+		);
+	}
+
+	#[test]
+	fn empty_or_unparseable_stored_zones_fall_back_to_os_local() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let db = Db::open(&dir.path().join("tz-fallback.db")).expect("open");
+		assert_eq!(db.active_zone(), None, "no stored row = OS-local");
+		// the equivalent of a hand-edited row naming an unknown zone
+		db.set_settings(&[(USER_TIMEZONE, "Mars/Olympus_Mons".to_string())])
+			.expect("store junk zone");
+		assert_eq!(
+			db.active_zone(),
+			None,
+			"an unparseable stored value falls back to OS-local, not an error"
+		);
+		db.set_settings(&[(USER_TIMEZONE, String::new())])
+			.expect("store empty zone");
+		assert_eq!(db.active_zone(), None, "an empty stored value = OS-local");
+	}
+
+	#[test]
+	fn a_failed_settings_save_leaves_the_active_zone_unchanged() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("tz-rollback.db");
+		let db = Db::open(&path).expect("open");
+		db.set_settings(&[(USER_TIMEZONE, "Asia/Tokyo".to_string())])
+			.expect("Tokyo");
+		{
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(
+				"CREATE TRIGGER fail_zone BEFORE INSERT ON settings
+				 WHEN NEW.key = 'user_timezone'
+				 BEGIN SELECT RAISE(ABORT, 'disk on fire'); END;",
+			)
+			.unwrap();
+		}
+		let err = db
+			.set_settings(&[(USER_TIMEZONE, "America/New_York".to_string())])
+			.expect_err("the failing write surfaces");
+		assert!(err.contains("disk on fire"), "unexpected: {err}");
+		assert_eq!(
+			db.active_zone().map(|tz| tz.name().to_string()),
+			Some("Asia/Tokyo".to_string()),
+			"a rolled-back save must not switch the active zone"
+		);
 	}
 }
 

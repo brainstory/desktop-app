@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use chrono::Timelike;
+use chrono::{DateTime, LocalResult, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
@@ -50,7 +51,15 @@ async fn tick(app: &AppHandle) -> Duration {
 	let Some(state) = app.try_state::<AppState>() else {
 		return MAX_SLEEP;
 	};
+	// The reminder clock runs in the SAME zone as the daily boundaries:
+	// the stored user timezone when one resolves, the OS zone otherwise
+	// (Db::active_zone mirrors the stored row; the reminder's "today"
+	// and has_activity_today's "today" can never disagree).
+	tick_in_zone(app, &state, state.db.active_zone()).await
+}
 
+/// The scheduler pass for one active zone (None = OS-local).
+async fn tick_in_zone(app: &AppHandle, state: &AppState, zone: Option<Tz>) -> Duration {
 	let enabled = state
 		.db
 		.get_setting(keys::setting::REMINDER_ENABLED)
@@ -66,8 +75,8 @@ async fn tick(app: &AppHandle) -> Duration {
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| "09:00".into());
 	let (hour, minute) = parse_time(&time_str);
-	let now = chrono::Local::now();
-	let today = now.format("%Y-%m-%d").to_string();
+	let now = Utc::now();
+	let today = wall_clock(zone, &now).format("%Y-%m-%d").to_string();
 	let last_fired = state
 		.db
 		.get_setting(keys::setting::REMINDER_LAST_FIRED)
@@ -75,11 +84,11 @@ async fn tick(app: &AppHandle) -> Duration {
 
 	if last_fired == today {
 		// done for today: sleep until the reminder time tomorrow
-		return until_next_due(now, hour, minute).min(MAX_SLEEP);
+		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
 	}
 
-	if !is_due(now.time(), hour, minute) {
-		return until_next_due(now, hour, minute).min(MAX_SLEEP);
+	if !is_due(wall_clock(zone, &now).time(), hour, minute) {
+		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
 	}
 
 	// Already brainstormed today? Then the reminder has nothing to do
@@ -91,7 +100,7 @@ async fn tick(app: &AppHandle) -> Duration {
 		{
 			log::warn!("failed to record reminder: {e}");
 		}
-		return until_next_due(now, hour, minute).min(MAX_SLEEP);
+		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
 	}
 
 	let _ = app
@@ -106,32 +115,81 @@ async fn tick(app: &AppHandle) -> Duration {
 	{
 		log::warn!("failed to record reminder: {e}");
 	}
-	until_next_due(chrono::Local::now(), hour, minute).min(MAX_SLEEP)
+	until_next_due(zone, Utc::now(), hour, minute).min(MAX_SLEEP)
 }
 
-/// True once today's reminder time (HH:MM, local) has been reached; the
-/// minute itself counts as due.
+/// True once today's reminder time (HH:MM in the active zone) has been
+/// reached; the minute itself counts as due.
 fn is_due(now: chrono::NaiveTime, hour: u32, minute: u32) -> bool {
 	(now.hour(), now.minute()) >= (hour, minute)
 }
 
+/// The wall-clock time an instant reads as in the active zone.
+fn wall_clock(zone: Option<Tz>, now: &DateTime<Utc>) -> NaiveDateTime {
+	match zone {
+		Some(tz) => now.with_timezone(&tz).naive_local(),
+		None => now.with_timezone(&chrono::Local).naive_local(),
+	}
+}
+
+/// Resolve one wall-clock time in `zone` to an instant, under the DST
+/// policy:
+/// - unambiguous -> that instant;
+/// - ambiguous (a fold, where the wall time happens twice) -> the
+///   EARLIEST instant, so the reminder fires at the first chance; it
+///   fires at most once per calendar day anyway (REMINDER_LAST_FIRED
+///   records the zone-local date), so it never double-fires;
+/// - nonexistent (a gap, where the clock jumps past the wall time) ->
+///   the earliest valid instant AFTER the gap, found by stepping
+///   forward a minute at a time (real-world gaps are under two hours),
+///   so the reminder is never skipped to the next day.
+fn resolve_wall_time<Z: TimeZone>(zone: &Z, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+	match zone.from_local_datetime(&local) {
+		LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
+		LocalResult::Ambiguous(earliest, _) => Some(earliest.with_timezone(&Utc)),
+		LocalResult::None => {
+			let mut probe = local;
+			for _ in 0..(6 * 60) {
+				probe += chrono::Duration::minutes(1);
+				match zone.from_local_datetime(&probe) {
+					LocalResult::Single(dt) => return Some(dt.with_timezone(&Utc)),
+					LocalResult::Ambiguous(earliest, _) => {
+						return Some(earliest.with_timezone(&Utc))
+					}
+					LocalResult::None => {}
+				}
+			}
+			None
+		}
+	}
+}
+
+fn local_to_utc(zone: Option<Tz>, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+	match zone {
+		Some(tz) => resolve_wall_time(&tz, local),
+		None => resolve_wall_time(&chrono::Local, local),
+	}
+}
+
 /// How long until the reminder is due again: the next occurrence of
-/// HH:MM local time (tomorrow's if today's already passed). The pure
-/// instant computation is split out for tests.
-fn until_next_due(now: chrono::DateTime<chrono::Local>, hour: u32, minute: u32) -> Duration {
-	use chrono::TimeZone;
-	let today_due = now
-		.date_naive()
+/// HH:MM in the active zone (tomorrow's if today's already passed).
+/// Tomorrow is resolved on tomorrow's calendar date in that zone, so a
+/// DST shift between the days cannot bend the wall-clock time. The
+/// pure instant computation is split out for tests.
+fn until_next_due(zone: Option<Tz>, now: DateTime<Utc>, hour: u32, minute: u32) -> Duration {
+	let today_wall = wall_clock(zone, &now)
+		.date()
 		.and_hms_opt(hour.min(23), minute.min(59), 0)
 		.expect("clamped hour/minute are always valid");
-	let today_due = chrono::Local
-		.from_local_datetime(&today_due)
-		.single()
-		.unwrap_or(now);
-	let next = if today_due > now {
-		today_due
-	} else {
-		today_due + chrono::Duration::days(1)
+	let today_due = local_to_utc(zone, today_wall);
+	// tomorrow's wall-clock time; computed eagerly, resolution is cheap
+	let tomorrow_due = local_to_utc(zone, today_wall + chrono::Duration::days(1));
+	let next = match (today_due, tomorrow_due) {
+		(Some(today), _) if today > now => today,
+		(_, Some(tomorrow)) => tomorrow,
+		// pathological zones where neither resolves: keep the old
+		// 24h-later behavior so the loop always has a deadline
+		_ => now + chrono::Duration::days(1),
 	};
 	(next - now).to_std().unwrap_or(MAX_SLEEP)
 }
@@ -148,7 +206,17 @@ mod tests {
 
 	use super::{parse_time, until_next_due};
 	use crate::commands::settings::parse_hhmm;
+	use chrono_tz::Tz;
 	use std::time::Duration;
+
+	/// A wall time in the runner's OS zone, as a UTC instant (the zone
+	/// the previous OS-local behavior ran in).
+	fn os_local_wall(y: i32, m: u32, d: i32, h: u32, min: u32) -> chrono::DateTime<chrono::Utc> {
+		chrono::Local
+			.with_ymd_and_hms(y, m, d as u32, h, min, 0)
+			.unwrap()
+			.with_timezone(&chrono::Utc)
+	}
 
 	/// The reminder loop and the settings form must agree on what a valid
 	/// time looks like: parse_time accepts exactly what parse_hhmm (the
@@ -169,20 +237,16 @@ mod tests {
 	#[test]
 	fn next_due_is_today_before_the_time_and_tomorrow_after() {
 		// 08:00 with a 09:00 reminder -> due in an hour
-		let morning = chrono::Local
-			.with_ymd_and_hms(2026, 9, 30, 8, 0, 0)
-			.unwrap();
-		let until = until_next_due(morning, 9, 0);
+		let morning = os_local_wall(2026, 9, 30, 8, 0);
+		let until = until_next_due(None, morning, 9, 0);
 		assert!(
 			until >= Duration::from_secs(59 * 60) && until <= Duration::from_secs(61 * 60),
 			"~1h until due, got {until:?}"
 		);
 
 		// 10:00 with a 09:00 reminder -> due tomorrow 09:00 (23h)
-		let after = chrono::Local
-			.with_ymd_and_hms(2026, 9, 30, 10, 0, 0)
-			.unwrap();
-		let until = until_next_due(after, 9, 0);
+		let after = os_local_wall(2026, 9, 30, 10, 0);
+		let until = until_next_due(None, after, 9, 0);
 		assert!(
 			until >= Duration::from_secs(23 * 3600 - 60)
 				&& until <= Duration::from_secs(23 * 3600 + 60),
@@ -190,11 +254,57 @@ mod tests {
 		);
 
 		// exactly on the minute counts as due already (>= comparison)
-		let exact = chrono::Local
-			.with_ymd_and_hms(2026, 9, 30, 9, 0, 0)
-			.unwrap();
-		let until = until_next_due(exact, 9, 0);
+		let exact = os_local_wall(2026, 9, 30, 9, 0);
+		let until = until_next_due(None, exact, 9, 0);
 		assert_eq!(until.as_secs(), 24 * 3600, "due now -> tomorrow");
+	}
+
+	#[test]
+	fn next_due_runs_in_the_stored_zone_not_the_os_zone() {
+		// 2026-09-30 20:00 UTC is 2026-10-01 05:00 in Tokyo (UTC+9):
+		// a 09:00 Tokyo reminder is due today-in-Tokyo at 09:00 JST
+		// (= 00:00 UTC), four hours away. Under the OS zone of a
+		// western runner it would be ~17h away instead.
+		let tokyo: Option<Tz> = Some(chrono_tz::Asia::Tokyo);
+		let now = chrono::Utc.with_ymd_and_hms(2026, 9, 30, 20, 0, 0).unwrap();
+		assert_eq!(until_next_due(tokyo, now, 9, 0).as_secs(), 4 * 3600);
+		// the same instant under a UTC-4 zone: 16:00 local, due tomorrow
+		// 09:00 local = 13:00 UTC, 17h away
+		let ny: Option<Tz> = Some(chrono_tz::America::New_York);
+		assert_eq!(until_next_due(ny, now, 9, 0).as_secs(), 17 * 3600);
+	}
+
+	#[test]
+	fn next_due_in_a_gap_time_fires_at_the_earliest_instant_after_the_gap() {
+		// America/New_York springs forward on 2027-03-14: 02:00 jumps to
+		// 03:00, so a 02:30 reminder time does not exist. At 01:00 EST
+		// (= 06:00 UTC) the next due instant is 03:00 EDT (= 07:00 UTC):
+		// one real hour later, never skipped to the next day.
+		let ny: Option<Tz> = Some(chrono_tz::America::New_York);
+		let now = chrono::Utc.with_ymd_and_hms(2027, 3, 14, 6, 0, 0).unwrap();
+		let until = until_next_due(ny, now, 2, 30);
+		assert_eq!(
+			until.as_secs(),
+			3600,
+			"gap -> earliest instant after the gap"
+		);
+	}
+
+	#[test]
+	fn next_due_in_a_fold_time_fires_once_at_the_earliest_instant() {
+		// America/New_York falls back on 2027-11-07: 02:00 jumps back to
+		// 01:00, so 01:30 happens twice (01:30 EDT and 01:30 EST). At
+		// 00:30 EDT (= 04:30 UTC) the next due instant is the FIRST
+		// 01:30 (EDT, = 05:30 UTC): one hour away, one instant only -
+		// the once-per-day bookkeeping keeps it from firing twice.
+		let ny: Option<Tz> = Some(chrono_tz::America::New_York);
+		let now = chrono::Utc.with_ymd_and_hms(2027, 11, 7, 4, 30, 0).unwrap();
+		let until = until_next_due(ny, now, 1, 30);
+		assert_eq!(
+			until.as_secs(),
+			3600,
+			"fold -> earliest of the two instants"
+		);
 	}
 
 	#[test]
@@ -239,9 +349,7 @@ mod tests {
 	fn raw_next_due_is_never_capped() {
 		// 23h59m until tomorrow's reminder is returned uncapped; the
 		// loop applies its own 15-minute cap on top
-		let late = chrono::Local
-			.with_ymd_and_hms(2026, 9, 30, 23, 59, 0)
-			.unwrap();
-		assert_eq!(until_next_due(late, 23, 58).as_secs(), 24 * 3600 - 60);
+		let late = os_local_wall(2026, 9, 30, 23, 59);
+		assert_eq!(until_next_due(None, late, 23, 58).as_secs(), 24 * 3600 - 60);
 	}
 }
