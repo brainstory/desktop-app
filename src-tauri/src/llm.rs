@@ -631,6 +631,111 @@ impl ThinkFilter {
 	}
 }
 
+/// Hard cap on a single SSE event, delimiter included. Real events
+/// carry a few token bytes in a JSON envelope, so anything near this
+/// size means the endpoint is not speaking SSE (e.g. an HTML error
+/// page or a CRLF-averse parser deadlock). 1 MiB.
+const MAX_SSE_EVENT_BYTES: usize = 1 << 20;
+/// Hard cap on the accumulated completion text across all events of
+/// one generation. Far above the largest supported max_tokens budget
+/// (4096 tokens), yet a valid-event-forever endpoint cannot grow
+/// memory (or the streamed transcript) without end. 8 MiB.
+const MAX_OUTPUT_BYTES: usize = 8 << 20;
+/// Overall budget for one external generation: request send, SSE
+/// stream and JSON fallback combined. Generous (15 minutes) so slow
+/// local endpoints and long completions always fit; a stalled
+/// endpoint is caught much earlier by the per-chunk idle timeout,
+/// and a trickling one is stopped here.
+const GENERATION_OVERALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Every wait phase (request send, SSE chunk, body read) re-checks
+/// the cancel flag at least this often, so cancelling a generation
+/// is honored well under a second instead of waiting out the idle
+/// timeout.
+const CANCEL_TICK: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Bounds for one external generation. Production values are the
+/// generous defaults above; tests inject small ones through
+/// [`ExternalLlm::generate_with_limits`].
+#[derive(Clone, Copy)]
+struct GenerationLimits {
+	/// Cap on a single SSE event, delimiter included. Checked with
+	/// `>` so an event landing exactly at the cap is still valid.
+	max_event_bytes: usize,
+	/// Cap on the accumulated completion text, also checked with `>`
+	/// before extending the output or invoking `on_chunk`.
+	max_output_bytes: usize,
+	/// Overall budget covering the whole generate call, including the
+	/// JSON fallback.
+	overall_budget: std::time::Duration,
+	/// Cancel-flag polling interval for every wait phase.
+	cancel_tick: std::time::Duration,
+}
+
+impl GenerationLimits {
+	fn production() -> Self {
+		Self {
+			max_event_bytes: MAX_SSE_EVENT_BYTES,
+			max_output_bytes: MAX_OUTPUT_BYTES,
+			overall_budget: GENERATION_OVERALL_BUDGET,
+			cancel_tick: CANCEL_TICK,
+		}
+	}
+}
+
+/// Why a bounded wait ended without its future completing. Kept
+/// distinguishable from the completion path and from each other so
+/// cap/deadline errors never masquerade as user cancellation.
+enum WaitEnd {
+	/// The user cancelled the generation.
+	Cancelled,
+	/// The overall generation budget ran out.
+	Deadline,
+}
+
+/// Wait for `fut` until `deadline`, re-checking `cancel` every
+/// `tick`. This keeps the existing AtomicBool cancellation API while
+/// making every wait phase respond to it promptly (the tick is far
+/// below the idle timeout) instead of only between reads.
+async fn wait_bounded<F: std::future::Future>(
+	fut: F,
+	deadline: tokio::time::Instant,
+	cancel: &AtomicBool,
+	tick: std::time::Duration,
+) -> Result<F::Output, WaitEnd> {
+	tokio::pin!(fut);
+	let mut next_tick = tokio::time::Instant::now() + tick;
+	loop {
+		tokio::select! {
+			biased;
+			_ = tokio::time::sleep_until(next_tick.min(deadline)) => {
+				if tokio::time::Instant::now() >= deadline {
+					return Err(WaitEnd::Deadline);
+				}
+				if cancel.load(Ordering::Relaxed) {
+					return Err(WaitEnd::Cancelled);
+				}
+				next_tick = tokio::time::Instant::now() + tick;
+			}
+			out = &mut fut => return Ok(out),
+		}
+	}
+}
+
+/// Cap/deadline errors, distinguishable from user cancellation
+/// ("generation cancelled") and never echoing request headers or raw
+/// bodies.
+fn overall_budget_error(budget: std::time::Duration) -> String {
+	format!("external generation exceeded its overall time budget ({budget:?})")
+}
+
+fn event_cap_error(cap: usize) -> String {
+	format!("external endpoint sent a single SSE event larger than {cap} bytes")
+}
+
+fn output_cap_error(cap: usize) -> String {
+	format!("external endpoint generated more than {cap} bytes of completion text")
+}
+
 /// OpenAI-compatible chat completion endpoint (Ollama, llama.cpp server,
 /// LM Studio, vLLM, ...). Streams tokens over SSE.
 pub struct ExternalLlm {
@@ -648,9 +753,6 @@ impl ExternalLlm {
 	/// Overall budget for reading a non-streamed JSON completion (the
 	/// server has already generated it when the headers arrive).
 	const JSON_BODY_TIMEOUT_SECS: u64 = 120;
-	/// SSE events are tiny; a bigger buffer means the endpoint isn't
-	/// speaking SSE (e.g. CRLF-averse parser deadlock or an HTML error page).
-	const MAX_SSE_BUFFER: usize = 1_000_000;
 
 	pub fn new(base_url: &str, api_key: &str, model: &str) -> Result<Self, String> {
 		Ok(Self {
@@ -693,7 +795,30 @@ impl ExternalLlm {
 		messages: &[ChatMessage],
 		cancel: &AtomicBool,
 		max_tokens: u32,
+		on_chunk: impl FnMut(String) + Send,
+	) -> Result<(String, Option<usize>), String> {
+		self.generate_with_limits(
+			system,
+			messages,
+			cancel,
+			max_tokens,
+			on_chunk,
+			GenerationLimits::production(),
+		)
+		.await
+	}
+
+	/// [`ExternalLlm::generate`] with injectable bounds, so tests can
+	/// exercise the caps and the overall budget without waiting out
+	/// the generous production values.
+	async fn generate_with_limits(
+		&self,
+		system: &str,
+		messages: &[ChatMessage],
+		cancel: &AtomicBool,
+		max_tokens: u32,
 		mut on_chunk: impl FnMut(String) + Send,
+		limits: GenerationLimits,
 	) -> Result<(String, Option<usize>), String> {
 		// (text, prompt-token count). External endpoints don't report their
 		// prompt tokenization, hence the None.
@@ -720,27 +845,30 @@ impl ExternalLlm {
 			request = request.bearer_auth(&self.api_key);
 		}
 
-		let response = tokio::time::timeout(
-			std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS),
-			request.send(),
-		)
-		.await
-		.map_err(|_| {
-			format!(
-				"external endpoint stalled (no response for {}s)",
-				Self::CHUNK_IDLE_TIMEOUT_SECS
-			)
-		})?
-		.map_err(|e| format!("request failed: {e}"))?;
+		// The overall budget covers every phase of the call: request
+		// send, headers, the SSE stream and the JSON fallback.
+		let overall = tokio::time::Instant::now() + limits.overall_budget;
+		let idle = std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS);
+		let send_deadline = (tokio::time::Instant::now() + idle).min(overall);
+		let response =
+			match wait_bounded(request.send(), send_deadline, cancel, limits.cancel_tick).await {
+				Ok(Ok(response)) => response,
+				Ok(Err(e)) => return Err(format!("request failed: {e}")),
+				Err(WaitEnd::Cancelled) => return Err("generation cancelled".into()),
+				Err(WaitEnd::Deadline) => {
+					return Err(if tokio::time::Instant::now() >= overall {
+						overall_budget_error(limits.overall_budget)
+					} else {
+						format!(
+							"external endpoint stalled (no response for {}s)",
+							Self::CHUNK_IDLE_TIMEOUT_SECS
+						)
+					});
+				}
+			};
 		if !response.status().is_success() {
 			let status = response.status();
-			let body = read_body_capped(
-				response,
-				64 * 1024,
-				Self::CHUNK_IDLE_TIMEOUT_SECS,
-				Self::ERROR_BODY_TIMEOUT_SECS,
-			)
-			.await;
+			let body = Self::read_error_body(response, overall, cancel, &limits).await?;
 			return Err(map_provider_error(status.as_u16(), &body));
 		}
 		let content_type = response
@@ -752,29 +880,37 @@ impl ExternalLlm {
 		if content_type.contains("application/json") {
 			// A server that ignores "stream": true answers with one plain
 			// chat.completion object; take it as a single chunk.
-			let body = read_body_capped(
+			let deadline = (tokio::time::Instant::now()
+				+ std::time::Duration::from_secs(Self::JSON_BODY_TIMEOUT_SECS))
+			.min(overall);
+			let body = match read_body_bounded(
 				response,
-				Self::MAX_SSE_BUFFER,
-				Self::CHUNK_IDLE_TIMEOUT_SECS,
-				Self::JSON_BODY_TIMEOUT_SECS,
+				limits.max_event_bytes,
+				idle,
+				deadline,
+				Some(overall),
+				cancel,
+				limits.cancel_tick,
 			)
-			.await;
+			.await
+			{
+				Ok(body) => body,
+				Err(WaitEnd::Cancelled) => return Err("generation cancelled".into()),
+				Err(WaitEnd::Deadline) => return Err(overall_budget_error(limits.overall_budget)),
+			};
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
 			}
 			let content = json_completion_content(&body)?;
 			ensure_usable_completion(&content)?;
+			if content.len() > limits.max_output_bytes {
+				return Err(output_cap_error(limits.max_output_bytes));
+			}
 			on_chunk(content.clone());
 			return Ok((content, None));
 		}
 		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
-			let body = read_body_capped(
-				response,
-				64 * 1024,
-				Self::CHUNK_IDLE_TIMEOUT_SECS,
-				Self::ERROR_BODY_TIMEOUT_SECS,
-			)
-			.await;
+			let body = Self::read_error_body(response, overall, cancel, &limits).await?;
 			return Err(format!(
 				"endpoint did not return an SSE stream (content-type {content_type}): {}",
 				truncate_body(&body)
@@ -790,31 +926,42 @@ impl ExternalLlm {
 			if cancel.load(Ordering::Relaxed) {
 				return Err("generation cancelled".into());
 			}
-			let chunk = match tokio::time::timeout(
-				std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS),
-				stream.next(),
-			)
-			.await
-			{
-				Err(_) => {
-					return Err(format!(
-						"external endpoint stalled (no data for {}s)",
-						Self::CHUNK_IDLE_TIMEOUT_SECS
-					))
-				}
-				Ok(Some(Ok(c))) => c,
-				Ok(Some(Err(e))) => return Err(format!("stream interrupted: {e}")),
-				Ok(None) => break,
-			};
+			if tokio::time::Instant::now() >= overall {
+				return Err(overall_budget_error(limits.overall_budget));
+			}
+			let wait_until = (tokio::time::Instant::now() + idle).min(overall);
+			let chunk =
+				match wait_bounded(stream.next(), wait_until, cancel, limits.cancel_tick).await {
+					Ok(Some(Ok(c))) => c,
+					Ok(Some(Err(e))) => return Err(format!("stream interrupted: {e}")),
+					Ok(None) => break,
+					Err(WaitEnd::Cancelled) => return Err("generation cancelled".into()),
+					Err(WaitEnd::Deadline) => {
+						return Err(if tokio::time::Instant::now() >= overall {
+							overall_budget_error(limits.overall_budget)
+						} else {
+							format!(
+								"external endpoint stalled (no data for {}s)",
+								Self::CHUNK_IDLE_TIMEOUT_SECS
+							)
+						});
+					}
+				};
 			buffer.extend_from_slice(&chunk);
-			if buffer.len() > Self::MAX_SSE_BUFFER && find_event_end(&buffer).is_none() {
-				return Err("external endpoint sent an oversized non-SSE response".into());
+			// Bound the pending (still undelimited) event...
+			if buffer.len() > limits.max_event_bytes && find_event_end(&buffer).is_none() {
+				return Err(event_cap_error(limits.max_event_bytes));
 			}
 
+			// ...and every complete one, delimiter included, so a huge
+			// event is rejected however the chunks happened to frame it.
 			while let Some(pos) = find_event_end(&buffer) {
+				if pos > limits.max_event_bytes {
+					return Err(event_cap_error(limits.max_event_bytes));
+				}
 				let event_bytes: Vec<u8> = buffer.drain(..pos).collect();
 				let event = String::from_utf8_lossy(&event_bytes);
-				if consume_sse_event(&event, &mut output, &mut on_chunk)? {
+				if consume_sse_event(&event, &mut output, &mut on_chunk, limits.max_output_bytes)? {
 					ensure_usable_completion(&output)?;
 					return Ok((output, None));
 				}
@@ -825,13 +972,45 @@ impl ExternalLlm {
 		// don't drop the final buffered event.
 		if !buffer.is_empty() {
 			let tail = String::from_utf8_lossy(&buffer);
-			if consume_sse_event(&tail, &mut output, &mut on_chunk)? {
+			if consume_sse_event(&tail, &mut output, &mut on_chunk, limits.max_output_bytes)? {
 				ensure_usable_completion(&output)?;
 				return Ok((output, None));
 			}
 		}
 		ensure_usable_completion(&output)?;
 		Ok((output, None))
+	}
+
+	/// Read a display-only (error or non-SSE) body of at most 64 KiB
+	/// under cancellation and the overall budget. A phase deadline or
+	/// transport end keeps whatever arrived, so the status error can
+	/// still be reported; only cancellation and the overall budget
+	/// abort the generation outright.
+	async fn read_error_body(
+		response: reqwest::Response,
+		overall: tokio::time::Instant,
+		cancel: &AtomicBool,
+		limits: &GenerationLimits,
+	) -> Result<String, String> {
+		let idle = std::time::Duration::from_secs(Self::CHUNK_IDLE_TIMEOUT_SECS);
+		let deadline = (tokio::time::Instant::now()
+			+ std::time::Duration::from_secs(Self::ERROR_BODY_TIMEOUT_SECS))
+		.min(overall);
+		match read_body_bounded(
+			response,
+			64 * 1024,
+			idle,
+			deadline,
+			Some(overall),
+			cancel,
+			limits.cancel_tick,
+		)
+		.await
+		{
+			Ok(body) => Ok(body),
+			Err(WaitEnd::Cancelled) => Err("generation cancelled".into()),
+			Err(WaitEnd::Deadline) => Err(overall_budget_error(limits.overall_budget)),
+		}
 	}
 }
 
@@ -840,30 +1019,74 @@ impl ExternalLlm {
 /// hang the caller (not even by trickling a byte just inside the idle
 /// window forever) nor exhaust memory. Returns whatever arrived
 /// (lossy-decoded) until the cap, the stream end, or a deadline;
-/// display-only bodies should use a small cap.
+/// display-only bodies should use a small cap. A body that is exactly
+/// `cap` bytes is valid and arrives whole.
 pub(crate) async fn read_body_capped(
 	response: reqwest::Response,
 	cap: usize,
 	idle_timeout_secs: u64,
 	total_timeout_secs: u64,
 ) -> String {
+	// never cancelled, no overall budget beyond its own total deadline
+	let not_cancelled = AtomicBool::new(false);
+	let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(total_timeout_secs);
+	read_body_bounded(
+		response,
+		cap,
+		std::time::Duration::from_secs(idle_timeout_secs),
+		deadline,
+		None,
+		&not_cancelled,
+		CANCEL_TICK,
+	)
+	.await
+	.unwrap_or_default()
+}
+
+/// Cancellation- and budget-aware body reader behind
+/// [`read_body_capped`]. Ok always means "kept what arrived" (stream
+/// end, cap reached, idle/phase deadline, transport error); only the
+/// overall generation budget (`overall`) or the cancel flag turns
+/// into an Err, so cap/deadline outcomes stay distinguishable from
+/// user cancellation. Cap arithmetic is checked and exactly-at-cap
+/// bodies are accepted.
+async fn read_body_bounded(
+	response: reqwest::Response,
+	cap: usize,
+	idle: std::time::Duration,
+	phase_deadline: tokio::time::Instant,
+	overall: Option<tokio::time::Instant>,
+	cancel: &AtomicBool,
+	tick: std::time::Duration,
+) -> Result<String, WaitEnd> {
 	use futures_util::StreamExt;
 	let mut stream = response.bytes_stream();
 	let mut body: Vec<u8> = Vec::new();
-	let idle = std::time::Duration::from_secs(idle_timeout_secs);
-	let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(total_timeout_secs);
-	while body.len() < cap {
-		let wait_until = deadline.min(tokio::time::Instant::now() + idle);
-		let chunk = match tokio::time::timeout_at(wait_until, stream.next()).await {
-			Err(_) => break, // stalled or overdue: keep what arrived so far
+	// None (or zero) exactly at the cap: a valid, complete body
+	while let Some(room) = cap.checked_sub(body.len()).filter(|room| *room > 0) {
+		let mut wait_until = phase_deadline.min(tokio::time::Instant::now() + idle);
+		if let Some(overall) = overall {
+			wait_until = wait_until.min(overall);
+		}
+		let chunk = match wait_bounded(stream.next(), wait_until, cancel, tick).await {
 			Ok(Some(Ok(c))) => c,
-			Ok(Some(Err(_))) => break, // transport error: same
+			Ok(Some(Err(_))) => break, // transport error: keep what arrived
 			Ok(None) => break,         // stream end
+			Err(WaitEnd::Cancelled) => return Err(WaitEnd::Cancelled),
+			Err(WaitEnd::Deadline) => {
+				// only the overall budget aborts the generation; an
+				// idle/phase deadline keeps the partial body, like
+				// read_body_capped always did
+				if overall.is_some_and(|o| tokio::time::Instant::now() >= o) {
+					return Err(WaitEnd::Deadline);
+				}
+				break;
+			}
 		};
-		let room = cap - body.len();
-		body.extend_from_slice(&chunk[..room.min(chunk.len())]);
+		let take = room.min(chunk.len());
+		body.extend_from_slice(&chunk[..take]);
 	}
-	String::from_utf8_lossy(&body).into_owned()
+	Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// The assistant text of a non-streamed chat.completion body
@@ -902,12 +1125,14 @@ fn ensure_usable_completion(output: &str) -> Result<(), String> {
 	Ok(())
 }
 
-/// Parse one SSE event's `data:` lines, appending content deltas. Returns
-/// `Ok(true)` when the endpoint signalled `[DONE]`.
+/// Parse one SSE event's `data:` lines, appending content deltas
+/// under the accumulated-output cap. Returns `Ok(true)` when the
+/// endpoint signalled `[DONE]`.
 fn consume_sse_event(
 	event: &str,
 	output: &mut String,
 	on_chunk: &mut impl FnMut(String),
+	max_output_bytes: usize,
 ) -> Result<bool, String> {
 	for line in event.lines() {
 		let line = line.trim();
@@ -919,16 +1144,14 @@ fn consume_sse_event(
 			if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
 				if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
 					if !delta.is_empty() {
-						output.push_str(delta);
-						on_chunk(delta.to_string());
+						append_capped(delta, output, on_chunk, max_output_bytes)?;
 					}
 				} else if let Some(content) = value["choices"][0]["message"]["content"].as_str() {
 					// some servers ignore "stream": true and answer with
 					// one plain completion object; treat it as a single
 					// (complete) chunk instead of silently empty output
 					if !content.is_empty() {
-						output.push_str(content);
-						on_chunk(content.to_string());
+						append_capped(content, output, on_chunk, max_output_bytes)?;
 					}
 				}
 				if let Some(err) = value["error"]["message"].as_str() {
@@ -938,6 +1161,28 @@ fn consume_sse_event(
 		}
 	}
 	Ok(false)
+}
+
+/// Append one completion piece under the accumulated-output cap. The
+/// cap uses checked lengths and is enforced BEFORE the output buffer
+/// grows or `on_chunk` runs, so a piece landing exactly at the cap is
+/// still accepted while a piece past it never streams partially.
+fn append_capped(
+	piece: &str,
+	output: &mut String,
+	on_chunk: &mut impl FnMut(String),
+	max_output_bytes: usize,
+) -> Result<(), String> {
+	let next = output
+		.len()
+		.checked_add(piece.len())
+		.ok_or_else(|| output_cap_error(max_output_bytes))?;
+	if next > max_output_bytes {
+		return Err(output_cap_error(max_output_bytes));
+	}
+	output.push_str(piece);
+	on_chunk(piece.to_string());
+	Ok(())
 }
 
 /// Find the end of the next SSE event, tolerating both `\n\n` and
@@ -1097,6 +1342,15 @@ mod tests {
 		assert!(body.chars().all(|c| c == 'x'));
 	}
 
+	#[tokio::test]
+	async fn read_body_capped_accepts_a_body_exactly_at_the_cap() {
+		// a valid body that is exactly `cap` bytes must arrive whole
+		let url = serve_raw(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789".to_vec());
+		let response = reqwest::Client::new().get(&url).send().await.expect("send");
+		let body = read_body_capped(response, 10, 5, 5).await;
+		assert_eq!(body, "0123456789", "a body exactly at the cap is valid");
+	}
+
 	#[test]
 	fn consume_sse_event_accepts_non_streaming_completions() {
 		// a server that ignored stream:true replies with one data event
@@ -1104,8 +1358,13 @@ mod tests {
 		let event = "data: {\"choices\":[{\"message\":{\"content\":\"hello there\"}}]}";
 		let mut output = String::new();
 		let mut chunks = Vec::new();
-		let done =
-			super::consume_sse_event(event, &mut output, &mut |c| chunks.push(c)).expect("parse");
+		let done = super::consume_sse_event(
+			event,
+			&mut output,
+			&mut |c| chunks.push(c),
+			super::MAX_OUTPUT_BYTES,
+		)
+		.expect("parse");
 		assert!(!done, "no [DONE] marker yet");
 		assert_eq!(output, "hello there");
 		assert_eq!(chunks, vec!["hello there".to_string()]);
@@ -1299,13 +1558,20 @@ mod sse_tests {
 			"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}",
 			&mut output,
 			&mut |c| chunks.push(c),
+			super::MAX_OUTPUT_BYTES,
 		)
 		.expect("parse");
 		assert!(!done);
 		assert_eq!(output, "ab");
 		assert_eq!(chunks, vec!["a".to_string(), "b".to_string()]);
 
-		let done = consume_sse_event("data: [DONE]", &mut output, &mut |_| {}).expect("parse");
+		let done = consume_sse_event(
+			"data: [DONE]",
+			&mut output,
+			&mut |_| {},
+			super::MAX_OUTPUT_BYTES,
+		)
+		.expect("parse");
 		assert!(done);
 	}
 
@@ -1316,6 +1582,7 @@ mod sse_tests {
 			"data: {\"error\":{\"message\":\"content filter flagged this\"}}",
 			&mut output,
 			&mut |_| {},
+			super::MAX_OUTPUT_BYTES,
 		)
 		.expect_err("error objects must surface");
 		assert!(err.contains("content filter"), "unexpected: {err}");
@@ -1338,7 +1605,7 @@ mod sse_tests {
 
 #[cfg(test)]
 mod external_stream_tests {
-	use super::{read_body_capped, ExternalLlm};
+	use super::{read_body_capped, ExternalLlm, GenerationLimits};
 
 	/// Minimal loopback SSE server: writes the given events after the
 	/// request head, keeps the socket open briefly.
@@ -1708,5 +1975,366 @@ mod external_stream_tests {
 			.expect("send");
 		let body = read_body_capped(response, 64 * 1024, 5, 5).await;
 		assert_eq!(body, "nope");
+	}
+
+	/// Loopback SSE server that keeps writing valid delta events every
+	/// `interval_ms`, never ending the stream, until the client goes
+	/// away (or ~6 s pass so the fixture thread always terminates).
+	fn serve_trickle_sse(interval_ms: u64) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let _ =
+					sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+				for _ in 0..240 {
+					let event = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
+					if sock.write_all(event.as_bytes()).is_err() {
+						break;
+					}
+					let _ = sock.flush();
+					std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+				}
+			}
+		});
+		format!("http://{addr}/v1")
+	}
+
+	#[tokio::test]
+	async fn external_generate_trickling_valid_events_hits_the_overall_budget() {
+		// F25: every event is valid and arrives well inside the idle
+		// timeout, so a trickling endpoint could keep the stream alive
+		// indefinitely. The (tiny, test-injected) overall budget must
+		// end it on its own; production uses the documented 15 minutes.
+		let url = serve_trickle_sse(25);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let started = std::time::Instant::now();
+		let limits = GenerationLimits {
+			overall_budget: std::time::Duration::from_millis(400),
+			cancel_tick: std::time::Duration::from_millis(20),
+			..GenerationLimits::production()
+		};
+		let result = tokio::time::timeout(
+			std::time::Duration::from_secs(5),
+			client.generate_with_limits("", &[], &cancel, 8, |_| {}, limits),
+		)
+		.await
+		.expect("the overall budget must end a trickling stream");
+		let err = result.expect_err("a never-ending stream is an error");
+		assert!(
+			err.contains("overall time budget"),
+			"expected an overall-budget error, got: {err}"
+		);
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(2),
+			"the budget must fire long before the idle timeout, took {:?}",
+			started.elapsed()
+		);
+	}
+
+	#[tokio::test]
+	async fn external_generate_caps_accumulated_output_across_many_small_events() {
+		// F25: every single event is small and valid, but together the
+		// deltas exceed the output cap; generation must stop instead
+		// of accepting an unbounded completion. Events are written
+		// (and flushed) one by one so the client sees small chunks,
+		// like a real streaming provider.
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let event = format!(
+					"data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+					"a".repeat(990)
+				);
+				let _ =
+					sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+				// ~9 MB of valid events
+				for i in 0..9_000 {
+					if i % 200 == 0 {
+						std::thread::sleep(std::time::Duration::from_millis(1));
+					}
+					if sock.write_all(event.as_bytes()).is_err() {
+						return;
+					}
+					let _ = sock.flush();
+				}
+				let _ = sock.write_all(b"data: [DONE]\n\n");
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let mut streamed = 0usize;
+		let err = match client
+			.generate("", &[], &cancel, 8, |c| streamed += c.len())
+			.await
+		{
+			Ok((output, _)) => panic!(
+				"output beyond the cap must fail: accepted {} bytes of completion",
+				output.len()
+			),
+			Err(err) => err,
+		};
+		assert!(
+			err.contains("bytes of completion text"),
+			"unexpected: {err}"
+		);
+		assert!(
+			streamed <= 8 * 1024 * 1024,
+			"no content may stream past the cap ({streamed} bytes)"
+		);
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_one_huge_delimited_event() {
+		// F25: the size check only rejected buffers with NO delimiter,
+		// so a complete event whose delimiter is already buffered
+		// passed straight through. The event is delivered in two
+		// pieces: an undelimited prefix under the cap, then the rest
+		// (delimiter included) as one final piece.
+		let mk_event = |n: usize| {
+			format!(
+				"data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+				"a".repeat(n)
+			)
+		};
+		let overhead = mk_event(1).len() - 1;
+		// just over the 1 MiB event cap, with the split point under
+		// the legacy 1_000_000 undelimited bound
+		let total = (1 << 20) + 600;
+		let event = mk_event(total - overhead);
+		assert_eq!(event.len(), total, "fixture sizes the event exactly");
+		let split = 999_999;
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let _ =
+					sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+				let _ = sock.write_all(&event.as_bytes()[..split]);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(150));
+				let _ = sock.write_all(&event.as_bytes()[split..]);
+				let _ = sock.write_all(b"data: [DONE]\n\n");
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = match client.generate("", &[], &cancel, 8, |_| {}).await {
+			Ok((output, _)) => panic!(
+				"a single huge delimited event must fail: accepted {} bytes of completion",
+				output.len()
+			),
+			Err(err) => err,
+		};
+		assert!(err.contains("single SSE event"), "unexpected: {err}");
+	}
+
+	/// Loopback server that accepts the connection and then never
+	/// writes anything: an endpoint hanging before responding.
+	fn serve_silent_endpoint() -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::Read;
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				std::thread::sleep(std::time::Duration::from_millis(3_000));
+			}
+		});
+		format!("http://{addr}/v1")
+	}
+
+	/// Loopback server that answers `head` immediately and then never
+	/// sends any body bytes, holding the connection open: an endpoint
+	/// hanging mid-body.
+	fn serve_head_then_silence(head: &'static str) -> String {
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut buf = [0u8; 4096];
+				let _ = sock.read(&mut buf); // drain the request head
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(3_000));
+			}
+		});
+		format!("http://{addr}/v1")
+	}
+
+	/// F25 regression core: the cancel flag is raised 150 ms in, when
+	/// the request head has surely been answered and the body read is
+	/// the phase being waited on. The generation must return
+	/// "generation cancelled" within the ~150 ms cancel tick, not wait
+	/// out the 90 s idle timeout.
+	async fn assert_generation_cancels_promptly(url: String) {
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let flag = cancel.clone();
+		tokio::spawn(async move {
+			tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+			flag.store(true, std::sync::atomic::Ordering::Relaxed);
+		});
+		let started = std::time::Instant::now();
+		let result = tokio::time::timeout(
+			std::time::Duration::from_secs(2),
+			client.generate("", &[], &cancel, 8, |_| {}),
+		)
+		.await
+		.expect("cancel must return well before the idle timeout");
+		let err = result.expect_err("a cancelled generation is an error");
+		assert_eq!(
+			err, "generation cancelled",
+			"cancellation must stay distinguishable from other errors"
+		);
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(1),
+			"cancel must be honored within the tick, took {:?}",
+			started.elapsed()
+		);
+	}
+
+	#[tokio::test]
+	async fn external_generate_cancel_during_request_send_returns_promptly() {
+		assert_generation_cancels_promptly(serve_silent_endpoint()).await;
+	}
+
+	#[tokio::test]
+	async fn external_generate_cancel_during_sse_body_read_returns_promptly() {
+		assert_generation_cancels_promptly(serve_head_then_silence(
+			"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+		))
+		.await;
+	}
+
+	#[tokio::test]
+	async fn external_generate_cancel_during_json_body_read_returns_promptly() {
+		assert_generation_cancels_promptly(serve_head_then_silence(
+			"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n",
+		))
+		.await;
+	}
+
+	#[tokio::test]
+	async fn external_generate_cancel_during_error_body_read_returns_promptly() {
+		assert_generation_cancels_promptly(serve_head_then_silence(
+			"HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n",
+		))
+		.await;
+	}
+
+	#[tokio::test]
+	async fn external_generate_accepts_an_event_exactly_at_the_event_cap() {
+		// caps are checked with `>`: a complete event whose length,
+		// delimiter included, lands exactly on the cap is valid
+		let mk_event = |n: usize| {
+			format!(
+				"data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+				"a".repeat(n)
+			)
+		};
+		let cap = 4_096usize;
+		let n = 1 + (cap - mk_event(1).len()); // pad to exactly the cap
+		let event = mk_event(n);
+		assert_eq!(event.len(), cap, "fixture sizes the event exactly");
+		let url = serve_sse(vec![event, "data: [DONE]\n\n".into()]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let limits = GenerationLimits {
+			max_event_bytes: cap,
+			..GenerationLimits::production()
+		};
+		let (output, _) = client
+			.generate_with_limits("", &[], &cancel, 8, |_| {}, limits)
+			.await
+			.expect("an event exactly at the cap is valid");
+		assert_eq!(output.len(), n);
+	}
+
+	#[tokio::test]
+	async fn external_generate_accepts_output_exactly_at_the_output_cap() {
+		// 2 + 4 + 2 = 8 bytes of deltas land exactly on the cap
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"ab\"}}]}\n\n".into(),
+			"data: {\"choices\":[{\"delta\":{\"content\":\"🧠\"}}]}\n\n".into(),
+			"data: {\"choices\":[{\"delta\":{\"content\":\"cd\"}}]}\n\n".into(),
+			"data: [DONE]\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let limits = GenerationLimits {
+			max_output_bytes: 8,
+			..GenerationLimits::production()
+		};
+		let (output, _) = client
+			.generate_with_limits("", &[], &cancel, 8, |_| {}, limits)
+			.await
+			.expect("output landing exactly at the cap is valid");
+		assert_eq!(output, "ab🧠cd");
+	}
+
+	#[tokio::test]
+	async fn external_generate_multibyte_delta_at_the_output_cap_boundary() {
+		// the cap counts bytes; a 4-byte character whose delta lands
+		// exactly at the cap must arrive intact, and one byte past it
+		// must reject the WHOLE delta (never a partial character)
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"ab\"}}]}\n\n".into(),
+			"data: {\"choices\":[{\"delta\":{\"content\":\"🧠\"}}]}\n\n".into(),
+			"data: [DONE]\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let at_limit = GenerationLimits {
+			max_output_bytes: 6, // "ab" (2) + "🧠" (4)
+			..GenerationLimits::production()
+		};
+		let (output, _) = client
+			.generate_with_limits("", &[], &cancel, 8, |_| {}, at_limit)
+			.await
+			.expect("the emoji lands exactly at the cap");
+		assert_eq!(output, "ab🧠");
+		assert_eq!(output.chars().count(), 3, "no off-by-one at the boundary");
+
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"ab\"}}]}\n\n".into(),
+			"data: {\"choices\":[{\"delta\":{\"content\":\"🧠\"}}]}\n\n".into(),
+			"data: [DONE]\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let one_past = GenerationLimits {
+			max_output_bytes: 5, // "ab" fits, "🧠" would make 6
+			..GenerationLimits::production()
+		};
+		let mut chunks = Vec::new();
+		let err = client
+			.generate_with_limits("", &[], &cancel, 8, |c| chunks.push(c), one_past)
+			.await
+			.expect_err("one byte past the cap must fail");
+		assert!(
+			err.contains("bytes of completion text"),
+			"unexpected: {err}"
+		);
+		assert_eq!(
+			chunks,
+			vec!["ab".to_string()],
+			"the rejected delta never streams"
+		);
 	}
 }
