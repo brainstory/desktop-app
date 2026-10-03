@@ -13,6 +13,7 @@ import { useAiModels } from "./useAiModels";
 const aiSettings = {
 	llmMode: "local",
 	llmModel: "gemma-4-E2B-qat",
+	llmCtxTokens: 0,
 	sttModel: "whisper-tiny-en",
 	sttMode: "local",
 	sttEngine: "whisper",
@@ -42,7 +43,9 @@ const models = {
 			active: true,
 			downloading: false,
 			progress: null as number | null,
-			filename: "m.gguf"
+			filename: "m.gguf",
+			/** 100_000 B/token: 16k → 1.6 GB, 64k → 6.6 GB in the estimates */
+			kvBytesPerToken: 100_000
 		}
 	],
 	stt: [
@@ -442,6 +445,66 @@ describe("AiModelsCard", () => {
 		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")).toBe(
 			false
 		);
+	});
+
+	it("shows the context window select with per-option memory estimates", async () => {
+		mockCard();
+		renderCard();
+		const select = await screen.findByLabelText("Context window");
+		// 16384 × 100_000 B/token ≈ 1.6 GB; 65536 → ≈ 6.6 GB
+		expect(within(select).getByRole("option", { name: /^Default \(16k\)/ })).toHaveTextContent(
+			"~1.6 GB"
+		);
+		expect(within(select).getByRole("option", { name: /^64k/ })).toHaveTextContent("~6.6 GB");
+		expect(screen.getByText(/Approximate extra memory/)).toBeInTheDocument();
+		expect(screen.getByText(/Changing this reloads the model\./)).toBeInTheDocument();
+	});
+
+	it("changing the context window saves only llmCtxTokens", async () => {
+		const user = userEvent.setup();
+		mockCard();
+		renderCard();
+		const select = await screen.findByLabelText("Context window");
+		await user.selectOptions(select, "65536");
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "save_ai_settings");
+			expect(call, "save_ai_settings was called").toBeTruthy();
+			expect(call![1]).toEqual({ ai: { llmCtxTokens: 65536 } });
+		});
+		// unrelated single-action saves keep omitting the field (keep)
+		await user.click(screen.getByRole("button", { name: "Auto" }));
+		await waitFor(() => {
+			const calls = vi
+				.mocked(invoke)
+				.mock.calls.filter(([cmd]) => cmd === "save_ai_settings");
+			expect(calls[calls.length - 1]![1]).toEqual({ ai: { sttEngine: "auto" } });
+		});
+	});
+
+	it("hides the context window control while the external LLM endpoint is in use", async () => {
+		mockCard({
+			get_ai_settings: () => ({
+				...aiSettings,
+				llmMode: "external",
+				extLlmBaseUrl: "http://localhost:11434"
+			})
+		});
+		renderCard();
+		await screen.findByRole("switch", { name: "Use external LLM endpoint" });
+		expect(screen.queryByLabelText("Context window")).not.toBeInTheDocument();
+	});
+
+	it("falls back to a generic hint when the selected model has no estimate", async () => {
+		mockCard({
+			list_models: () => ({
+				...models,
+				llm: [{ ...models.llm[0]!, kvBytesPerToken: undefined }]
+			})
+		});
+		renderCard();
+		const select = await screen.findByLabelText("Context window");
+		expect(within(select).getByRole("option", { name: /^64k/ })).not.toHaveTextContent("GB");
+		expect(screen.getByText(/exact amount depends on the selected model/)).toBeInTheDocument();
 	});
 
 	it("offers the speech language for a multilingual whisper model", async () => {

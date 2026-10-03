@@ -5,6 +5,17 @@ import { EngineStatusHeader } from "./EngineStatusHeader";
 import { ExternalEndpointFields } from "./ExternalEndpointFields";
 import { ModelList, type ModelListContext } from "./ModelRow";
 
+/** Context-window choices, in tokens. 0 = the app default (16k). */
+const CTX_OPTIONS = [
+	{ value: 0, label: "Default (16k)" },
+	{ value: 32768, label: "32k" },
+	{ value: 65536, label: "64k" },
+	{ value: 131072, label: "128k" }
+] as const;
+
+/** "~1.6 GB"-style hint for an approximate byte count (1 GB = 1e9 B). */
+const approxGb = (bytes: number): string => `~${(bytes / 1e9).toFixed(1)} GB`;
+
 interface LlmSectionProps {
 	settings: AiSettingsResponse;
 	savedSettings: AiSettingsResponse | null;
@@ -36,12 +47,21 @@ export function LlmSection({
 }: LlmSectionProps) {
 	const headingId = useId();
 	const externalLlmLabelId = useId();
+	const ctxSelectId = useId();
 	const usingExternal = settings.llmMode === "external";
 	// the endpoint is where you set things up before switching over, so
 	// start it open whenever it is (or is about to be) relevant
 	const [endpointOpen, setEndpointOpen] = useState(
 		usingExternal || !!savedSettings?.extLlmBaseUrl
 	);
+	// the memory estimate follows the configured local model (list_models
+	// carries each catalog model's approximate KV bytes/token)
+	const localModel = models.find((m) => m.id === settings.llmModel);
+	const kvPerToken = localModel?.kvBytesPerToken;
+	const ctxHelp =
+		kvPerToken !== undefined
+			? "Approximate extra memory for the model's context (KV cache)."
+			: "A bigger window needs more memory; the exact amount depends on the selected model.";
 
 	const toggleExternal = () => {
 		const nextMode = usingExternal ? "local" : "external";
@@ -106,6 +126,34 @@ export function LlmSection({
 						Models on this computer
 					</h4>
 					<ModelList models={models} {...modelList} />
+					<div className="max-w-xs">
+						<label
+							htmlFor={ctxSelectId}
+							className="block mb-1 text-sm font-medium text-stone-900"
+						>
+							Context window
+						</label>
+						<select
+							id={ctxSelectId}
+							value={settings.llmCtxTokens}
+							onChange={(e) => save({ llmCtxTokens: Number(e.target.value) })}
+							className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
+						>
+							{CTX_OPTIONS.map((opt) => (
+								<option key={opt.value} value={opt.value}>
+									{opt.label}
+									{kvPerToken !== undefined
+										? ` - ${approxGb(
+												(opt.value === 0 ? 16384 : opt.value) * kvPerToken
+											)}`
+										: ""}
+								</option>
+							))}
+						</select>
+						<p className="text-sm text-stone-500 mt-1">
+							{ctxHelp} Changing this reloads the model.
+						</p>
+					</div>
 				</>
 			)}
 		</section>

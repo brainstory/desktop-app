@@ -13,6 +13,11 @@ export interface ModelStatus {
 	/** download progress 0-100; negative = total size unknown */
 	progress?: number;
 	filename?: string;
+	/**
+	 * Approximate KV-cache bytes per token for local LLM rows (absent for
+	 * STT): window tokens × this ≈ extra memory for a context window.
+	 */
+	kvBytesPerToken?: number;
 }
 
 export interface ModelsResponse {
@@ -30,6 +35,9 @@ export interface EngineStatus {
 export interface AiSettingsResponse {
 	llmMode: string;
 	llmModel: string;
+	/** Requested local context window: 0 = app default (16k); else a
+	 * multiple of 1024 in 8192..=131072. Changing it reloads the model. */
+	llmCtxTokens: number;
 	sttModel: string;
 	/** "local" or "external": whether transcription uses the external endpoint */
 	sttMode: string;

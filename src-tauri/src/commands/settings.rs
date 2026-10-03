@@ -254,6 +254,7 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 		Ok(serde_json::json!({
 			"llmMode": s.llm_mode.as_str(),
 			"llmModel": s.llm_model,
+			"llmCtxTokens": s.llm_ctx_tokens,
 			"sttModel": s.stt_model,
 			"sttMode": s.stt_mode.as_str(),
 			"sttEngine": s.stt_engine.as_str(),

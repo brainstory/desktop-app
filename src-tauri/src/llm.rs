@@ -13,9 +13,11 @@ use llama_cpp_2::SeqState;
 
 use crate::types::ChatMessage;
 
-/// Generation context size. Transcripts are conversational; 16k tokens
-/// comfortably fits a long session plus the result document.
-const N_CTX: u32 = 16384;
+/// Default generation context size. Transcripts are conversational; 16k
+/// tokens comfortably fits a long session plus the result document. The
+/// user can opt into a larger window (the `llm_ctx_tokens` setting);
+/// the window a load actually uses is [`effective_ctx_for`].
+pub const DEFAULT_N_CTX: u32 = 16384;
 pub const MAX_NEW_TOKENS_RESPONSE: u32 = 1024;
 pub const MAX_NEW_TOKENS_RESULT: u32 = 4096;
 /// If no token completes for this long the generation is treated as
@@ -31,6 +33,33 @@ const MAX_THINK_TOKENS: u32 = 4096;
 /// Prompt tokens are decoded in chunks of this size so cancel/timeout
 /// checks stay responsive during long prompts.
 const PROMPT_DECODE_CHUNK: usize = 512;
+
+/// The context window a load actually uses: the app default when the
+/// requested setting is 0 (or absent), otherwise the request - always
+/// clamped to what the model was trained for, so a small-trained-context
+/// model is never run with a silently-degrading oversized window. A
+/// model whose trained context is unknown (None) keeps the default.
+/// Pure, so the loader's already-loaded check and the engine build can
+/// never disagree about the window.
+pub fn effective_ctx_for(requested: u32, trained: Option<u32>) -> u32 {
+	let requested = if requested == 0 {
+		DEFAULT_N_CTX
+	} else {
+		requested
+	};
+	match trained {
+		Some(trained) => requested.min(trained).max(1),
+		None => DEFAULT_N_CTX,
+	}
+}
+
+/// Tokens of room the assembled prompt may occupy in a `n_ctx` window:
+/// the window minus the generation budget and a small margin. Extracted
+/// pure so the truncation budget provably derives from (and scales
+/// with) the effective context; see [`LocalLlm::build_prompt`].
+fn prompt_budget(n_ctx: u32, max_new_tokens: u32) -> usize {
+	(n_ctx as usize).saturating_sub(max_new_tokens as usize + 64)
+}
 
 /// Break control-token-shaped sequences so tokenizing the text with
 /// parse_special=true can never turn user/imported content into turn
@@ -130,10 +159,20 @@ pub struct LocalLlm {
 	/// a small-trained-context model isn't run with a silently-degrading
 	/// oversized window.
 	trained_ctx: Option<u32>,
+	/// The context window this engine was actually built for:
+	/// [`effective_ctx_for`] of the requested setting and the trained
+	/// context at load time. A same-model settings change that alters it
+	/// must rebuild the engine.
+	built_ctx: u32,
 }
 
 impl LocalLlm {
-	pub fn load(backend: Arc<LlamaBackend>, path: &Path, model_id: &str) -> Result<Self, String> {
+	pub fn load(
+		backend: Arc<LlamaBackend>,
+		path: &Path,
+		model_id: &str,
+		requested_ctx: u32,
+	) -> Result<Self, String> {
 		// Offload every layer to the GPU when a backend (Metal/Vulkan) exists;
 		// llama.cpp falls back to CPU compute automatically otherwise.
 		let params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
@@ -148,11 +187,11 @@ impl LocalLlm {
 			.and_then(|v| v.trim().parse::<u64>().ok())
 			.filter(|v| *v > 0)
 			.map(|v| v.min(u32::MAX as u64) as u32);
+		let built_ctx = effective_ctx_for(requested_ctx, trained_ctx);
 		if let Some(trained) = trained_ctx {
 			log::info!(
 				"model {model_id} ({architecture}) trained context: {trained} tokens; \
-				 effective context: {}",
-				trained.min(N_CTX)
+				 effective context: {built_ctx}"
 			);
 		}
 		Ok(Self {
@@ -162,13 +201,18 @@ impl LocalLlm {
 			kv_state: std::sync::Mutex::new(None),
 			architecture,
 			trained_ctx,
+			built_ctx,
 		})
 	}
 
-	/// Context window actually used: the default, clamped to what the
-	/// model was trained for.
-	fn effective_ctx(&self) -> u32 {
-		self.trained_ctx.map_or(N_CTX, |trained| trained.min(N_CTX))
+	/// The context window this engine was built for.
+	pub fn built_ctx(&self) -> u32 {
+		self.built_ctx
+	}
+
+	/// The model's trained context length, when the GGUF reports one.
+	pub fn trained_ctx(&self) -> Option<u32> {
+		self.trained_ctx
 	}
 
 	fn apply_llama_template(
@@ -274,15 +318,16 @@ impl LocalLlm {
 	}
 
 	/// Build the final prompt, dropping older middle messages until it fits
-	/// into the context window with room for `max_new_tokens`.
+	/// into the context window this engine was built for, with room for
+	/// `max_new_tokens`. The budget derives from `built_ctx`, so a larger
+	/// configured window automatically truncates less.
 	fn build_prompt(
 		&self,
 		system: &str,
 		messages: &[ChatMessage],
 		max_new_tokens: u32,
 	) -> Result<String, String> {
-		let n_ctx = self.effective_ctx() as usize;
-		let budget = n_ctx.saturating_sub(max_new_tokens as usize + 64);
+		let budget = prompt_budget(self.built_ctx, max_new_tokens);
 		let mut msgs: Vec<ChatMessage> = messages.to_vec();
 		let mut prompt = self.apply_template(system, &msgs)?;
 		let mut n_tokens = self.count_tokens(&prompt)?;
@@ -372,7 +417,7 @@ impl LocalLlm {
 
 		// The context borrows the model, so it lives only within this call;
 		// the KV cache travels separately, as captured state bytes.
-		let n_ctx = self.effective_ctx();
+		let n_ctx = self.built_ctx;
 		let ctx_params = LlamaContextParams::default()
 			.with_n_ctx(Some(
 				NonZeroU32::new(n_ctx).expect("context size is never zero"),
@@ -1533,6 +1578,45 @@ mod tests {
 		assert!(s.starts_with(cut));
 		assert!(cut.is_char_boundary(cut.len()));
 		assert_eq!(truncate_at_boundary(s, 100), s);
+	}
+
+	#[test]
+	fn effective_ctx_resolves_the_requested_window_against_the_trained_one() {
+		use super::{effective_ctx_for, DEFAULT_N_CTX};
+		// no request: the app default
+		assert_eq!(effective_ctx_for(0, None), DEFAULT_N_CTX);
+		assert_eq!(effective_ctx_for(0, Some(131072)), DEFAULT_N_CTX);
+		// a model trained below the default clamps the default down
+		assert_eq!(effective_ctx_for(0, Some(8192)), 8192);
+		// an unknown trained context keeps the default regardless of the ask
+		assert_eq!(effective_ctx_for(65536, None), DEFAULT_N_CTX);
+		// an explicit request wins up to the trained window...
+		assert_eq!(effective_ctx_for(32768, Some(131072)), 32768);
+		assert_eq!(effective_ctx_for(131072, Some(131072)), 131072);
+		// ...and clamps to it beyond
+		assert_eq!(effective_ctx_for(131072, Some(65536)), 65536);
+		// a degenerate zero trained value must never yield a zero context
+		// (load filters those out; the pure fn stays safe for any input)
+		assert_eq!(effective_ctx_for(8192, Some(0)), 1);
+	}
+
+	#[test]
+	fn the_truncation_budget_scales_with_the_effective_context() {
+		use super::{effective_ctx_for, prompt_budget, DEFAULT_N_CTX, MAX_NEW_TOKENS_RESULT};
+		let at_default = prompt_budget(effective_ctx_for(0, Some(131072)), MAX_NEW_TOKENS_RESULT);
+		assert_eq!(
+			at_default,
+			(DEFAULT_N_CTX - MAX_NEW_TOKENS_RESULT - 64) as usize
+		);
+		let at_64k = prompt_budget(
+			effective_ctx_for(65536, Some(131072)),
+			MAX_NEW_TOKENS_RESULT,
+		);
+		assert_eq!(at_64k, (65536 - MAX_NEW_TOKENS_RESULT - 64) as usize);
+		assert!(
+			at_64k > at_default,
+			"a larger setting shrinks what gets truncated"
+		);
 	}
 }
 

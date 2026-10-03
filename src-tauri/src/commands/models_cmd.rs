@@ -5,7 +5,7 @@ use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
-use crate::models::{download_model_file, find_model, model_url, ModelKind};
+use crate::models::{download_model_file, find_model, kv_bytes_per_token, model_url, ModelKind};
 use crate::types::ModelStatus;
 use crate::AppState;
 
@@ -18,7 +18,7 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
 		let settings = state.ai_settings();
-		let build = |kind: ModelKind| -> Vec<ModelStatus> {
+		let build = |kind: ModelKind| -> Vec<serde_json::Value> {
 			let list: &[crate::models::ModelSpec] = match kind {
 				ModelKind::Llm => &crate::models::LLM_MODELS,
 				ModelKind::Stt => &crate::models::STT_MODELS,
@@ -28,33 +28,43 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 				.lock()
 				.unwrap_or_else(|e| e.into_inner());
 			list.iter()
-				.map(|spec| ModelStatus {
-					id: spec.id.to_string(),
-					label: spec.label.to_string(),
-					description: spec.description.to_string(),
-					kind: match kind {
-						ModelKind::Llm => "llm",
-						ModelKind::Stt => "stt",
+				.map(|spec| {
+					let mut row = serde_json::to_value(ModelStatus {
+						id: spec.id.to_string(),
+						label: spec.label.to_string(),
+						description: spec.description.to_string(),
+						kind: match kind {
+							ModelKind::Llm => "llm",
+							ModelKind::Stt => "stt",
+						}
+						.to_string(),
+						size_bytes: spec.size_bytes,
+						downloaded: state.is_model_downloaded(spec),
+						active: match kind {
+							ModelKind::Llm => {
+								!settings.uses_external_llm() && settings.llm_model == spec.id
+							}
+							// A whisper model is only "active" when whisper actually
+							// handles local transcription (Apple Speech mode demotes it
+							// to fallback).
+							ModelKind::Stt => {
+								settings.stt_model == spec.id
+									&& settings.effective_stt_engine()
+										== crate::models::SpeechEngine::Whisper
+							}
+						},
+						downloading: progress.contains_key(spec.id),
+						progress: progress.get(spec.id).copied(),
+						filename: Some(spec.filename.to_string()),
+					})
+					.expect("serializing a ModelStatus row cannot fail");
+					// Approximate KV-cache bytes/token powers the
+					// context-window memory hint; documented catalog
+					// constants for LLM rows, absent for STT rows.
+					if let ModelKind::Llm = kind {
+						row["kvBytesPerToken"] = json!(kv_bytes_per_token(spec));
 					}
-					.to_string(),
-					size_bytes: spec.size_bytes,
-					downloaded: state.is_model_downloaded(spec),
-					active: match kind {
-						ModelKind::Llm => {
-							!settings.uses_external_llm() && settings.llm_model == spec.id
-						}
-						// A whisper model is only "active" when whisper actually
-						// handles local transcription (Apple Speech mode demotes it
-						// to fallback).
-						ModelKind::Stt => {
-							settings.stt_model == spec.id
-								&& settings.effective_stt_engine()
-									== crate::models::SpeechEngine::Whisper
-						}
-					},
-					downloading: progress.contains_key(spec.id),
-					progress: progress.get(spec.id).copied(),
-					filename: Some(spec.filename.to_string()),
+					row
 				})
 				.collect()
 		};

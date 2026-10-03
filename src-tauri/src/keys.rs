@@ -22,6 +22,9 @@ pub mod setting {
 
 	pub const AI_LLM_MODE: &str = "ai_llm_mode";
 	pub const AI_LLM_MODEL: &str = "ai_llm_model";
+	/// requested local LLM context window ("0" = app default; explicit
+	/// values are multiples of 1024 in 8192..=131072)
+	pub const AI_LLM_CTX_TOKENS: &str = "ai_llm_ctx_tokens";
 	pub const AI_STT_MODEL: &str = "ai_stt_model";
 	pub const AI_STT_ENGINE: &str = "ai_stt_engine";
 	pub const AI_STT_MODE: &str = "ai_stt_mode";
@@ -67,6 +70,7 @@ mod tests {
 			setting::UPDATES_ENABLED,
 			setting::AI_LLM_MODE,
 			setting::AI_LLM_MODEL,
+			setting::AI_LLM_CTX_TOKENS,
 			setting::AI_STT_MODEL,
 			setting::AI_STT_ENGINE,
 			setting::AI_STT_MODE,

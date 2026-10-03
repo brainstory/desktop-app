@@ -450,6 +450,17 @@ impl AppState {
 			crate::notify_llm,
 			&LlmSlot(self),
 			|engine| engine.model_id.as_str(),
+			|engine| {
+				// Already loaded = same model AND built with the window
+				// the CURRENT settings resolve to: a ctx-only save must
+				// rebuild the engine.
+				engine.model_id.as_str() == spec.id
+					&& engine.built_ctx()
+						== crate::llm::effective_ctx_for(
+							self.ai_settings().llm_ctx_tokens,
+							engine.trained_ctx(),
+						)
+			},
 			|| {
 				// The llama backend is initialized once and kept for the
 				// process lifetime; engines come and go on top of it.
@@ -466,7 +477,11 @@ impl AppState {
 					.backend
 					.clone()
 					.ok_or_else(|| "llama backend missing".to_string())?;
-				LocalLlm::load(backend, path, spec.id)
+				// The requested window comes from the CURRENT settings: a
+				// save that landed while an older plan was loading still
+				// builds the newest window (and the fresh() check retires
+				// the stale outcome before it installs).
+				LocalLlm::load(backend, path, spec.id, self.ai_settings().llm_ctx_tokens)
 			},
 			|prev| self.reload_llm(prev),
 			LLM_ROLLBACK_ON_SAME,
@@ -480,6 +495,10 @@ impl AppState {
 	/// load the new file, and either install it or roll back to the
 	/// previous model. Blocking; call from a background thread.
 	///
+	/// `unchanged`: the already-loaded check - true when the resident
+	/// engine already is what these settings resolve to (whisper: same
+	/// model id; the LLM: same id AND built with the context window the
+	/// current settings resolve to, so a ctx-only change rebuilds).
 	/// `rollback_on_same`: whisper retries loading the same model after a
 	/// transient failure; an identical llama reload fails deterministically
 	/// on the same mmap, so it does not.
@@ -501,6 +520,7 @@ impl AppState {
 		notify: fn(&EngineStatus, &dyn crate::StatusEvents),
 		slot: &dyn EngineSlot<E>,
 		model_id_of: fn(&E) -> &str,
+		unchanged: impl Fn(&E) -> bool,
 		prepare: impl FnOnce() -> Result<(), String>,
 		load: impl Fn(&Path) -> Result<E, String>,
 		rollback: impl Fn(&ModelSpec) -> Result<(), String>,
@@ -511,8 +531,15 @@ impl AppState {
 		// The wanted engine is already resident under this claim: nothing
 		// to load and nothing to publish - e.g. a same-model activation
 		// or a save that changed nothing about routing must not reload a
-		// working engine (or blip its status through loading).
-		if slot.installed().as_ref().map(|engine| model_id_of(engine)) == Some(spec.id) {
+		// working engine (or blip its status through loading). The
+		// predicate decides what "already wanted" means per engine kind
+		// (see `unchanged` above) - for the LLM that includes the context
+		// window, so a ctx-only save rebuilds.
+		if slot
+			.installed()
+			.as_ref()
+			.is_some_and(|engine| unchanged(engine))
+		{
 			return Ok(());
 		}
 		{
@@ -627,7 +654,9 @@ impl AppState {
 			.backend
 			.clone()
 			.ok_or_else(|| "llama backend missing".to_string())?;
-		let engine = LocalLlm::load(backend, &path, spec.id)?;
+		// Restored under the CURRENT settings' window, so the rolled-back
+		// engine matches what a retry of the same save would build.
+		let engine = LocalLlm::load(backend, &path, spec.id, self.ai_settings().llm_ctx_tokens)?;
 		let mut runtime = lock(&self.runtime);
 		runtime.llm = Some(Arc::new(engine));
 		Ok(())
@@ -685,6 +714,8 @@ impl AppState {
 			crate::notify_stt,
 			&SttSlot(self),
 			|engine| engine.model_id.as_str(),
+			// whisper has no ctx-shaped setting: same model id = done
+			|engine| engine.model_id.as_str() == spec.id,
 			|| Ok(()),
 			|path| SttEngine::load(path, spec.id),
 			|prev| {
@@ -837,10 +868,12 @@ mod swap_flow_tests {
 	use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 	use std::sync::{mpsc, Arc, Mutex};
 
-	/// A stand-in engine: nothing whisper/llama-shaped, just the id the
-	/// swap flow reads.
+	/// A stand-in engine: nothing whisper/llama-shaped, just the id (and,
+	/// for the LLM-shaped tests, the ctx it was built at) the swap flow
+	/// reads.
 	struct FakeEngine {
 		id: String,
+		built_ctx: u32,
 	}
 
 	/// A stand-in engine slot: what swap_engine installs into.
@@ -854,6 +887,10 @@ mod swap_flow_tests {
 			Self(Mutex::new(Some(Arc::new(engine))))
 		}
 	}
+
+	/// The trained context the fake "GGUF" reports; the gemma catalog
+	/// models are trained to 128k+.
+	const FAKE_TRAINED_CTX: u32 = 131072;
 
 	impl EngineSlot<FakeEngine> for FakeSlot {
 		fn installed(&self) -> Option<Arc<FakeEngine>> {
@@ -906,6 +943,12 @@ mod swap_flow_tests {
 			.clone()
 	}
 
+	fn llm_spec(id: &str) -> super::super::catalog::ModelSpec {
+		super::super::catalog::find_model(id, super::super::catalog::ModelKind::Llm)
+			.expect("catalog model")
+			.clone()
+	}
+
 	fn model_id_of(engine: &FakeEngine) -> &str {
 		&engine.id
 	}
@@ -928,10 +971,12 @@ mod swap_flow_tests {
 				crate::notify_stt,
 				&slot,
 				model_id_of,
+				|engine| model_id_of(engine) == spec.id,
 				|| Ok(()),
 				|_path| {
 					Ok(FakeEngine {
 						id: spec.id.to_string(),
+						built_ctx: 0,
 					})
 				},
 				|_prev| panic!("a successful load never rolls back"),
@@ -988,6 +1033,7 @@ mod swap_flow_tests {
 					crate::notify_stt,
 					&*slot,
 					model_id_of,
+					|engine| model_id_of(engine) == spec.id,
 					|| Ok(()),
 					|_path| {
 						factory_called.store(true, Ordering::SeqCst);
@@ -997,6 +1043,7 @@ mod swap_flow_tests {
 						release_rx.lock().unwrap().recv().expect("released");
 						Ok(FakeEngine {
 							id: spec.id.to_string(),
+							built_ctx: 0,
 						})
 					},
 					|prev| {
@@ -1041,6 +1088,7 @@ mod swap_flow_tests {
 		let spec = stt_spec("whisper-small-en");
 		let resident = Arc::new(FakeEngine {
 			id: spec.id.to_string(),
+			built_ctx: 0,
 		});
 		let slot = FakeSlot::empty();
 		slot.install(resident.clone());
@@ -1055,11 +1103,13 @@ mod swap_flow_tests {
 			crate::notify_stt,
 			&slot,
 			model_id_of,
+			|engine| model_id_of(engine) == spec.id,
 			|| Ok(()),
 			|_path| {
 				factory_called.store(true, Ordering::SeqCst);
 				Ok(FakeEngine {
 					id: spec.id.to_string(),
+					built_ctx: 0,
 				})
 			},
 			|_prev| panic!("no load happens: no rollback"),
@@ -1088,6 +1138,7 @@ mod swap_flow_tests {
 		let prev = stt_spec("whisper-tiny-en");
 		let slot = FakeSlot::with(FakeEngine {
 			id: prev.id.to_string(),
+			built_ctx: 0,
 		});
 		let status = Mutex::new(EngineStatus::missing());
 		let events = RecordingEvents::new();
@@ -1100,12 +1151,14 @@ mod swap_flow_tests {
 			crate::notify_stt,
 			&slot,
 			model_id_of,
+			|engine| model_id_of(engine) == spec.id,
 			|| Ok(()),
 			|_path| Err("corrupt file".into()),
 			|restore| {
 				rollbacks.lock().unwrap().push(restore.id.to_string());
 				slot.install(Arc::new(FakeEngine {
 					id: restore.id.to_string(),
+					built_ctx: 0,
 				}));
 				Ok(())
 			},
@@ -1147,6 +1200,7 @@ mod swap_flow_tests {
 			crate::notify_stt,
 			&slot,
 			model_id_of,
+			|engine| model_id_of(engine) == spec.id,
 			|| Ok(()),
 			|_path| Err("corrupt file".into()),
 			|_prev| panic!("nothing was loaded before: no rollback candidate"),
@@ -1162,6 +1216,136 @@ mod swap_flow_tests {
 			*status.lock().unwrap(),
 			EngineStatus::error(Some(spec.id), "model failed to load")
 		);
+	}
+
+	/// The production LLM already-loaded predicate against the fake
+	/// engine: same model id AND the resident engine was built at the
+	/// window the CURRENT settings resolve to.
+	fn llm_unchanged<'a>(
+		state: &'a AppState,
+		spec_id: &'static str,
+	) -> impl Fn(&FakeEngine) -> bool + 'a {
+		move |engine| {
+			engine.id.as_str() == spec_id
+				&& engine.built_ctx
+					== crate::llm::effective_ctx_for(
+						state.ai_settings().llm_ctx_tokens,
+						Some(FAKE_TRAINED_CTX),
+					)
+		}
+	}
+
+	#[test]
+	fn a_same_model_load_at_the_same_resolved_ctx_does_not_rebuild() {
+		let (state, _dir) = temp_state("swap-ctx-same");
+		let spec = llm_spec("gemma-4-E4B");
+		// resident engine was built at the default window (requested 0)
+		let resident = Arc::new(FakeEngine {
+			id: spec.id.to_string(),
+			built_ctx: crate::llm::effective_ctx_for(0, Some(FAKE_TRAINED_CTX)),
+		});
+		let slot = FakeSlot::empty();
+		slot.install(resident.clone());
+		let status = Mutex::new(EngineStatus::ready(Some(spec.id)));
+		let events = RecordingEvents::new();
+		let factory_called = AtomicBool::new(false);
+
+		// settings still request the default window: nothing to do
+		let result = state.swap_engine(
+			&events,
+			&spec,
+			&status,
+			crate::notify_llm,
+			&slot,
+			model_id_of,
+			llm_unchanged(&state, spec.id),
+			|| Ok(()),
+			|_path| {
+				factory_called.store(true, Ordering::SeqCst);
+				Ok(FakeEngine {
+					id: spec.id.to_string(),
+					built_ctx: 0,
+				})
+			},
+			|_prev| panic!("no load happens: no rollback"),
+			false,
+			true,
+			|| true,
+		);
+
+		result.expect("the resident engine already matches");
+		assert!(
+			!factory_called.load(Ordering::SeqCst),
+			"a same id + same resolved ctx must not reload the engine"
+		);
+		assert!(Arc::ptr_eq(
+			&slot.installed().expect("engine kept"),
+			&resident
+		));
+		assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
+		assert!(events.snapshot().is_empty(), "{:?}", events.snapshot());
+	}
+
+	#[test]
+	fn a_ctx_only_save_rebuilds_the_same_model_at_the_new_window() {
+		let (state, _dir) = temp_state("swap-ctx-change");
+		let spec = llm_spec("gemma-4-E4B");
+		// the install step checks the file still exists on disk
+		std::fs::write(state.model_path(&spec), b"stub").expect("model file");
+		// the engine currently resident was built at the default window
+		let slot = FakeSlot::with(FakeEngine {
+			id: spec.id.to_string(),
+			built_ctx: crate::llm::effective_ctx_for(0, Some(FAKE_TRAINED_CTX)),
+		});
+		let status = Mutex::new(EngineStatus::ready(Some(spec.id)));
+		let events = RecordingEvents::new();
+
+		// the user saves ONLY a context-window change; the loader then
+		// runs for the same model id
+		state
+			.mutate_ai_settings(|s| s.apply_updates(&serde_json::json!({ "llmCtxTokens": 65536 })))
+			.expect("ctx-only save commits");
+
+		// the requested window each factory invocation was asked to build
+		let built_at: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+		state
+			.swap_engine(
+				&events,
+				&spec,
+				&status,
+				crate::notify_llm,
+				&slot,
+				model_id_of,
+				llm_unchanged(&state, spec.id),
+				|| Ok(()),
+				|_path| {
+					// like the production factory, the requested window is
+					// read from the CURRENT settings
+					let requested = state.ai_settings().llm_ctx_tokens;
+					built_at.lock().unwrap().push(requested);
+					Ok(FakeEngine {
+						id: spec.id.to_string(),
+						built_ctx: crate::llm::effective_ctx_for(requested, Some(FAKE_TRAINED_CTX)),
+					})
+				},
+				|_prev| panic!("a successful rebuild never rolls back"),
+				false,
+				true,
+				|| true,
+			)
+			.expect("the rebuild installs");
+
+		assert_eq!(
+			*built_at.lock().unwrap(),
+			vec![65536],
+			"the factory was asked to build the settings' window"
+		);
+		assert_eq!(
+			slot.installed().expect("rebuilt engine").built_ctx,
+			65536,
+			"the engine is resident at the new window"
+		);
+		assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
 	}
 }
 

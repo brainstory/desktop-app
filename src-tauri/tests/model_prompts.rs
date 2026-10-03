@@ -50,7 +50,7 @@ fn model_prompt_suite() {
 	let path = std::env::var("LLM_MODEL_PATH").expect("set LLM_MODEL_PATH to a llama gguf");
 	let backend =
 		Arc::new(llama_cpp_2::llama_backend::LlamaBackend::init().expect("backend init failed"));
-	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test").expect("load failed");
+	let llm = LocalLlm::load(backend, std::path::Path::new(&path), "test", 0).expect("load failed");
 	real_prompts_work_end_to_end(&llm);
 	kv_cache_reuse_produces_completions_and_skips_prefix_decode(&llm);
 	oversized_payload_fit_probes(&llm);

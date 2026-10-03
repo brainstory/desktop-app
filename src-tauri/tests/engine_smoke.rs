@@ -30,7 +30,7 @@ fn whisper_and_llama_coexist() {
 	let backend = Arc::new(
 		llama_cpp_2::llama_backend::LlamaBackend::init().expect("failed to init llama backend"),
 	);
-	let llm = LocalLlm::load(backend, std::path::Path::new(&llama_path), "test")
+	let llm = LocalLlm::load(backend, std::path::Path::new(&llama_path), "test", 0)
 		.expect("failed to load llama model");
 	// A few pieces prove generation runs; stop there instead of a full
 	// reply (up to 1024 tokens). On the CI macOS VM's paravirtual GPU most

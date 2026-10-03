@@ -124,6 +124,10 @@ impl std::str::FromStr for SpeechEngine {
 pub struct AiSettings {
 	pub llm_mode: LlmMode,
 	pub llm_model: String,
+	/// Requested local context window. 0 = the app default
+	/// ([`crate::llm::DEFAULT_N_CTX`]); explicit values are multiples of
+	/// 1024 within 8192..=131072 (validated in [`Self::apply_updates`]).
+	pub llm_ctx_tokens: u32,
 	pub stt_model: String,
 	/// Local or external transcription (see [`Self::uses_external_stt`]).
 	pub stt_mode: SttMode,
@@ -173,6 +177,12 @@ pub fn default_stt_engine(db: &Db) -> SpeechEngine {
 	}
 }
 
+/// Valid `llm_ctx_tokens` values: 0 (the app default) or a multiple of
+/// 1024 within 8192..=131072.
+fn valid_llm_ctx(v: u32) -> bool {
+	v == 0 || (v % 1024 == 0 && (8192..=131072).contains(&v))
+}
+
 impl AiSettings {
 	pub fn load(db: &Db) -> Self {
 		let get = |k: &str| db.get_setting(k).unwrap_or_default();
@@ -195,6 +205,13 @@ impl AiSettings {
 					m
 				}
 			},
+			llm_ctx_tokens: get(setting::AI_LLM_CTX_TOKENS)
+				.parse::<u32>()
+				.ok()
+				.filter(|v| valid_llm_ctx(*v))
+				// a hand-edited invalid row degrades to the app default,
+				// the same rule apply_updates applies to new values
+				.unwrap_or(0),
 			stt_model: {
 				let m = get(setting::AI_STT_MODEL);
 				if m.is_empty() {
@@ -277,6 +294,23 @@ impl AiSettings {
 				return Err(format!("unknown llmModel '{v}'"));
 			}
 			self.llm_model = v;
+		}
+		if let Some(value) = ai.get("llmCtxTokens") {
+			// 0 = the app default; absent/null keeps the stored value
+			// (the same patch semantics as every other field)
+			if !value.is_null() {
+				self.llm_ctx_tokens = value
+					.as_u64()
+					.filter(|v| *v <= u32::MAX as u64)
+					.map(|v| v as u32)
+					.filter(|v| valid_llm_ctx(*v))
+					.ok_or_else(|| {
+						format!(
+							"invalid llmCtxTokens {value} (expected 0 or a multiple of \
+							 1024 between 8192 and 131072)"
+						)
+					})?;
+			}
 		}
 		if let Some(v) = get_str("sttModel") {
 			if find_model(&v, ModelKind::Stt).is_none() {
@@ -374,6 +408,7 @@ impl AiSettings {
 		db.set_settings(&[
 			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
 			(setting::AI_LLM_MODEL, self.llm_model.clone()),
+			(setting::AI_LLM_CTX_TOKENS, self.llm_ctx_tokens.to_string()),
 			(setting::AI_STT_MODEL, self.stt_model.clone()),
 			(setting::AI_STT_MODE, self.stt_mode.as_str().to_string()),
 			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),
@@ -815,5 +850,79 @@ mod tests {
 			Some("external")
 		);
 		assert_eq!(AiSettings::load(&db).stt_mode, super::SttMode::External);
+	}
+
+	#[test]
+	fn llm_ctx_tokens_validates_as_a_partial_patch() {
+		let (db, _dir) = temp_db("ctx-validate");
+		let mut s = AiSettings::load(&db);
+		assert_eq!(
+			s.llm_ctx_tokens, 0,
+			"the factory default is the app default"
+		);
+		for valid in [0u64, 8192, 9216, 32768, 131072] {
+			s.apply_updates(&serde_json::json!({ "llmCtxTokens": valid }))
+				.unwrap_or_else(|e| panic!("{valid} is valid: {e}"));
+			assert_eq!(s.llm_ctx_tokens, valid as u32);
+		}
+		// anything else rejects the whole patch with the field named
+		for invalid in [
+			serde_json::json!(1),
+			serde_json::json!(1024),
+			serde_json::json!(4096),
+			serde_json::json!(7000),
+			serde_json::json!(130000),
+			serde_json::json!(132096),
+			serde_json::json!(u32::MAX as u64),
+			serde_json::json!(-1),
+			serde_json::json!(32768.5),
+			serde_json::json!("32768"),
+			serde_json::json!(true),
+		] {
+			let err = s
+				.apply_updates(&serde_json::json!({ "llmCtxTokens": invalid }))
+				.expect_err(&format!("{invalid} should be rejected"));
+			assert!(
+				err.contains("invalid llmCtxTokens"),
+				"the error must name the field: {err}"
+			);
+		}
+		// the last valid value (131072) survived every rejection
+		assert_eq!(s.llm_ctx_tokens, 131072);
+		// absent and null both keep the stored value
+		s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" }))
+			.expect("absent keeps");
+		s.apply_updates(&serde_json::json!({ "llmCtxTokens": null }))
+			.expect("null keeps");
+		assert_eq!(s.llm_ctx_tokens, 131072);
+	}
+
+	#[test]
+	fn llm_ctx_tokens_round_trips_through_the_database() {
+		let (db, _dir) = temp_db("ctx-roundtrip");
+		let previous = AiSettings::load(&db);
+		let mut s = previous.clone();
+		s.apply_updates(&serde_json::json!({ "llmCtxTokens": 65536 }))
+			.expect("valid value");
+		s.save(&db, &previous).expect("save");
+		assert_eq!(
+			db.get_setting(setting::AI_LLM_CTX_TOKENS).as_deref(),
+			Some("65536")
+		);
+		assert_eq!(AiSettings::load(&db).llm_ctx_tokens, 65536);
+	}
+
+	#[test]
+	fn a_hand_edited_invalid_ctx_row_degrades_to_the_default() {
+		let (db, _dir) = temp_db("ctx-garbage");
+		for garbage in ["7000", "banana", "-8"] {
+			db.set_setting(setting::AI_LLM_CTX_TOKENS, garbage)
+				.expect("seed row");
+			assert_eq!(
+				AiSettings::load(&db).llm_ctx_tokens,
+				0,
+				"{garbage:?} is not a valid window; loading keeps the app default"
+			);
+		}
 	}
 }
