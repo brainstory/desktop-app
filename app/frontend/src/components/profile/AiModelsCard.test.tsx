@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 
@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import AiModelsCard from "./AiModelsCard";
+import { useAiModels } from "./useAiModels";
 
 const aiSettings = {
 	llmMode: "local",
@@ -107,6 +108,87 @@ function mockCard(extra: Record<string, (args: unknown) => unknown> = {}) {
 		get_free_disk_space: () => 1_000_000_000_000,
 		save_ai_settings: () => undefined,
 		...extra
+	});
+}
+
+type SecretControl = {
+	name: string;
+	secretKey: "hfToken" | "extLlmApiKey" | "extSttApiKey";
+	hint: string;
+	saveLabel: string;
+	openInput: (user: ReturnType<typeof userEvent.setup>) => Promise<HTMLElement>;
+};
+
+/** The three secret controls on the card and how to reach each input. */
+const SECRET_CONTROLS: SecretControl[] = [
+	{
+		name: "HuggingFace token",
+		secretKey: "hfToken",
+		hint: "••••hf42",
+		saveLabel: "Save Token",
+		openInput: async () => screen.findByLabelText(/HuggingFace access token/)
+	},
+	{
+		name: "LLM API key",
+		secretKey: "extLlmApiKey",
+		hint: "••••llm99",
+		saveLabel: "Save",
+		openInput: async (user) => {
+			const llm = await screen.findByRole("region", { name: /Language model/ });
+			await user.click(within(llm).getByText("External LLM endpoint"));
+			return within(llm).getByLabelText("LLM API key (if needed)");
+		}
+	},
+	{
+		name: "STT API key",
+		secretKey: "extSttApiKey",
+		hint: "••••stt7",
+		saveLabel: "Save",
+		openInput: async (user) => {
+			const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+			await user.click(within(stt).getByText("External STT endpoint"));
+			return within(stt).getByLabelText("STT API key (if needed)");
+		}
+	}
+];
+
+/**
+ * Backend stand-in for the secret controls: the settings response flips
+ * its presence/hint pair the moment save_ai_settings accepts the secret
+ * ("" clears it), so a refresh reflects the confirmed stored state.
+ * `failSave` rejects saves; `failRefreshAfter` fails every settings read
+ * after the Nth one (1 = only the mount read succeeds).
+ */
+function mockSecretBackend(
+	secretKey: SecretControl["secretKey"],
+	hint: string,
+	opts: {
+		initialStored?: boolean;
+		failSave?: () => string | undefined;
+		failRefreshAfter?: number;
+	} = {}
+) {
+	let stored = opts.initialStored ?? false;
+	let refreshes = 0;
+	mockCard({
+		get_ai_settings: () => {
+			refreshes++;
+			if (opts.failRefreshAfter !== undefined && refreshes > opts.failRefreshAfter) {
+				throw new Error("settings db busy");
+			}
+			return {
+				...aiSettings,
+				[`${secretKey}Set`]: stored,
+				[`${secretKey}Hint`]: stored ? hint : null
+			};
+		},
+		save_ai_settings: (args) => {
+			const failure = opts.failSave?.();
+			if (failure) throw new Error(failure);
+			const ai = (args as { ai: Record<string, unknown> }).ai;
+			// "" is the backend's clear signal; any other value stores it
+			stored = Object.values(ai).every((value) => value !== "");
+		}
 	});
 }
 
@@ -515,5 +597,231 @@ describe("AiModelsCard", () => {
 		expect(indeterminate).not.toHaveAttribute("aria-valuenow");
 		expect(screen.queryByText("-1%")).not.toBeInTheDocument();
 		expect(screen.getByText("…")).toBeInTheDocument();
+	});
+
+	it.each(SECRET_CONTROLS)(
+		"saving the $name shows its confirmed presence and hint",
+		async (control) => {
+			const user = userEvent.setup();
+			mockSecretBackend(control.secretKey, control.hint);
+			renderCard();
+			const input = await control.openInput(user);
+			await user.type(input, "sk-fake-cred");
+			await user.click(
+				within(input.parentElement!).getByRole("button", { name: control.saveLabel })
+			);
+			// presence + hint come from the refreshed settings, and the
+			// typed value only leaves the input once the backend confirmed
+			expect(
+				await screen.findByText(
+					`Saved (${control.hint}). It is stored locally and never displayed.`
+				)
+			).toBeInTheDocument();
+			expect(input).toHaveValue("");
+		}
+	);
+
+	it.each(SECRET_CONTROLS)(
+		"removing the $name drops its stored presence and hint",
+		async (control) => {
+			const user = userEvent.setup();
+			mockSecretBackend(control.secretKey, control.hint, { initialStored: true });
+			renderCard();
+			const input = await control.openInput(user);
+			expect(
+				screen.getByText(/It is stored locally and never displayed/)
+			).toBeInTheDocument();
+			await user.click(within(input.parentElement!).getByRole("button", { name: "Remove" }));
+			await waitFor(() =>
+				expect(
+					screen.queryByText(/It is stored locally and never displayed/)
+				).not.toBeInTheDocument()
+			);
+			// the control no longer offers Remove
+			expect(
+				within(input.parentElement!).queryByRole("button", { name: "Remove" })
+			).not.toBeInTheDocument();
+		}
+	);
+
+	it("a rejected secret save keeps the typed value and stays retryable", async () => {
+		const user = userEvent.setup();
+		let reject = true;
+		mockSecretBackend("hfToken", "••••hf42", {
+			failSave: () => (reject ? "keychain locked" : undefined)
+		});
+		renderCard();
+		const input = await screen.findByLabelText(/HuggingFace access token/);
+		await user.type(input, "hf_fake");
+		const row = input.parentElement!;
+		await user.click(within(row).getByRole("button", { name: "Save Token" }));
+		// the typed token survives the rejection and the failure is visible
+		expect(input).toHaveValue("hf_fake");
+		expect(
+			await screen.findByText(/the typed value is kept so you can retry/)
+		).toBeInTheDocument();
+		expect(await screen.findByText("keychain locked")).toBeInTheDocument();
+		// the control stays retryable: the same value goes through again
+		reject = false;
+		await user.click(within(row).getByRole("button", { name: "Save Token" }));
+		expect(
+			await screen.findByText(/Saved \(••••hf42\). It is stored locally and never displayed./)
+		).toBeInTheDocument();
+		expect(input).toHaveValue("");
+	});
+
+	it("a failed remove still shows the stored secret", async () => {
+		const user = userEvent.setup();
+		mockSecretBackend("extLlmApiKey", "••••llm99", {
+			initialStored: true,
+			failSave: () => "keychain locked"
+		});
+		renderCard();
+		const llm = await screen.findByRole("region", { name: /Language model/ });
+		await user.click(within(llm).getByText("External LLM endpoint"));
+		const input = within(llm).getByLabelText("LLM API key (if needed)");
+		expect(screen.getByText(/It is stored locally and never displayed/)).toBeInTheDocument();
+		await user.click(within(input.parentElement!).getByRole("button", { name: "Remove" }));
+		expect(
+			await screen.findByText(/the stored value is unchanged, try again/)
+		).toBeInTheDocument();
+		expect(await screen.findByText("keychain locked")).toBeInTheDocument();
+		// the confirmed presence is untouched by the failed clear
+		expect(screen.getByText(/It is stored locally and never displayed/)).toBeInTheDocument();
+	});
+
+	it("a failed settings refresh after a confirmed save stays truthful", async () => {
+		const user = userEvent.setup();
+		// the mount read succeeds; the post-save refresh fails
+		mockSecretBackend("hfToken", "••••hf42", { failRefreshAfter: 1 });
+		renderCard();
+		const input = await screen.findByLabelText(/HuggingFace access token/);
+		await user.type(input, "hf_fake");
+		await user.click(within(input.parentElement!).getByRole("button", { name: "Save Token" }));
+		// the save itself was confirmed: the input is cleared...
+		await waitFor(() => expect(input).toHaveValue(""));
+		// ...but the presence is not faked from the local mutation...
+		expect(
+			screen.queryByText(/It is stored locally and never displayed/)
+		).not.toBeInTheDocument();
+		// ...and the refresh failure is visible
+		expect(
+			await screen.findByText(/re-reading the settings failed: settings db busy/)
+		).toBeInTheDocument();
+	});
+
+	it("dirty endpoint edits survive a confirmed secret save", async () => {
+		const user = userEvent.setup();
+		mockSecretBackend("extSttApiKey", "••••stt7");
+		renderCard();
+		const stt = await screen.findByRole("region", { name: /Speech-to-text/ });
+		await user.type(within(stt).getByLabelText("STT base URL"), "localh");
+		await user.click(within(stt).getByText("External STT endpoint"));
+		const input = within(stt).getByLabelText("STT API key (if needed)");
+		await user.type(input, "sk-fake");
+		await user.click(within(input.parentElement!).getByRole("button", { name: "Save" }));
+		expect(
+			await within(stt).findByText(/It is stored locally and never displayed/)
+		).toBeInTheDocument();
+		// the unsaved URL edit is still pending in its own section
+		expect(within(stt).getByLabelText("STT base URL")).toHaveValue("localh");
+		expect(within(stt).getByRole("button", { name: "Save STT endpoint" })).toBeEnabled();
+	});
+
+	it("rapid clicks on Remove while the clear is pending submit it only once", async () => {
+		const user = userEvent.setup();
+		let calls = 0;
+		const settle: (() => void)[] = [];
+		mockCard({
+			get_ai_settings: () => ({
+				...aiSettings,
+				hfTokenSet: true,
+				hfTokenHint: "••••hf42"
+			}),
+			save_ai_settings: () => {
+				calls++;
+				return new Promise<void>((resolve) => settle.push(resolve));
+			}
+		});
+		renderCard();
+		const input = await screen.findByLabelText(/HuggingFace access token/);
+		const remove = within(input.parentElement!).getByRole("button", { name: "Remove" });
+		await user.click(remove);
+		await user.click(remove);
+		expect(calls).toBe(1);
+		await act(async () => {
+			settle[0]!();
+		});
+		expect(
+			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "save_ai_settings")
+		).toHaveLength(1);
+	});
+
+	it("rapid clicks on Save while the secret save is pending submit it only once", async () => {
+		const user = userEvent.setup();
+		let calls = 0;
+		let stored = false;
+		const settle: (() => void)[] = [];
+		mockCard({
+			get_ai_settings: () => ({
+				...aiSettings,
+				hfTokenSet: stored,
+				hfTokenHint: stored ? "••••hf42" : null
+			}),
+			save_ai_settings: () => {
+				calls++;
+				stored = true;
+				return new Promise<void>((resolve) => settle.push(resolve));
+			}
+		});
+		renderCard();
+		const input = await screen.findByLabelText(/HuggingFace access token/);
+		await user.type(input, "hf_fake");
+		const save = within(input.parentElement!).getByRole("button", { name: "Save Token" });
+		await user.click(save);
+		await user.click(save);
+		expect(calls).toBe(1);
+		await act(async () => {
+			settle[0]!();
+		});
+		// the single confirmed save shows up, and nothing re-submits
+		expect(
+			await screen.findByText(/Saved \(••••hf42\). It is stored locally and never displayed./)
+		).toBeInTheDocument();
+		expect(
+			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "save_ai_settings")
+		).toHaveLength(1);
+	});
+});
+
+describe("useAiModels.saveSecret", () => {
+	it("refreshes the displayed presence and hint after a confirmed save", async () => {
+		mockSecretBackend("hfToken", "••••hf42");
+		const openSnackbar = vi.fn();
+		const { result } = renderHook(() => useAiModels(openSnackbar));
+		await waitFor(() => expect(result.current.settings).not.toBeNull());
+		let confirmed: boolean | undefined;
+		await act(async () => {
+			confirmed = await result.current.saveSecret("hfToken", "fake-test-token");
+		});
+		expect(confirmed).toBe(true);
+		await waitFor(() => expect(result.current.savedSettings?.hfTokenSet).toBe(true));
+		// the DISPLAYED settings reflect the confirmed save too (F04)
+		expect(result.current.settings?.hfTokenSet).toBe(true);
+		expect(result.current.settings?.hfTokenHint).toBe("••••hf42");
+	});
+
+	it("drops presence in both snapshots after a confirmed clear", async () => {
+		mockSecretBackend("extLlmApiKey", "••••llm99", { initialStored: true });
+		const { result } = renderHook(() => useAiModels(vi.fn()));
+		await waitFor(() => expect(result.current.settings?.extLlmApiKeySet).toBe(true));
+		let confirmed: boolean | undefined;
+		await act(async () => {
+			confirmed = await result.current.saveSecret("extLlmApiKey", "");
+		});
+		expect(confirmed).toBe(true);
+		await waitFor(() => expect(result.current.savedSettings?.extLlmApiKeySet).toBe(false));
+		expect(result.current.settings?.extLlmApiKeySet).toBe(false);
+		expect(result.current.settings?.extLlmApiKeyHint).toBeNull();
 	});
 });

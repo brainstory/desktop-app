@@ -44,7 +44,8 @@ interface ExternalEndpointFieldsProps {
 	setSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
 	setSavedSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
 	refreshModels: () => void;
-	saveSecret: (key: string, value: string) => void;
+	/** Resolves true only after the backend confirmed the secret save. */
+	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 

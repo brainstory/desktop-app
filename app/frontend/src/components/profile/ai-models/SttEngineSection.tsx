@@ -69,7 +69,7 @@ interface SttEngineSectionProps {
 	savedSettings: AiSettingsResponse | null;
 	setSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
 	setSavedSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
-	saveSecret: (key: string, value: string) => void;
+	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	refreshModels: () => void;
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }

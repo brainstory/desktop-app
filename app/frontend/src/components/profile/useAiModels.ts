@@ -27,6 +27,32 @@ import { normalizeApiError } from "@helpers/helpers";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import { EVENTS } from "@src/tauri/commands";
 
+/**
+ * The only settings fields a secret save can change: the response carries
+ * presence + masked hint, never the raw secret. Merging just these keys
+ * refreshes the secret controls without clobbering unrelated unsaved
+ * endpoint/model edits in the form.
+ */
+const SECRET_PRESENCE_KEYS = [
+	"hfTokenSet",
+	"hfTokenHint",
+	"extLlmApiKeySet",
+	"extLlmApiKeyHint",
+	"extSttApiKeySet",
+	"extSttApiKeyHint"
+] as const;
+
+/** Merge only the secret presence/hint fields of `fresh` into `base`. */
+const mergeSecretPresence = (
+	base: AiSettingsResponse,
+	fresh: AiSettingsResponse
+): AiSettingsResponse => ({
+	...base,
+	...(Object.fromEntries(
+		SECRET_PRESENCE_KEYS.map((key) => [key, fresh[key]])
+	) as Partial<AiSettingsResponse>)
+});
+
 export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
 	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
@@ -169,18 +195,49 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	};
 
 	// Secrets: value "" is the backend's clear signal; anything else sets.
-	// The stored value is never round-tripped through the UI.
-	const saveSecret = (key: string, value: string): void => {
-		if (!settings) return;
+	// The stored value is never round-tripped through the UI: it lives only
+	// in the transient input/submission, and the response carries presence
+	// + masked hint. Resolves true only once the backend confirmed the
+	// save, so the control can clear the typed input on success and keep
+	// it for a retry on failure.
+	const saveSecret = (key: string, value: string): Promise<boolean> => {
+		if (!settings) return Promise.resolve(false);
 		// Send ONLY the secret: the Rust command applies present keys, and
 		// the spread form would persist whatever is sitting half-typed in
 		// the endpoint inputs right now.
-		saveAiSettingsApi({ [key]: value })
-			.then(() => {
-				reloadSavedSettings();
-				openSnackbar(true, value === "" ? "Removed" : "Saved");
-			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)));
+		return (
+			saveAiSettingsApi({ [key]: value })
+				.then(() => {
+					openSnackbar(true, value === "" ? "Removed" : "Saved");
+					// Confirmed. Re-read the settings and merge ONLY the
+					// presence/hint fields into both the saved snapshot and the
+					// displayed form, so the controls show the stored state
+					// without discarding unsaved endpoint/model edits.
+					return getAiSettingsApi()
+						.then((fresh) => {
+							setSavedSettings((prev) =>
+								prev ? mergeSecretPresence(prev, fresh) : fresh
+							);
+							setSettings((prev) => (prev ? mergeSecretPresence(prev, fresh) : prev));
+						})
+						.catch((e) => {
+							// The secret IS stored; only the confirmation read
+							// failed. Don't fake the presence it implies - just
+							// surface the refresh failure.
+							console.error("failed to reload ai settings", e);
+							openSnackbar(
+								false,
+								`${value === "" ? "Removed" : "Saved"}, but re-reading the settings failed: ${normalizeApiError(e)}`
+							);
+						});
+				})
+				// the refresh outcome above never rejects; true = confirmed save
+				.then(() => true)
+				.catch((e) => {
+					openSnackbar(false, normalizeApiError(e));
+					return false;
+				})
+		);
 	};
 
 	/** Mirror endpoint row sends ONLY its field (like the secret rows). */

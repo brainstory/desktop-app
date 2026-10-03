@@ -5,7 +5,7 @@ import { SecretRow } from "./SecretRow";
 
 interface ModelDownloadsSectionProps {
 	settings: AiSettingsResponse;
-	saveSecret: (key: string, value: string) => void;
+	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	saveEndpoint: (value: string) => void;
 }
 

@@ -14,7 +14,7 @@ interface LlmSectionProps {
 	models: ModelStatus[];
 	modelList: ModelListContext;
 	save: (updates: Partial<AiSettingsResponse>) => void;
-	saveSecret: (key: string, value: string) => void;
+	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	refreshModels: () => void;
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
