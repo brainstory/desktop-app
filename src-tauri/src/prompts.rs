@@ -6,7 +6,7 @@ use crate::types::ChatMessage;
 
 // The three interview prompts describe the opening assistant message the
 // frontend sends on its own (getFirstPrompt in
-// app/frontend/src/helpers/chat.ts) and paraphrase its exact wording:
+// src/helpers/chat.ts) and paraphrase its exact wording:
 // changing an opener there means updating the matching prompt here, and
 // vice versa. See prompts/README.md.
 pub const STORY_INTERVIEW_SYSTEM: &str =

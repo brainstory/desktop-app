@@ -22,20 +22,9 @@ updates:
           - "minor"
           - "patch"
 
-  # pnpm workspace root (@tauri-apps/cli)
+  # npm deps (Astro/React frontend + @tauri-apps/cli at the root)
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
-    groups:
-      npm-minor-patch:
-        update-types:
-          - "minor"
-          - "patch"
-
-  # Frontend (Astro/React app)
-  - package-ecosystem: npm
-    directory: /app/frontend
     schedule:
       interval: weekly
     groups:

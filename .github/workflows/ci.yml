@@ -43,29 +43,28 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck (tsc + astro check)
-        run: pnpm -C app/frontend typecheck
+        run: pnpm typecheck
 
       - name: Lint (zero warnings allowed)
-        run: pnpm -C app/frontend lint --max-warnings 0
+        run: pnpm lint --max-warnings 0
 
       - name: Format check
-        run: pnpm -C app/frontend format:check
+        run: pnpm format:check
 
       - name: Test
-        run: pnpm -C app/frontend test:coverage
+        run: pnpm test:coverage
 
       # build scripts (scripts/*.test.mjs) run under plain node:test
       - name: Test build scripts
-        working-directory: app/frontend
         run: node --test scripts/
 
       - name: Build
-        run: pnpm -C app/frontend build
+        run: pnpm build
 
       # after Build (which vendors): public/vendor must be complete and
       # every ionicon name in the source must have an SVG
       - name: Vendored assets + icon names
-        run: pnpm -C app/frontend vendor:check
+        run: pnpm vendor:check
 
   rust:
     name: Rust ${{ matrix.name }} (fmt, clippy, tests)

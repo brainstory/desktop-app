@@ -10,10 +10,10 @@ import { isModerationError, MODERATION_ERROR_PREFIX } from "@helpers/helpers";
  * otherwise only fails at runtime.
  */
 
-// file is app/frontend/src/helpers/api/contract.test.ts
+// file is src/helpers/api/contract.test.ts
 const here = dirname(fileURLToPath(import.meta.url));
-const srcRoot = resolve(here, "../.."); // app/frontend/src
-const repoRoot = resolve(here, "../../../../..");
+const srcRoot = resolve(here, "../.."); // src
+const repoRoot = resolve(here, "../../..");
 
 function walk(dir: string, files: string[] = []): string[] {
 	for (const name of readdirSync(dir)) {

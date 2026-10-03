@@ -28,7 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(scriptDir, "../../..");
+const repoRoot = resolve(scriptDir, "..");
 const workflowPath = join(repoRoot, ".github/workflows/release.yml");
 const tauriCli = join(repoRoot, "node_modules/.bin/tauri");
 

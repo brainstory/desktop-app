@@ -122,7 +122,6 @@ jobs:
           check tauri.conf.json "$(node -p "require('./src-tauri/tauri.conf.json').version")"
           check Cargo.toml "$(sed -n 's/^version *= *"\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"
           check package.json "$(node -p "require('./package.json').version")"
-          check app/frontend/package.json "$(node -p "require('./app/frontend/package.json').version")"
 
       # Updater signing is NOT part of compilation: the build runs frontend
       # hooks (beforeBuildCommand), Cargo build scripts of every dependency
@@ -204,7 +203,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # the checksum step runs app/frontend/scripts/release-checksums.mjs
+      # the checksum step runs scripts/release-checksums.mjs
       # from this checkout; no git credentials are needed past the checkout
       # itself
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -311,7 +310,7 @@ jobs:
       # previous version - one bad tag can no longer auto-ship.
       - name: Generate checksums (SHA256SUMS.txt)
         shell: bash
-        run: node app/frontend/scripts/release-checksums.mjs artifacts
+        run: node scripts/release-checksums.mjs artifacts
 
       # verifiable link from the artifacts back to this workflow run
       - name: Attest build provenance

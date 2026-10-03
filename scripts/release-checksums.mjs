@@ -4,9 +4,9 @@
 // failed from the directory users download release assets into) and which
 // hashed the truncated manifest into itself on a repeat run.
 //
-// Interface: node app/frontend/scripts/release-checksums.mjs <artifact-dir>
+// Interface: node scripts/release-checksums.mjs <artifact-dir>
 // (from the release job's workspace root: `node
-// app/frontend/scripts/release-checksums.mjs artifacts`). The artifact
+// scripts/release-checksums.mjs artifacts`). The artifact
 // directory must be flat - the workflow's flatten step guarantees that - and
 // contain the full required asset set (installers, updater artifacts,
 // signatures, latest.json); anything else fails the run loudly.
@@ -111,7 +111,7 @@ export async function generateChecksums(dir) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
 	const dir = process.argv[2];
 	if (!dir) {
-		console.error("usage: node app/frontend/scripts/release-checksums.mjs <artifact-dir>");
+		console.error("usage: node scripts/release-checksums.mjs <artifact-dir>");
 		process.exitCode = 2;
 	} else {
 		generateChecksums(dir).then(

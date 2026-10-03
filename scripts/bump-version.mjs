@@ -2,8 +2,8 @@
 // Bump the app version everywhere it must agree, so a release tag can
 // never diverge from the committed versions:
 //   node scripts/bump-version.mjs 0.3.0
-// Updates src-tauri/tauri.conf.json, src-tauri/Cargo.toml, the root and
-// app/frontend package.json files, and src-tauri/Cargo.lock.
+// Updates src-tauri/tauri.conf.json, src-tauri/Cargo.toml, the root
+// package.json, and src-tauri/Cargo.lock.
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
@@ -26,7 +26,6 @@ function setJsonVersion(path) {
 
 setJsonVersion("src-tauri/tauri.conf.json");
 setJsonVersion("package.json");
-setJsonVersion("app/frontend/package.json");
 
 // Cargo.toml: only the [package] version (the first version = line)
 {
@@ -43,7 +42,7 @@ setJsonVersion("app/frontend/package.json");
 // Cargo.lock follows the crate version
 execSync(`cargo update -p brainstory --precise ${version}`, {
 	cwd: "src-tauri",
-	stdio: "inherit",
+	stdio: "inherit"
 });
 console.log(`bumped src-tauri/Cargo.lock`);
 console.log(`\nall manifests are now ${version}; commit them and tag v${version}`);

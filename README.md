@@ -185,20 +185,20 @@ APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke
 ## Development
 
 ```sh
-pnpm install          # installs the tauri CLI + frontend deps (workspace)
+pnpm install          # installs frontend deps + the tauri CLI
 
 pnpm tauri:dev        # dev: astro dev server + debug build
 pnpm tauri:build      # release build + .app + DMG (via scripts/make-dmg.sh,
                       # using plain hdiutil - tauri's own dmg bundler needs
                       # AppleScript control of Finder and fails headless)
-pnpm -C app/frontend typecheck   # tsc --noEmit + astro check (strict)
-pnpm -C app/frontend test        # vitest
-pnpm -C app/frontend lint        # eslint
-pnpm -C app/frontend vendor:check   # vendored icons/WASM complete, icon names valid
+pnpm typecheck        # tsc --noEmit + astro check (strict)
+pnpm test             # vitest
+pnpm lint             # eslint
+pnpm vendor:check     # vendored icons/WASM complete, icon names valid
 ```
 
 The frontend is TypeScript (`.ts` / `.tsx`; `.astro` pages stay `.astro`).
-Keep `pnpm -C app/frontend typecheck` green alongside tests and lint.
+Keep `pnpm typecheck` green alongside tests and lint.
 
 **Dark mode:** the window is pinned to a light theme (`"theme": "Light"` in
 `tauri.conf.json`). This is deliberate for now — the accent palette is tuned for
