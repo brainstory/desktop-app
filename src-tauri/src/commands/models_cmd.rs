@@ -435,13 +435,12 @@ pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(
 	}
 }
 
-/// The settings after `spec` became the active engine of its kind.
-/// Activating a local LLM also switches chats off an external endpoint:
-/// otherwise the model would load but never be used.
-fn activated_settings(
-	mut settings: crate::models::AiSettings,
-	spec: &crate::models::ModelSpec,
-) -> crate::models::AiSettings {
+/// Patch the settings for `spec` becoming the active engine of its
+/// kind; applied to the LATEST state through mutate_ai_settings, so a
+/// concurrent settings save can never be overwritten by a stale full
+/// snapshot. Activating a local LLM also switches chats off an external
+/// endpoint: otherwise the model would load but never be used.
+fn apply_activation(settings: &mut crate::models::AiSettings, spec: &crate::models::ModelSpec) {
 	match spec.kind {
 		ModelKind::Llm => {
 			settings.llm_mode = crate::models::LlmMode::Local;
@@ -451,7 +450,6 @@ fn activated_settings(
 			settings.stt_model = spec.id.to_string();
 		}
 	}
-	settings
 }
 
 /// Explicitly activate (and load if needed) a downloaded model. The
@@ -483,10 +481,17 @@ pub async fn activate_model(
 			ModelKind::Stt => state.load_stt(&app_handle, &spec),
 		} {
 			Ok(()) => {
-				// the settings row is only updated once the engine
-				// actually loaded, so the recorded active model can never
-				// disagree with the runtime
-				state.save_ai_settings(&activated_settings(state.ai_settings(), &spec))
+				// the settings row is only updated once the engine actually
+				// loaded, so the recorded active model can never disagree
+				// with the runtime; the patch applies to the LATEST state,
+				// so a settings save that landed while the engine was
+				// loading survives this commit
+				state
+					.mutate_ai_settings(|s| {
+						apply_activation(s, &spec);
+						Ok(())
+					})
+					.map(|_| ())
 			}
 			Err(e) => Err(e),
 		}
@@ -565,7 +570,8 @@ mod tests {
 		before.stt_model = "whisper-tiny-en".into();
 
 		let llm = find_model("gemma-4-E4B", ModelKind::Llm).unwrap();
-		let after = super::activated_settings(before.clone(), llm);
+		let mut after = before.clone();
+		super::apply_activation(&mut after, llm);
 		assert_eq!(after.llm_model, "gemma-4-E4B");
 		assert_eq!(
 			after.llm_mode,
@@ -575,10 +581,51 @@ mod tests {
 		assert_eq!(after.stt_model, "whisper-tiny-en", "STT untouched");
 
 		let stt = find_model("whisper-small-en", ModelKind::Stt).unwrap();
-		let after = super::activated_settings(before.clone(), stt);
+		let mut after = before.clone();
+		super::apply_activation(&mut after, stt);
 		assert_eq!(after.stt_model, "whisper-small-en");
 		assert_eq!(after.llm_mode, LlmMode::External, "LLM mode untouched");
 		assert_eq!(after.llm_model, before.llm_model);
+	}
+
+	#[test]
+	fn activation_and_a_concurrent_settings_save_both_survive() {
+		use crate::models::{find_model, LlmMode, ModelKind};
+		let (state, _dir) = temp_state("activate-race");
+		let state = std::sync::Arc::new(state);
+		let llm = find_model("gemma-4-E4B", ModelKind::Llm).unwrap();
+
+		// A settings save and an activation commit (which finishes a
+		// multi-second engine load before touching settings) race; both
+		// are poised on the barrier. Whichever lands last must not roll
+		// the other back.
+		let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+		let a_state = state.clone();
+		let a_barrier = barrier.clone();
+		let a = std::thread::spawn(move || {
+			a_barrier.wait();
+			a_state
+				.mutate_ai_settings(|s| {
+					super::apply_activation(s, llm);
+					Ok(())
+				})
+				.expect("activation patch commits");
+		});
+		let b_state = state.clone();
+		let b = std::thread::spawn(move || {
+			barrier.wait();
+			b_state
+				.mutate_ai_settings(|s| {
+					s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" }))
+				})
+				.expect("settings save commits");
+		});
+		a.join().unwrap();
+		b.join().unwrap();
+
+		assert_eq!(state.ai_settings().stt_language, "fr-FR");
+		assert_eq!(state.ai_settings().llm_model, "gemma-4-E4B");
+		assert_eq!(state.ai_settings().llm_mode, LlmMode::Local);
 	}
 
 	/// A download that ends (or never really starts) must release its slot,

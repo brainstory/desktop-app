@@ -2,7 +2,7 @@
 //! bookkeeping.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
@@ -74,9 +74,18 @@ impl EngineStatus {
 pub struct AppState {
 	pub db: Db,
 	pub data_dir: PathBuf,
-	/// Read-through cache of the AI settings (three keychain reads plus a
-	/// dozen DB rows on every load); invalidated by save_ai_settings.
-	pub ai_settings_cache: std::sync::RwLock<Option<AiSettings>>,
+	/// Authoritative read-through cache of the AI settings (three
+	/// keychain reads plus a dozen DB rows on every load). Every write
+	/// goes through [`Self::mutate_ai_settings`], which loads, patches,
+	/// persists and publishes under this one mutex, so two concurrent
+	/// partial updates can never overwrite each other's fields with
+	/// stale snapshots. Lock ordering: this mutex before the db
+	/// connection lock, never the reverse.
+	pub ai_settings_cache: std::sync::Mutex<Option<AiSettings>>,
+	/// Bumped on every successful publish by
+	/// [`Self::mutate_ai_settings`]; callers can compare the returned
+	/// generation against a later read to detect intervening writes.
+	pub ai_settings_generation: AtomicU64,
 	pub runtime: std::sync::Mutex<Runtime>,
 	pub llm_status: std::sync::Mutex<EngineStatus>,
 	pub stt_status: std::sync::Mutex<EngineStatus>,
@@ -172,7 +181,8 @@ impl AppState {
 		Self {
 			db,
 			data_dir,
-			ai_settings_cache: std::sync::RwLock::new(None),
+			ai_settings_cache: std::sync::Mutex::new(None),
+			ai_settings_generation: AtomicU64::new(0),
 			runtime: std::sync::Mutex::new(Runtime {
 				backend: None,
 				llm: None,
@@ -189,38 +199,55 @@ impl AppState {
 		}
 	}
 
-	/// The AI settings, from the read-through cache when warm. AiSettings
-	/// is only written through [`Self::save_ai_settings`], so the cache
-	/// can never go stale.
+	/// The AI settings, from the read-through cache when warm. All writes
+	/// go through [`Self::mutate_ai_settings`], which publishes under
+	/// this same mutex, so the cache can never go stale and a cold read
+	/// (load and publish inside the lock) can never overwrite a newer
+	/// published value.
 	pub fn ai_settings(&self) -> AiSettings {
-		let cache = self
-			.ai_settings_cache
-			.read()
-			.unwrap_or_else(|e| e.into_inner());
+		let mut cache = lock(&self.ai_settings_cache);
 		if let Some(cached) = cache.as_ref() {
 			return cached.clone();
 		}
-		drop(cache);
 		let loaded = AiSettings::load(&self.db);
-		*self
-			.ai_settings_cache
-			.write()
-			.unwrap_or_else(|e| e.into_inner()) = Some(loaded.clone());
+		*cache = Some(loaded.clone());
 		loaded
 	}
 
-	/// Persist settings and refresh the cache in one step, so a failed
-	/// write never leaves a cache disagreeing with the database.
-	pub fn save_ai_settings(&self, settings: &AiSettings) -> Result<(), String> {
-		// the cache mirrors what is stored, so secrets compare against it
-		// instead of a fresh keychain read per save
-		let previous = self.ai_settings();
-		settings.save(&self.db, &previous)?;
-		*self
-			.ai_settings_cache
-			.write()
-			.unwrap_or_else(|e| e.into_inner()) = Some(settings.clone());
-		Ok(())
+	/// The one mutation boundary for AI settings: load the latest state
+	/// (cache, or database when cold - inside the lock), apply `patch`
+	/// to a working copy, persist it, and publish it to the cache, all
+	/// under the settings mutex. `patch` returning Err aborts with the
+	/// cache and database unchanged; a failed persist never publishes,
+	/// so the cache can never disagree with the database either.
+	///
+	/// Returns the committed snapshot and the new generation (bumped on
+	/// every successful publish). No engine work may run while the lock
+	/// is held - start loaders after this returns. The critical section
+	/// may lock the db connection (settings mutex → db mutex, never the
+	/// reverse).
+	pub fn mutate_ai_settings(
+		&self,
+		patch: impl FnOnce(&mut AiSettings) -> Result<(), String>,
+	) -> Result<(AiSettings, u64), String> {
+		let mut cache = lock(&self.ai_settings_cache);
+		let latest = match cache.as_ref() {
+			Some(cached) => cached.clone(),
+			None => {
+				let loaded = AiSettings::load(&self.db);
+				*cache = Some(loaded.clone());
+				loaded
+			}
+		};
+		let mut working = latest.clone();
+		// the cache mirrors what is stored, so secrets compare against
+		// it (not a fresh keychain read) - untouched secrets are skipped
+		// on save
+		patch(&mut working)?;
+		working.save(&self.db, &latest)?;
+		let generation = self.ai_settings_generation.fetch_add(1, Ordering::SeqCst) + 1;
+		*cache = Some(working.clone());
+		Ok((working, generation))
 	}
 
 	pub fn models_dir(&self) -> PathBuf {
@@ -572,35 +599,255 @@ mod rollback_tests {
 mod settings_cache_tests {
 	use super::super::catalog::LLM_MODELS;
 	use super::*;
-	#[test]
-	fn ai_settings_cache_round_trips_through_save() {
+
+	fn temp_state(name: &str) -> (AppState, tempfile::TempDir) {
 		let dir = tempfile::tempdir().expect("tempdir");
-		let db = Db::open(&dir.path().join("t.db")).expect("db");
-		let state = AppState::new(db, dir.path().to_path_buf());
+		let db = Db::open(&dir.path().join(format!("{name}.db"))).expect("db");
+		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	/// Reopen the same database behind a fresh AppState, so assertions
+	/// check what was persisted, not just the cache.
+	fn reopened(dir: &std::path::Path, name: &str) -> AppState {
+		let db = Db::open(&dir.join(format!("{name}.db"))).expect("reopen db");
+		AppState::new(db, dir.to_path_buf())
+	}
+
+	#[test]
+	fn ai_settings_cache_round_trips_through_mutate() {
+		let (state, dir) = temp_state("roundtrip");
 
 		// cold read loads and warms the cache
 		assert_eq!(state.ai_settings().llm_model, LLM_MODELS[0].id);
-		// a write through save_ai_settings refreshes the cache
-		let mut next = state.ai_settings();
-		next.stt_language = "fr-FR".into();
-		state.save_ai_settings(&next).expect("save");
+		// a write through the mutation boundary refreshes the cache
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_language = "fr-FR".into();
+				Ok(())
+			})
+			.expect("mutate");
 		assert_eq!(state.ai_settings().stt_language, "fr-FR");
 		// and persisted: a fresh AppState sees the same value
-		let db2 = Db::open(&dir.path().join("t.db")).expect("reopen db");
-		let state2 = AppState::new(db2, dir.path().to_path_buf());
-		assert_eq!(state2.ai_settings().stt_language, "fr-FR");
+		assert_eq!(
+			reopened(dir.path(), "roundtrip").ai_settings().stt_language,
+			"fr-FR"
+		);
 	}
 	#[test]
 	fn ai_settings_cache_is_a_cache_not_a_source() {
-		// direct DB writes (the legacy path) are visible after a cache
-		// refresh via save, proving the cache never outruns the database
-		let dir = tempfile::tempdir().expect("tempdir");
-		let db = Db::open(&dir.path().join("t.db")).expect("db");
-		let state = AppState::new(db, dir.path().to_path_buf());
+		// the cache only ever mirrors committed database writes (via
+		// mutate_ai_settings), proving the cache never outruns the
+		// database
+		let (state, _dir) = temp_state("mirror");
 		let _ = state.ai_settings(); // warm
-		let mut updated = state.ai_settings();
-		updated.llm_model = "gemma-4-E4B".into();
-		state.save_ai_settings(&updated).expect("save");
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_model = "gemma-4-E4B".into();
+				Ok(())
+			})
+			.expect("mutate");
 		assert_eq!(state.ai_settings().llm_model, "gemma-4-E4B");
+	}
+
+	#[test]
+	fn disjoint_concurrent_patches_preserve_each_others_fields() {
+		let (state, dir) = temp_state("disjoint");
+		let state = std::sync::Arc::new(state);
+
+		// Both writers are poised before either mutates (the barrier),
+		// and the extLlmModel writer commits first (the channel), so the
+		// sttLanguage writer lands last. Committing last must not roll
+		// the other field back: each patch applies to the LATEST state
+		// under the mutex, never to a stale caller-side snapshot.
+		let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+		let (tx, rx) = std::sync::mpsc::channel::<()>();
+
+		let a_state = state.clone();
+		let a_barrier = barrier.clone();
+		let a = std::thread::spawn(move || {
+			a_barrier.wait();
+			a_state
+				.mutate_ai_settings(|s| {
+					s.apply_updates(&serde_json::json!({ "extLlmModel": "new-model" }))
+				})
+				.expect("extLlmModel patch commits");
+			tx.send(()).expect("first writer alive");
+		});
+		let b_state = state.clone();
+		let b = std::thread::spawn(move || {
+			barrier.wait();
+			rx.recv().expect("first writer committed");
+			b_state
+				.mutate_ai_settings(|s| {
+					s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" }))
+				})
+				.expect("sttLanguage patch commits");
+		});
+		a.join().unwrap();
+		b.join().unwrap();
+
+		assert_eq!(state.ai_settings().ext_llm_model, "new-model");
+		assert_eq!(state.ai_settings().stt_language, "fr-FR");
+		assert_eq!(
+			reopened(dir.path(), "disjoint").ai_settings().ext_llm_model,
+			"new-model"
+		);
+		assert_eq!(
+			reopened(dir.path(), "disjoint").ai_settings().stt_language,
+			"fr-FR"
+		);
+	}
+
+	#[test]
+	fn same_field_concurrent_patches_serialize_last_committer_wins() {
+		let (state, dir) = temp_state("samefield");
+		let state = std::sync::Arc::new(state);
+
+		let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+		let a_state = state.clone();
+		let a_barrier = barrier.clone();
+		let a = std::thread::spawn(move || {
+			a_barrier.wait();
+			a_state
+				.mutate_ai_settings(|s| {
+					s.stt_language = "de-DE".into();
+					Ok(())
+				})
+				.expect("first same-field patch")
+		});
+		let b_state = state.clone();
+		let b = std::thread::spawn(move || {
+			barrier.wait();
+			b_state
+				.mutate_ai_settings(|s| {
+					s.stt_language = "fr-FR".into();
+					Ok(())
+				})
+				.expect("second same-field patch")
+		});
+		let a_result = a.join().unwrap();
+		let b_result = b.join().unwrap();
+
+		// the higher generation committed last; its value is what both
+		// the cache and the database must show
+		let (last_value, last_gen) = if a_result.1 > b_result.1 {
+			("de-DE", a_result.1)
+		} else {
+			("fr-FR", b_result.1)
+		};
+		assert!(last_gen >= 2, "each commit bumped the generation");
+		assert_eq!(state.ai_settings().stt_language, last_value);
+		assert_eq!(
+			reopened(dir.path(), "samefield").ai_settings().stt_language,
+			last_value
+		);
+	}
+
+	#[test]
+	fn an_invalid_patch_changes_neither_cache_nor_database() {
+		let (state, dir) = temp_state("invalid");
+		let before = state.ai_settings();
+		let gen_before = state.ai_settings_generation.load(Ordering::SeqCst);
+
+		let err = state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({
+					"llmModel": "not-a-model",
+					"sttLanguage": "de-DE",
+				}))
+			})
+			.expect_err("the invalid field rejects the whole patch");
+		assert!(err.contains("unknown llmModel"), "unexpected: {err}");
+
+		let after = state.ai_settings();
+		assert_eq!(after.llm_model, before.llm_model);
+		assert_eq!(
+			after.stt_language, before.stt_language,
+			"de-DE must not leak"
+		);
+		assert_eq!(
+			state.ai_settings_generation.load(Ordering::SeqCst),
+			gen_before,
+			"a rejected patch is no publish"
+		);
+		let persisted = reopened(dir.path(), "invalid").ai_settings();
+		assert_eq!(persisted.llm_model, before.llm_model);
+		assert_eq!(persisted.stt_language, before.stt_language);
+	}
+
+	#[test]
+	fn a_cold_read_racing_a_save_never_loses_the_save() {
+		// Fresh state per round so every read is the cold one; whichever
+		// side gets the mutex first, the committed value must survive in
+		// cache and database.
+		for round in 0..32 {
+			let (state, dir) = temp_state(&format!("coldrace{round}"));
+			let state = std::sync::Arc::new(state);
+			let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+			let a_state = state.clone();
+			let a_barrier = barrier.clone();
+			let a = std::thread::spawn(move || {
+				a_barrier.wait();
+				a_state.ai_settings();
+			});
+			let b_state = state.clone();
+			let b = std::thread::spawn(move || {
+				barrier.wait();
+				b_state
+					.mutate_ai_settings(|s| {
+						s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" }))
+					})
+					.expect("save commits");
+			});
+			a.join().unwrap();
+			b.join().unwrap();
+
+			assert_eq!(
+				state.ai_settings().stt_language,
+				"fr-FR",
+				"round {round}: the cold read overwrote the published value"
+			);
+			assert_eq!(
+				reopened(dir.path(), &format!("coldrace{round}"))
+					.ai_settings()
+					.stt_language,
+				"fr-FR",
+				"round {round}"
+			);
+		}
+	}
+
+	#[test]
+	fn mutate_preserves_secret_keep_and_clear_semantics() {
+		// debug builds keep secrets in dev-only DB rows, so this never
+		// touches the developer's real keychain
+		let (state, dir) = temp_state("secrets");
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({ "hfToken": "fake-test-token" }))
+			})
+			.expect("store token");
+		assert_eq!(state.ai_settings().hf_token, "fake-test-token");
+
+		// an absent field keeps the stored secret
+		state
+			.mutate_ai_settings(|s| s.apply_updates(&serde_json::json!({ "sttLanguage": "fr-FR" })))
+			.expect("patch without the token field");
+		assert_eq!(state.ai_settings().hf_token, "fake-test-token");
+		// and so does an explicit null
+		state
+			.mutate_ai_settings(|s| {
+				s.apply_updates(&serde_json::json!({ "sttLanguage": "de-DE", "hfToken": null }))
+			})
+			.expect("null token");
+		assert_eq!(state.ai_settings().hf_token, "fake-test-token");
+
+		// an explicit empty string clears it
+		state
+			.mutate_ai_settings(|s| s.apply_updates(&serde_json::json!({ "hfToken": "" })))
+			.expect("clear token");
+		assert_eq!(state.ai_settings().hf_token, "");
+		assert_eq!(reopened(dir.path(), "secrets").ai_settings().hf_token, "");
 	}
 }
