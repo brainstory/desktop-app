@@ -168,9 +168,11 @@ fn sha256_of_file(path: &Path) -> Option<String> {
 /// One-time migration: move legacy app-dir model files into the hub
 /// cache so one copy serves Brainstory and every other HF tool. The
 /// source is hash-verified first - a corrupt or foreign file must never
-/// be renamed into a content-addressed store under a sha it doesn't
-/// have. An existing blob means the content is already cached: the app
-/// copy is redundant and simply removed.
+/// be copied into a content-addressed store under a sha it doesn't
+/// have. An existing blob counts as "already cached" only once its
+/// bytes verify against the pin, and the app copy is dropped only
+/// after a verified blob is published under a snapshot the resolver
+/// can read, so every failure leaves a usable copy behind (F14).
 pub fn migrate_legacy_models(models_dir: &Path, cache: &Path) {
 	for spec in LLM_MODELS.iter().chain(STT_MODELS.iter()) {
 		migrate_one(models_dir, cache, spec);
@@ -179,29 +181,103 @@ pub fn migrate_legacy_models(models_dir: &Path, cache: &Path) {
 
 /// Migrate a single spec's app-dir file into the cache (separate so
 /// tests can drive it with fixture specs instead of the catalog pins).
+///
+/// Ordering contract (verify-then-delete): the app-dir copy is the
+/// last known-good source, so it is deleted only after the destination
+/// is independently usable - a blob whose streamed sha256 matches the
+/// pin AND a snapshot entry that resolves (the resolver in state.rs
+/// reads `snapshots/<rev>/<filename>`, never a bare blob). Same-volume
+/// and cross-volume moves share the temp-copy/verify/publish ordering:
+/// a same-volume rename would move the only good copy to a staging
+/// name nothing resolves (and the startup sweep reclaims a
+/// full-length `.part`), while a copy leaves the app copy discoverable
+/// until the published blob plus snapshot replace it. Every failure
+/// path keeps either the untouched original or a verified copy, and
+/// the whole migration is idempotent, so a retry after an
+/// interruption is always safe.
 fn migrate_one(models_dir: &Path, cache: &Path, spec: &ModelSpec) {
 	let app_file = models_dir.join(spec.filename);
-	if !app_file.is_file() {
-		return;
-	}
 	let blob = hf_blob_path(cache, spec);
-	if blob.is_file() {
-		log::info!(
-			"migrating {}: blob already cached, dropping the app copy",
-			spec.id
-		);
-		if let Err(e) = std::fs::remove_file(&app_file) {
-			log::warn!("could not remove the redundant app copy: {e}");
+
+	// An existing hash-named blob is trusted only after its BYTES
+	// verify (size short-circuit + streamed sha256) against the pin:
+	// the name alone proves nothing, and a corrupt blob must never get
+	// the good app copy deleted. A blob that cannot be read is
+	// uncertainty, not validity - keep everything, retry next launch.
+	let blob_meta = std::fs::metadata(&blob);
+	if let Err(e) = &blob_meta {
+		if e.kind() != std::io::ErrorKind::NotFound {
+			log::warn!(
+				"cannot inspect the cache blob of {}: {e}; leaving the app copy in place",
+				spec.id
+			);
 			return;
 		}
-	} else {
-		match sha256_of_file(&app_file) {
-			Some(hash) if hash.eq_ignore_ascii_case(spec.sha256) => {}
-			other => {
+	}
+	let blob_exists = blob_meta.is_ok();
+	let mut blob_verified = false;
+	if let Ok(meta) = &blob_meta {
+		if meta.is_file() {
+			match snapshot_file_is_pinned(&blob, meta, spec) {
+				Some(true) => blob_verified = true,
+				// present but not the pinned bytes: the publish below
+				// repairs the sha-named slot with the real content
+				Some(false) => {}
+				None => {
+					log::warn!(
+						"cannot verify the cache blob of {}: leaving the app copy in place",
+						spec.id
+					);
+					return;
+				}
+			}
+		}
+	}
+
+	if !app_file.is_file() {
+		// Nothing to migrate. Still make an already-verified blob
+		// discoverable: the pre-fix ordering renamed the app copy into
+		// the blob before publishing the snapshot, so an interrupted
+		// run could leave an undiscoverable blob and no app copy.
+		if blob_verified {
+			if let Err(e) = materialize_snapshot(cache, spec) {
+				log::warn!("could not create the cache snapshot for {}: {e}", spec.id);
+			}
+		} else if blob_exists {
+			log::warn!(
+				"the cached copy of {} does not match the pinned content; re-download the model to repair it",
+				spec.id
+			);
+		}
+		return;
+	}
+
+	if !blob_verified {
+		// The app copy is the migration source: it must BE the pinned
+		// content before anything is published under the pinned name.
+		let app_meta = match std::fs::metadata(&app_file) {
+			Ok(meta) => meta,
+			Err(e) => {
 				log::warn!(
-					"leaving {} in the app models dir: its content does not match the pinned hash ({:?})",
-					spec.id,
-					other
+					"cannot inspect the app copy of {}: {e}; leaving it in place",
+					spec.id
+				);
+				return;
+			}
+		};
+		match snapshot_file_is_pinned(&app_file, &app_meta, spec) {
+			Some(true) => {}
+			Some(false) => {
+				log::warn!(
+					"leaving {} in the app models dir: its content does not match the pinned hash",
+					spec.id
+				);
+				return;
+			}
+			None => {
+				log::warn!(
+					"leaving {} in the app models dir: its content could not be verified",
+					spec.id
 				);
 				return;
 			}
@@ -212,27 +288,72 @@ fn migrate_one(models_dir: &Path, cache: &Path, spec: &ModelSpec) {
 				return;
 			}
 		}
-		// rename within a volume; fall back to copy-via-.part across
-		// volumes (a partial copy never lands under the final name)
-		if std::fs::rename(&app_file, &blob).is_err() {
-			let tmp = part_path(&blob);
-			match std::fs::copy(&app_file, &tmp)
-				.and_then(|_| std::fs::rename(&tmp, &blob))
-				.and_then(|_| std::fs::remove_file(&app_file))
-			{
-				Ok(()) => {}
-				Err(e) => {
-					log::warn!("could not migrate {} into the cache: {e}", spec.id);
-					let _ = std::fs::remove_file(&tmp);
-					return;
-				}
-			}
+		// temp-copy/verify/publish on every volume: a partial or bad
+		// copy never lands under the final name, and the app copy
+		// stays put until the blob is published
+		let tmp = part_path(&blob);
+		if let Err(e) = std::fs::copy(&app_file, &tmp) {
+			log::warn!("could not copy {} into the cache: {e}", spec.id);
+			let _ = std::fs::remove_file(&tmp);
+			return;
 		}
-		log::info!("migrated {} into the hub cache", spec.id);
+		// verify the staged bytes before publishing them: a faulty
+		// disk must not put unverified content under the pinned name
+		let staged = std::fs::metadata(&tmp)
+			.ok()
+			.and_then(|meta| snapshot_file_is_pinned(&tmp, &meta, spec));
+		if staged != Some(true) {
+			log::warn!(
+				"the staged copy of {} did not verify ({staged:?}); keeping the app copy",
+				spec.id
+			);
+			let _ = std::fs::remove_file(&tmp);
+			return;
+		}
+		// atomic publish. A unix rename replaces an existing entry;
+		// where it cannot (Windows over an existing file, or a non-file
+		// squatting on the name and refusing removal), the failure
+		// keeps the app copy - and the removal only ever targets a
+		// blob this run already proved unpinned, never verified data.
+		if let Err(e) = std::fs::rename(&tmp, &blob).or_else(|first| {
+			std::fs::remove_file(&blob)
+				.and_then(|_| std::fs::rename(&tmp, &blob))
+				.map_err(|_| first)
+		}) {
+			log::warn!("could not migrate {} into the cache: {e}", spec.id);
+			let _ = std::fs::remove_file(&tmp);
+			return;
+		}
 	}
+
+	// The blob is verified; publish the snapshot BEFORE dropping the
+	// app copy - a bare blob is not discoverable, so the snapshot is
+	// what completes the migration.
 	if let Err(e) = materialize_snapshot(cache, spec) {
-		log::warn!("could not create the cache snapshot for {}: {e}", spec.id);
+		log::warn!(
+			"could not create the cache snapshot for {}: {e}; keeping the app copy",
+			spec.id
+		);
+		return;
 	}
+	if hf_cache_model_path(cache, spec).is_none() {
+		log::warn!(
+			"the cache snapshot of {} did not resolve; keeping the app copy",
+			spec.id
+		);
+		return;
+	}
+	// A verified, discoverable destination exists: the app copy is now
+	// redundant. A failed removal is harmless - the next launch
+	// retries it through the verified-blob path above.
+	if let Err(e) = std::fs::remove_file(&app_file) {
+		log::warn!(
+			"migrated {} but could not remove the redundant app copy: {e}",
+			spec.id
+		);
+		return;
+	}
+	log::info!("migrated {} into the hub cache", spec.id);
 }
 
 /// Whether some snapshot entry still links to `blobs/<sha>`, from a
@@ -282,11 +403,11 @@ fn blob_referenced(snapshots_dir: &Path, sha: &str) -> Result<bool, String> {
 	Ok(false)
 }
 
-/// Whether a regular snapshot entry (a hardlink or copied fallback,
-/// e.g. on Windows) holds the pinned content: the catalog size
-/// short-circuits before any hashing, then the streamed sha256 must
-/// match the pin. `None` = could not verify (a read error): the
-/// caller must retain the file.
+/// Whether a regular file (a snapshot entry's hardlink/copy fallback,
+/// e.g. on Windows, a hash-named blob, or an app-dir model copy)
+/// holds the pinned content: the catalog size short-circuits before
+/// any hashing, then the streamed sha256 must match the pin. `None` =
+/// could not verify (a read error): the caller must retain the file.
 fn snapshot_file_is_pinned(
 	target: &Path,
 	meta: &std::fs::Metadata,
@@ -1787,8 +1908,8 @@ mod hf_cache_tests {
 #[cfg(test)]
 mod cache_storage_tests {
 	use super::{
-		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, remove_cached_model,
-		LLM_MODELS,
+		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, part_path,
+		remove_cached_model, LLM_MODELS,
 	};
 	use sha2::{Digest, Sha256};
 
@@ -1799,20 +1920,19 @@ mod cache_storage_tests {
 			.collect()
 	}
 
-	/// A spec-shaped fixture whose pinned sha matches `content`, so
-	/// migration/materialization accept it.
+	/// A spec-shaped fixture whose pinned sha AND size match `content`,
+	/// so migration/removal identify it like a real catalog model.
 	fn spec_for(content: &[u8]) -> super::ModelSpec {
 		let mut spec = LLM_MODELS[0].clone();
 		spec.sha256 = Box::leak(sha256_hex(content).into_boxed_str());
+		spec.size_bytes = content.len() as u64;
 		spec
 	}
 
-	/// Like [`spec_for`], with the catalog size pinned to the content
-	/// too, so removal's size short-circuit treats it as real.
+	/// [`spec_for`]; kept as a separate name where the pinned size is
+	/// the point of the test (content identification).
 	fn pinned_spec(content: &[u8]) -> super::ModelSpec {
-		let mut spec = spec_for(content);
-		spec.size_bytes = content.len() as u64;
-		spec
+		spec_for(content)
 	}
 
 	#[test]
@@ -1914,6 +2034,351 @@ mod cache_storage_tests {
 		// dup: blob already present, app copy dropped, snapshot exists
 		assert!(!models.join(dup_spec.filename).exists());
 		assert!(hf_cache_model_path(&cache, &dup_spec).is_some());
+	}
+
+	/// The F14 migration regressions share one shape: an app-dir source,
+	/// a cache the test corrupts/blocks, and assertions that a usable
+	/// copy survives every injected failure.
+	fn migration_fixture(
+		_tag: &str,
+	) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let models = dir.path().join("models");
+		let cache = dir.path().join("hub");
+		std::fs::create_dir_all(&models).expect("models dir");
+		(dir, models, cache)
+	}
+
+	#[test]
+	fn a_corrupt_cached_blob_never_costs_the_good_app_copy() {
+		// F14: a hash-named blob whose bytes do not match the pin must
+		// be treated as absent and replaced, never trusted by filename
+		// - deleting the good app copy on its word would leave the
+		// user with a corrupt, load-failing model
+		let (_dir, models, cache) = migration_fixture("f14-corrupt");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+
+		// the corrupt blob is fully published: same length as the pin
+		// (only the streamed sha256 can tell it apart) plus a live
+		// snapshot link - exactly the state the filename-trusting
+		// ordering leaves behind
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, b"badd model content").unwrap();
+		materialize_snapshot(&cache, &spec).expect("corrupt snapshot setup");
+
+		migrate_one(&models, &cache, &spec);
+
+		assert_eq!(
+			std::fs::read(&blob).unwrap(),
+			good.to_vec(),
+			"the corrupt blob is replaced by the verified app content"
+		);
+		let found = hf_cache_model_path(&cache, &spec).expect("the snapshot resolves");
+		assert_eq!(
+			std::fs::read(&found).unwrap(),
+			good.to_vec(),
+			"the model ends usable"
+		);
+		assert!(
+			!app.exists(),
+			"the app copy goes only once the destination holds verified bytes"
+		);
+		assert!(!part_path(&blob).exists(), "no staging junk is left");
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn an_unverifiable_blob_never_deletes_the_app_copy() {
+		// a blob that cannot be READ is uncertainty, not validity: the
+		// app copy is the only provably-good copy and must survive
+		use std::os::unix::fs::PermissionsExt;
+		let (_dir, models, cache) = migration_fixture("f14-unreadable");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		// same length as the pin so the size short-circuit cannot answer
+		std::fs::write(&blob, b"locked-away-bytes!").unwrap();
+		let mut perms = std::fs::metadata(&blob).unwrap().permissions();
+		perms.set_mode(0o000);
+		std::fs::set_permissions(&blob, perms).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		assert!(
+			app.is_file(),
+			"the app copy is never dropped on an unverifiable blob"
+		);
+		assert_eq!(std::fs::read(&app).unwrap(), good.to_vec());
+		let mut perms = std::fs::metadata(&blob).unwrap().permissions();
+		perms.set_mode(0o644);
+		std::fs::set_permissions(&blob, perms).unwrap();
+		assert!(
+			!part_path(&blob).exists(),
+			"no staging junk beside the retained blob"
+		);
+	}
+
+	#[test]
+	fn migration_publishes_the_snapshot_before_dropping_the_app_copy() {
+		// F14: a snapshot that cannot be created (here: a regular file
+		// squatting on the revision dir) must leave the app copy in
+		// place - a bare blob is not discoverable by the resolver
+		let (_dir, models, cache) = migration_fixture("f14-blocked");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+
+		let repo = cache.join(format!("models--{}", spec.repo.replace('/', "--")));
+		std::fs::create_dir_all(repo.join("snapshots")).unwrap();
+		std::fs::write(repo.join("snapshots").join(spec.sha256), b"not a dir").unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		// the failure keeps a usable copy: the untouched app file...
+		assert_eq!(
+			std::fs::read(&app).unwrap(),
+			good.to_vec(),
+			"the app copy survives a snapshot-publishing failure"
+		);
+		// ...plus the already-verified blob as retry fodder
+		assert_eq!(
+			std::fs::read(hf_blob_path(&cache, &spec)).unwrap(),
+			good.to_vec()
+		);
+		assert!(
+			hf_cache_model_path(&cache, &spec).is_none(),
+			"no snapshot could be published"
+		);
+		assert!(!part_path(&hf_blob_path(&cache, &spec)).exists());
+
+		// once the blockage is gone, the retry completes cleanly
+		std::fs::remove_file(repo.join("snapshots").join(spec.sha256)).unwrap();
+		migrate_one(&models, &cache, &spec);
+		assert!(!app.exists(), "the retry retires the app copy");
+		assert_eq!(
+			std::fs::read(hf_cache_model_path(&cache, &spec).expect("resolves")).unwrap(),
+			good.to_vec()
+		);
+	}
+
+	#[test]
+	fn migration_heals_a_missing_snapshot_when_the_app_copy_is_already_gone() {
+		// the pre-F14 ordering renamed the app copy into the blob and
+		// only then failed to publish the snapshot, leaving nothing
+		// discoverable; the fixed migration repairs that state instead
+		// of skipping it (no app file to act on)
+		let (_dir, models, cache) = migration_fixture("f14-heal");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, good).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		let found =
+			hf_cache_model_path(&cache, &spec).expect("the verified blob becomes discoverable");
+		assert_eq!(std::fs::read(&found).unwrap(), good.to_vec());
+
+		// a blob that fails verification gets no snapshot: linking it
+		// would advertise corrupt bytes as a usable model
+		let mut corrupt = pinned_spec(b"entirely elsewhere");
+		corrupt.filename = "corrupt.gguf";
+		let corrupt_blob = hf_blob_path(&cache, &corrupt);
+		std::fs::create_dir_all(corrupt_blob.parent().unwrap()).unwrap();
+		std::fs::write(&corrupt_blob, b"junk bytes").unwrap();
+		migrate_one(&models, &cache, &corrupt);
+		assert!(
+			hf_cache_model_path(&cache, &corrupt).is_none(),
+			"corrupt bytes are never published as a model"
+		);
+	}
+
+	#[test]
+	fn same_volume_migration_is_complete_and_repeatable() {
+		let (_dir, models, cache) = migration_fixture("f14-same");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+		assert!(!app.exists(), "the app copy is retired");
+		let blob = hf_blob_path(&cache, &spec);
+		assert_eq!(std::fs::read(&blob).unwrap(), good.to_vec());
+		let found = hf_cache_model_path(&cache, &spec).expect("the snapshot resolves");
+		assert_eq!(std::fs::read(&found).unwrap(), good.to_vec());
+		assert!(!part_path(&blob).exists());
+
+		// repeatable: later runs change nothing and fail nothing
+		migrate_one(&models, &cache, &spec);
+		migrate_one(&models, &cache, &spec);
+		assert!(!app.exists());
+		assert_eq!(std::fs::read(&blob).unwrap(), good.to_vec());
+		assert!(hf_cache_model_path(&cache, &spec).is_some());
+	}
+
+	#[test]
+	fn cross_volume_migration_copies_verifies_and_publishes() {
+		// separate roots stand in for separate volumes; same-volume and
+		// cross-volume moves share the temp-copy/verify/publish
+		// ordering, so this drives exactly the cross-volume path
+		let models_root = tempfile::tempdir().expect("tempdir");
+		let cache_root = tempfile::tempdir().expect("tempdir");
+		let models = models_root.path().to_path_buf();
+		let cache = cache_root.path().join("hub");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+		assert!(!app.exists(), "the app copy is retired");
+		assert_eq!(
+			std::fs::read(hf_blob_path(&cache, &spec)).unwrap(),
+			good.to_vec()
+		);
+		assert_eq!(
+			std::fs::read(hf_cache_model_path(&cache, &spec).expect("resolves")).unwrap(),
+			good.to_vec()
+		);
+	}
+
+	#[test]
+	fn an_interrupted_migration_retries_cleanly() {
+		// interrupted mid-copy: a partial staging file plus the intact
+		// app copy; the retry must converge and leave no junk behind
+		let (_dir, models, cache) = migration_fixture("f14-retry-copy");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(part_path(&blob), &good[..5]).unwrap(); // interrupted staging
+
+		migrate_one(&models, &cache, &spec);
+		assert!(!app.exists(), "the retry completes the migration");
+		assert_eq!(std::fs::read(&blob).unwrap(), good.to_vec());
+		assert!(hf_cache_model_path(&cache, &spec).is_some());
+		assert!(
+			!part_path(&blob).exists(),
+			"no staging junk survives the retry"
+		);
+
+		// interrupted between publish and cleanup: the verified blob
+		// and the app copy coexist; the retry dedupes them
+		let (_dir, models, cache) = migration_fixture("f14-retry-dedup");
+		let mut spec2 = pinned_spec(good);
+		spec2.filename = "second.gguf";
+		let app2 = models.join(spec2.filename);
+		std::fs::write(&app2, good).unwrap();
+		let blob2 = hf_blob_path(&cache, &spec2);
+		std::fs::create_dir_all(blob2.parent().unwrap()).unwrap();
+		std::fs::write(&blob2, good).unwrap(); // published, cleanup never ran
+
+		migrate_one(&models, &cache, &spec2);
+		assert!(!app2.exists(), "the redundant copy goes on the retry");
+		assert_eq!(std::fs::read(&blob2).unwrap(), good.to_vec());
+		assert!(hf_cache_model_path(&cache, &spec2).is_some());
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
+	fn migration_survives_a_readonly_blobs_dir() {
+		// a copy that cannot even start leaves the original untouched
+		use std::os::unix::fs::PermissionsExt;
+		let (_dir, models, cache) = migration_fixture("f14-ro");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		let mut perms = std::fs::metadata(blob.parent().unwrap())
+			.unwrap()
+			.permissions();
+		perms.set_mode(0o555);
+		std::fs::set_permissions(blob.parent().unwrap(), perms).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		assert_eq!(
+			std::fs::read(&app).unwrap(),
+			good.to_vec(),
+			"the app copy survives the failed copy"
+		);
+		assert!(!blob.exists());
+		assert!(!part_path(&blob).exists(), "no staging junk on failure");
+		let mut perms = std::fs::metadata(blob.parent().unwrap())
+			.unwrap()
+			.permissions();
+		perms.set_mode(0o755);
+		std::fs::set_permissions(blob.parent().unwrap(), perms).unwrap();
+	}
+
+	#[test]
+	fn migration_survives_a_directory_squatting_on_the_blob_name() {
+		// publishing over a directory fails: the app copy must survive
+		// and the squatting entry must not be damaged
+		let (_dir, models, cache) = migration_fixture("f14-dir");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		std::fs::write(&app, good).unwrap();
+		let blob = hf_blob_path(&cache, &spec);
+		std::fs::create_dir_all(&blob).unwrap(); // a directory, not a file
+		std::fs::write(blob.join("inner.txt"), b"foreign").unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		assert_eq!(
+			std::fs::read(&app).unwrap(),
+			good.to_vec(),
+			"the app copy survives the failed publish"
+		);
+		assert!(
+			blob.join("inner.txt").is_file(),
+			"the foreign entry is untouched"
+		);
+		assert!(!part_path(&blob).exists(), "no staging junk");
+	}
+
+	#[test]
+	fn a_corrupt_source_is_preserved_untouched_and_reported() {
+		// the source must BE the pinned content before anything is
+		// published under the pinned name; a file that is not (here:
+		// same length, one byte off - only the sha256 catches it)
+		// stays exactly as it was (the mismatch is reported through
+		// the warn! log, the pre-existing reporting path)
+		let (_dir, models, cache) = migration_fixture("f14-source");
+		let good = b"good model content";
+		let spec = pinned_spec(good);
+		let app = models.join(spec.filename);
+		let corrupt = b"goad model content";
+		std::fs::write(&app, corrupt).unwrap();
+
+		migrate_one(&models, &cache, &spec);
+
+		assert_eq!(
+			std::fs::read(&app).unwrap(),
+			corrupt.to_vec(),
+			"the unverifiable source is untouched"
+		);
+		assert!(
+			!hf_blob_path(&cache, &spec).exists(),
+			"nothing is published under the pinned name"
+		);
+		assert!(hf_cache_model_path(&cache, &spec).is_none());
 	}
 
 	#[cfg(target_family = "unix")]
