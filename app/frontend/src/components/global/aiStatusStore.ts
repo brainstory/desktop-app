@@ -31,55 +31,125 @@ let starting: Promise<void> | null = null;
 /** bumped on teardown so a start that is still awaiting bails out */
 let generation = 0;
 let unlisteners: (() => void)[] = [];
+/** pending bounded-retry timer of the current start; null when idle */
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function start(gen: number): Promise<void> {
-	const { listen } = await import("@tauri-apps/api/event");
-	// Listen BEFORE reading the initial status: an event emitted while the
-	// read is in flight is newer than the read's answer and must win.
-	const fromEvent = { llm: false, stt: false };
-	const subscriptions = await Promise.all([
-		listen<EngineStatus>(EVENTS.llmStatus, (event) => {
-			fromEvent.llm = true;
-			$aiStatus.set({ ...$aiStatus.get(), llm: event.payload });
-		}),
-		listen<EngineStatus>(EVENTS.sttStatus, (event) => {
-			fromEvent.stt = true;
-			$aiStatus.set({ ...$aiStatus.get(), stt: event.payload });
-		})
-	]);
-	if (gen !== generation) {
-		subscriptions.forEach((unlisten) => unlisten());
-		return;
-	}
-	unlisteners = subscriptions;
+/**
+ * Retry budget for a failed listener acquisition or initial read: capped
+ * backoff, finitely many attempts, no rapid polling. After the last
+ * attempt the store stays "not loaded" until every consumer
+ * unsubscribes and a later subscribe starts a fresh lifecycle.
+ */
+const RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000];
 
-	try {
-		const status = await getRuntimeStatusApi();
-		if (gen !== generation) return;
-		const current = $aiStatus.get();
-		$aiStatus.set({
-			llm: fromEvent.llm ? current.llm : status.llm,
-			stt: fromEvent.stt ? current.stt : status.stt,
-			loaded: true
-		});
-	} catch (e) {
-		// stays "not loaded": consumers show nothing rather than a wrong
-		// "missing"/"loading" claim; live events still update the store
-		console.error("failed to read runtime status", e);
+function cancelRetry(): void {
+	if (retryTimer !== null) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
 	}
 }
 
+/**
+ * One feed lifecycle. Transient failures — one listen rejecting, or the
+ * initial read failing — retry with the bounded backoff above while
+ * `gen` is current; teardown (gen bump + cancelRetry) cancels both the
+ * timers and the in-flight continuations via the gen checks.
+ */
+function startLifecycle(gen: number): Promise<void> {
+	// per-engine: which engines already reported through a live event.
+	// An event is newer than any read answer in flight and must win, but
+	// only for the engine that emitted it — one engine's event must not
+	// make the other engine's placeholder value authoritative.
+	const fromEvent = { llm: false, stt: false };
+	let tries = 0;
+
+	const attempt = async (): Promise<void> => {
+		if (gen !== generation) return;
+		const { listen } = await import("@tauri-apps/api/event");
+		if (gen !== generation) return;
+		if (unlisteners.length === 0) {
+			// Listen BEFORE reading the initial status: an event emitted
+			// while the read is in flight is newer than the read's answer
+			// and must win. All-or-nothing: if one listen rejects, the
+			// sibling that already resolved must be released again.
+			const acquired: (() => void)[] = [];
+			try {
+				acquired.push(
+					await listen<EngineStatus>(EVENTS.llmStatus, (event) => {
+						fromEvent.llm = true;
+						$aiStatus.set({ ...$aiStatus.get(), llm: event.payload });
+					})
+				);
+				acquired.push(
+					await listen<EngineStatus>(EVENTS.sttStatus, (event) => {
+						fromEvent.stt = true;
+						$aiStatus.set({ ...$aiStatus.get(), stt: event.payload });
+					})
+				);
+			} catch (e) {
+				acquired.forEach((unlisten) => unlisten());
+				throw e;
+			}
+			if (gen !== generation) {
+				acquired.forEach((unlisten) => unlisten());
+				return;
+			}
+			unlisteners = acquired;
+		}
+		try {
+			const status = await getRuntimeStatusApi();
+			if (gen !== generation) return;
+			const current = $aiStatus.get();
+			$aiStatus.set({
+				llm: fromEvent.llm ? current.llm : status.llm,
+				stt: fromEvent.stt ? current.stt : status.stt,
+				loaded: true
+			});
+		} catch (e) {
+			// stays "not loaded": consumers show nothing rather than a
+			// wrong "missing"/"loading" claim; live events still update
+			// the store and the retry below re-reads
+			console.error("failed to read runtime status", e);
+			throw e;
+		}
+	};
+
+	const retry = (): void => {
+		if (gen !== generation) return;
+		const delay = RETRY_DELAYS_MS[tries];
+		if (delay === undefined) return;
+		tries++;
+		retryTimer = setTimeout(() => {
+			retryTimer = null;
+			if (gen !== generation) return;
+			void attempt().catch(retry);
+		}, delay);
+	};
+
+	return (async () => {
+		try {
+			await attempt();
+		} catch {
+			// the bounded retry above owns recovery; resolving keeps
+			// fire-and-forget callers (onMount) free of rejections
+			retry();
+		}
+	})();
+}
+
 /** Seed from the backend and subscribe to status events. Idempotent:
- * every caller shares one start. Subscribing to $aiStatus calls this
- * automatically. */
+ * every caller shares one start, which never rejects — a failed start
+ * retries internally with capped backoff. Subscribing to $aiStatus
+ * calls this automatically. */
 export function initAiStatus(): Promise<void> {
-	starting ??= start(generation);
+	starting ??= startLifecycle(generation);
 	return starting;
 }
 
 function teardown(): void {
 	generation++;
 	starting = null;
+	cancelRetry();
 	unlisteners.forEach((unlisten) => unlisten());
 	unlisteners = [];
 	// nobody listened for a while: the values may be stale, re-read on
