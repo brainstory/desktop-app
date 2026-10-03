@@ -763,9 +763,8 @@ impl ExternalLlm {
 				return Err("generation cancelled".into());
 			}
 			let content = json_completion_content(&body)?;
-			if !content.is_empty() {
-				on_chunk(content.clone());
-			}
+			ensure_usable_completion(&content)?;
+			on_chunk(content.clone());
 			return Ok((content, None));
 		}
 		if !content_type.is_empty() && !content_type.contains("text/event-stream") {
@@ -816,6 +815,7 @@ impl ExternalLlm {
 				let event_bytes: Vec<u8> = buffer.drain(..pos).collect();
 				let event = String::from_utf8_lossy(&event_bytes);
 				if consume_sse_event(&event, &mut output, &mut on_chunk)? {
+					ensure_usable_completion(&output)?;
 					return Ok((output, None));
 				}
 			}
@@ -826,9 +826,11 @@ impl ExternalLlm {
 		if !buffer.is_empty() {
 			let tail = String::from_utf8_lossy(&buffer);
 			if consume_sse_event(&tail, &mut output, &mut on_chunk)? {
+				ensure_usable_completion(&output)?;
 				return Ok((output, None));
 			}
 		}
+		ensure_usable_completion(&output)?;
 		Ok((output, None))
 	}
 }
@@ -887,6 +889,17 @@ fn json_completion_content(body: &str) -> Result<String, String> {
 				truncate_body(body)
 			)
 		})
+}
+
+/// A completion that produced no usable assistant content - an empty
+/// body, comments/keepalives only, an empty [DONE], or nothing but
+/// unparseable events - is a bounded error, never a successful empty
+/// completion. Provider errors abort earlier, in [`consume_sse_event`].
+fn ensure_usable_completion(output: &str) -> Result<(), String> {
+	if output.is_empty() {
+		return Err("endpoint returned an empty completion".into());
+	}
+	Ok(())
 }
 
 /// Parse one SSE event's `data:` lines, appending content deltas. Returns
@@ -1510,6 +1523,158 @@ mod external_stream_tests {
 			.await
 			.expect_err("an error object must surface");
 		assert!(err.contains("model not loaded"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_an_empty_sse_stream() {
+		// F09: a 200 text/event-stream with an empty body used to return
+		// Ok(("", None)), so the command layer treated an unusable
+		// completion as a success.
+		let url = serve_sse(vec![]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("an empty SSE body is not a completion");
+		assert!(err.contains("empty completion"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_a_stream_of_only_comments_and_keepalives() {
+		let url = serve_sse(vec![": keepalive\n\n".into(), ": ping\n\n".into()]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("comments carry no completion");
+		assert!(err.contains("empty completion"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_an_empty_done_marker_without_content() {
+		let url = serve_sse(vec!["data: [DONE]\n\n".into()]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("[DONE] without any content is not a completion");
+		assert!(err.contains("empty completion"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_a_stream_of_only_malformed_events() {
+		let url = serve_sse(vec![
+			"data: {not json\n\n".into(),
+			"data: \"also broken\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("only unparseable events is not a completion");
+		assert!(err.contains("empty completion"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_errors_when_the_provider_signals_an_error_after_text() {
+		// the partial text must not be returned as a success
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n".into(),
+			"data: {\"error\":{\"message\":\"model overloaded\"}}\n\n".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("a provider error event must fail the generation");
+		assert!(err.contains("model overloaded"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_accepts_a_final_event_without_a_trailing_blank_line() {
+		// compatibility: servers that end valid content with neither a
+		// final blank line nor [DONE] keep working
+		let url = serve_sse(vec![
+			"data: {\"choices\":[{\"delta\":{\"content\":\"tail\"}}]}".into(),
+		]);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let (output, _) = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect("valid content ending at EOF is a completion");
+		assert_eq!(output, "tail");
+	}
+
+	#[tokio::test]
+	async fn external_generate_rejects_an_empty_json_completion() {
+		let url = serve_typed(
+			"application/json",
+			r#"{"choices":[{"index":0,"message":{"role":"assistant","content":""}}]}"#.into(),
+		);
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let err = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect_err("empty JSON content is not a completion");
+		assert!(err.contains("empty completion"), "unexpected: {err}");
+	}
+
+	#[tokio::test]
+	async fn external_generate_reassembles_utf8_split_across_stream_chunks() {
+		// the emoji is split mid-character across two TCP writes: the
+		// parser must buffer until the event is complete instead of
+		// lossy-decoding each chunk separately
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		std::thread::spawn(move || {
+			if let Ok((mut sock, _)) = listener.accept() {
+				use std::io::{Read, Write};
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				let body = format!(
+					"data: {{\"choices\":[{{\"delta\":{{\"content\":\"brain {} story\"}}}}]}}\n\ndata: [DONE]\n\n",
+					"🧠"
+				);
+				let bytes = body.as_bytes();
+				// two bytes into the four-byte character: not a char boundary
+				let split = body.find("🧠").expect("emoji") + 2;
+				let head = format!(
+					"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+					bytes.len()
+				);
+				let _ = sock.write_all(head.as_bytes());
+				let _ = sock.write_all(&bytes[..split]);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(100));
+				let _ = sock.write_all(&bytes[split..]);
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+		let url = format!("http://{addr}/v1");
+		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let (output, _) = client
+			.generate("", &[], &cancel, 8, |_| {})
+			.await
+			.expect("a character split across stream chunks must not corrupt decoding");
+		assert_eq!(output, "brain 🧠 story");
 	}
 
 	// keep the capped reader honest alongside the stream tests
