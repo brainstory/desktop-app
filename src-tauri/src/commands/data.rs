@@ -130,6 +130,10 @@ pub async fn update_idea(
 			}
 		}
 	}
+	// The daily-intent completion (when a nonempty result finishes an
+	// idea that is today's intent) rides the same transaction inside
+	// update_idea, so a failure there can't leave the result saved with
+	// the day still incomplete.
 	state.db.update_idea(
 		&id,
 		derived_title.as_deref(),
@@ -137,11 +141,6 @@ pub async fn update_idea(
 		transcript.as_deref(),
 		structured_result.as_ref(),
 	)?;
-	if let Some(r) = &result {
-		if !r.is_empty() {
-			state.db.mark_daily_completed(&id)?;
-		}
-	}
 	Ok(serde_json::json!({ "id": id }))
 }
 

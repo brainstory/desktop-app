@@ -679,6 +679,10 @@ impl Db {
 		})
 	}
 
+	/// Update an idea's fields in one transaction. Saving a nonempty
+	/// result is the finish gesture: when this idea is today's daily
+	/// intent, the day is completed inside the same transaction, so the
+	/// idea and the day's completion state commit or roll back together.
 	pub fn update_idea(
 		&self,
 		id: &str,
@@ -722,6 +726,14 @@ impl Db {
 					params![s.to_string(), id],
 				)
 				.map_err(|e| format!("failed to save feedback document: {e}"))?;
+			}
+			// Same predicate the command always applied: only a nonempty
+			// result marks the day complete. An idea with no (or another
+			// day's) daily association matches zero rows and is a no-op.
+			if let Some(r) = result {
+				if !r.is_empty() {
+					Self::complete_daily_tx(conn, id)?;
+				}
 			}
 			Ok(())
 		})
@@ -1193,15 +1205,21 @@ impl Db {
 		})
 	}
 
-	pub fn mark_daily_completed(&self, idea_id: &str) -> Result<(), String> {
+	/// Mark today's daily row complete when `idea_id` is its intent.
+	/// Ideas without a (today's) daily association match zero rows; the
+	/// day/timezone semantics stay exactly as they were.
+	fn complete_daily_tx(conn: &Connection, idea_id: &str) -> Result<(), String> {
 		let today = today_local().format("%Y-%m-%d").to_string();
-		self.lock()
-			.execute(
-				"UPDATE daily SET is_completed = 1 WHERE date = ?1 AND intent_idea_id = ?2",
-				params![today, idea_id],
-			)
-			.map_err(|e| format!("failed to complete daily intent: {e}"))?;
+		conn.execute(
+			"UPDATE daily SET is_completed = 1 WHERE date = ?1 AND intent_idea_id = ?2",
+			params![today, idea_id],
+		)
+		.map_err(|e| format!("failed to complete daily intent: {e}"))?;
 		Ok(())
+	}
+
+	pub fn mark_daily_completed(&self, idea_id: &str) -> Result<(), String> {
+		self.with_tx(|conn| Self::complete_daily_tx(conn, idea_id))
 	}
 
 	/// True if any idea, log or survey was recorded today (local time) -
@@ -1348,6 +1366,182 @@ mod tests {
 			.update_idea("ghost", Some("t"), None, None, None)
 			.expect_err("updating a missing idea must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn failed_daily_completion_rolls_back_the_finished_idea() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		let draft = vec![ChatMessage {
+			role: "user".into(),
+			content: "talked through the day".into(),
+		}];
+		db.create_daily_intent_idea("i1", "", "", &draft, &serde_json::json!({}))
+			.unwrap();
+		assert!(!db.get_daily_status().is_completed);
+		// a failure injected into the daily-completion write only
+		db.lock()
+			.execute_batch(
+				"CREATE TRIGGER fail_daily_complete BEFORE UPDATE ON daily
+				 WHEN NEW.is_completed = 1
+				 BEGIN SELECT RAISE(ABORT, 'injected completion failure'); END;",
+			)
+			.unwrap();
+		// the save sequence: persist the finished idea, then complete the day
+		let finished = vec![ChatMessage {
+			role: "assistant".into(),
+			content: "all done".into(),
+		}];
+		let outcome = db
+			.update_idea(
+				"i1",
+				Some("Derived Title"),
+				Some("## Finished"),
+				Some(&finished),
+				None,
+			)
+			.and_then(|()| db.mark_daily_completed("i1"));
+		let err = outcome.expect_err("the injected completion failure must surface");
+		assert!(
+			err.contains("injected completion failure"),
+			"unexpected error: {err}"
+		);
+		// all-or-nothing: the idea must still be the draft it was
+		let idea = db.get_idea("i1").unwrap().unwrap();
+		assert_eq!(
+			idea.result.as_deref(),
+			Some(""),
+			"result committed even though the daily completion failed (partial commit)"
+		);
+		assert_eq!(idea.title, "", "title must roll back with the result");
+		let transcript = idea.transcript.expect("draft transcript kept");
+		assert_eq!(
+			transcript.len(),
+			1,
+			"transcript must roll back with the result"
+		);
+		assert_eq!(transcript[0].content, "talked through the day");
+		assert!(
+			!db.get_daily_status().is_completed,
+			"the day must not be completed either"
+		);
+	}
+
+	#[test]
+	fn finishing_the_intent_completes_the_day_in_the_same_transaction() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
+			.unwrap();
+		assert!(!db.get_daily_status().is_completed);
+		db.update_idea("i1", Some("Derived Title"), Some("## Result"), None, None)
+			.unwrap();
+		let idea = db.get_idea("i1").unwrap().unwrap();
+		assert_eq!(idea.result.as_deref(), Some("## Result"));
+		assert_eq!(idea.title, "Derived Title");
+		assert!(
+			db.get_daily_status().is_completed,
+			"a nonempty result completes the day together with the idea update"
+		);
+	}
+
+	#[test]
+	fn updating_an_ordinary_idea_without_a_daily_association_still_saves() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.insert_idea(NewIdea {
+			id: "note",
+			title: "",
+			idea_type: IdeaType::Original,
+			result: "",
+			metadata: &serde_json::json!({}),
+			..Default::default()
+		})
+		.unwrap();
+		db.update_idea(
+			"note",
+			Some("Note"),
+			Some("a plain finished idea"),
+			None,
+			None,
+		)
+		.unwrap();
+		let idea = db.get_idea("note").unwrap().unwrap();
+		assert_eq!(idea.result.as_deref(), Some("a plain finished idea"));
+		assert_eq!(idea.title, "Note");
+		// no daily row is created or completed by an ordinary idea
+		let daily_rows: i64 = db
+			.lock()
+			.query_row("SELECT COUNT(*) FROM daily", [], |r| r.get(0))
+			.unwrap();
+		assert_eq!(daily_rows, 0, "ordinary ideas never touch the daily table");
+		assert!(!db.get_daily_status().is_completed);
+	}
+
+	#[test]
+	fn empty_or_absent_result_leaves_daily_completion_unchanged() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
+			.unwrap();
+		// an explicitly empty result saves but does not complete the day
+		db.update_idea("i1", None, Some(""), None, None).unwrap();
+		assert_eq!(
+			db.get_idea("i1").unwrap().unwrap().result.as_deref(),
+			Some("")
+		);
+		assert!(!db.get_daily_status().is_completed);
+		// a transcript-only autosave (absent result) doesn't complete either
+		let chat = vec![ChatMessage {
+			role: "user".into(),
+			content: "more".into(),
+		}];
+		db.update_idea("i1", None, None, Some(&chat), None).unwrap();
+		assert!(!db.get_daily_status().is_completed);
+		// once the day is complete, later saves must not undo it
+		db.update_idea("i1", None, Some("## Done"), None, None)
+			.unwrap();
+		assert!(db.get_daily_status().is_completed);
+		db.update_idea("i1", None, None, Some(&chat), None).unwrap();
+		assert!(db.get_daily_status().is_completed);
+	}
+
+	#[test]
+	fn repeating_the_finished_intent_update_is_idempotent() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
+			.unwrap();
+		db.update_idea("i1", Some("T"), Some("## First"), None, None)
+			.unwrap();
+		assert!(db.get_daily_status().is_completed);
+		db.update_idea("i1", Some("T"), Some("## Second"), None, None)
+			.unwrap();
+		assert!(
+			db.get_daily_status().is_completed,
+			"a repeated finish keeps the day completed"
+		);
+		assert_eq!(
+			db.get_idea("i1").unwrap().unwrap().result.as_deref(),
+			Some("## Second")
+		);
+	}
+
+	#[test]
+	fn update_after_the_intent_idea_was_deleted_reports_not_found() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
+			.unwrap();
+		assert!(db.delete_idea("i1").unwrap());
+		let err = db
+			.update_idea("i1", None, Some("## Result"), None, None)
+			.expect_err("updating a deleted idea must fail");
+		assert!(err.contains("not found"), "unexpected error: {err}");
+		// the day row survives the delete untouched and uncompleted
+		let status = db.get_daily_status();
+		assert!(!status.is_completed);
+		assert_eq!(status.intent_idea_id, None);
 	}
 
 	#[test]
