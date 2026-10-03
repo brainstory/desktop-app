@@ -3,7 +3,7 @@
 //! the story result summary prompt through LocalLlm, exactly as the ai
 //! command layer resolves them, and checks that thinking models come back
 //! clean (no `<think>` reasoning in streamed or returned text).
-//! The F21 probes at the bottom drive the context-fit truncation with
+//! The truncation probes at the bottom drive the context-fit path with
 //! oversized payloads; they need a fixture whose trained context is at
 //! least 8192 tokens (smaller windows degenerate: the summarize budget
 //! `trained - 4096 - 64` saturates at zero and generation collapses).
@@ -177,7 +177,7 @@ fn long_transcript(bytes: usize, multibyte: bool) -> Vec<ChatMessage> {
 	messages
 }
 
-/// F21 investigation probes (env-gated, run last so the phases above
+/// Context-fit truncation probes (env-gated, run last so the phases above
 /// keep their existing KV dynamics). Drive `LocalLlm::generate` with
 /// payloads past the context budget so `build_prompt`'s hard
 /// truncation engages, and record what is observable through the
@@ -200,7 +200,7 @@ fn long_transcript(bytes: usize, multibyte: bool) -> Vec<ChatMessage> {
 /// `generate` exposes only the token count, so whether the closing
 /// `</t>`/`</oid>` survive a cut is established by reading
 /// `build_prompt` (they do not: the cut keeps a prefix and appends the
-/// notice) - see the task 21 handoff for the proposed test seam.
+/// notice) - a fix needs a test seam exposing the fitted prompt.
 ///
 /// The already-fitting control is `real_prompts_work_end_to_end`
 /// above: a small transcript that triggers no truncation.

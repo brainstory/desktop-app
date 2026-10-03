@@ -1794,7 +1794,7 @@ mod external_stream_tests {
 
 	#[tokio::test]
 	async fn external_generate_rejects_an_empty_sse_stream() {
-		// F09: a 200 text/event-stream with an empty body used to return
+		// A 200 text/event-stream with an empty body used to return
 		// Ok(("", None)), so the command layer treated an unusable
 		// completion as a success.
 		let url = serve_sse(vec![]);
@@ -2005,7 +2005,7 @@ mod external_stream_tests {
 
 	#[tokio::test]
 	async fn external_generate_trickling_valid_events_hits_the_overall_budget() {
-		// F25: every event is valid and arrives well inside the idle
+		// Every event is valid and arrives well inside the idle
 		// timeout, so a trickling endpoint could keep the stream alive
 		// indefinitely. The (tiny, test-injected) overall budget must
 		// end it on its own; production uses the documented 15 minutes.
@@ -2038,7 +2038,7 @@ mod external_stream_tests {
 
 	#[tokio::test]
 	async fn external_generate_caps_accumulated_output_across_many_small_events() {
-		// F25: every single event is small and valid, but together the
+		// Every single event is small and valid, but together the
 		// deltas exceed the output cap; generation must stop instead
 		// of accepting an unbounded completion. Events are written
 		// (and flushed) one by one so the client sees small chunks,
@@ -2095,7 +2095,7 @@ mod external_stream_tests {
 
 	#[tokio::test]
 	async fn external_generate_rejects_one_huge_delimited_event() {
-		// F25: the size check only rejected buffers with NO delimiter,
+		// The size check only rejected buffers with NO delimiter,
 		// so a complete event whose delimiter is already buffered
 		// passed straight through. The event is delivered in two
 		// pieces: an undelimited prefix under the cap, then the rest
@@ -2178,7 +2178,7 @@ mod external_stream_tests {
 		format!("http://{addr}/v1")
 	}
 
-	/// F25 regression core: the cancel flag is raised 150 ms in, when
+	/// Cancellation core: the cancel flag is raised 150 ms in, when
 	/// the request head has surely been answered and the body read is
 	/// the phase being waited on. The generation must return
 	/// "generation cancelled" within the ~150 ms cancel tick, not wait

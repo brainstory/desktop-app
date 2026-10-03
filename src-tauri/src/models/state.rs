@@ -1397,7 +1397,7 @@ mod delete_flow_tests {
 		})
 	}
 
-	/// F13: an activation/load starting at the delete boundary must be
+	/// An activation/load starting at the delete boundary must be
 	/// refused: the delete holds the engine slot claim for its whole
 	/// operation, and loads take the same claim.
 	#[test]
@@ -1476,7 +1476,7 @@ mod delete_flow_tests {
 		);
 	}
 
-	/// F13: a filesystem failure after the unload must still publish a
+	/// A filesystem failure after the unload must still publish a
 	/// truthful non-ready status before the Err returns - never leave
 	/// ready behind for an engine the delete just unloaded.
 	#[test]
@@ -1528,7 +1528,7 @@ mod delete_flow_tests {
 	}
 
 	/// The delete waits out a running load of its kind instead of
-	/// bulldozing past it (task-12 acquire semantics).
+	/// bulldozing past it (acquire-abort semantics on a wedged slot).
 	#[test]
 	fn a_delete_waits_out_a_running_load_of_its_kind_then_deletes() {
 		let (state, _dir) = temp_state("del-waits");
@@ -1592,7 +1592,7 @@ mod delete_flow_tests {
 		assert_eq!(*status.lock().unwrap(), EngineStatus::missing());
 	}
 
-	/// F13: the download guard is re-checked UNDER the claim, so a
+	/// The download guard is re-checked UNDER the claim, so a
 	/// download that registers while the delete waits out a load is
 	/// still caught.
 	#[test]
@@ -1658,7 +1658,7 @@ mod delete_flow_tests {
 	}
 
 	/// A wedged engine slot times the delete out with a busy error and
-	/// no mutation: the holder keeps its slot (task-12 semantics).
+	/// no mutation: the holder keeps its slot (acquire-abort semantics).
 	#[test]
 	fn a_wedged_engine_slot_times_out_busy_without_mutating() {
 		let (state, _dir) = temp_state("del-wedged");
@@ -2205,7 +2205,7 @@ mod settings_cache_tests {
 		assert_eq!(reopened(dir.path(), "secrets").ai_settings().hf_token, "");
 	}
 
-	// ---- partial persistence failure (F06) ----
+	// ---- partial persistence failure ----
 	//
 	// Ordinary rows commit in one transaction BEFORE the sequential
 	// secret writes, so a failing secret leaves the database holding
@@ -2245,7 +2245,7 @@ mod settings_cache_tests {
 
 	#[test]
 	fn failed_secret_save_leaves_the_cache_on_the_committed_state() {
-		// F06: the settings row commits, then the token write fails.
+		// The settings row commits, then the token write fails.
 		// The cache must not keep serving the pre-save snapshot the
 		// database no longer holds.
 		let (state, dir) = temp_state("f06-truth");

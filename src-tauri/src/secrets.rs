@@ -525,7 +525,7 @@ mod tests {
 	#[cfg(debug_assertions)]
 	#[test]
 	fn migration_never_overwrites_a_newer_keychain_value() {
-		// F24: a successful keychain store whose row cleanup failed
+		// A successful keychain store whose row cleanup failed
 		// leaves the old release row behind; the next startup's
 		// migration must delete that stale row, not write it back over
 		// the newer keychain value

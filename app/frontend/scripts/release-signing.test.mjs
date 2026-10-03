@@ -1,7 +1,7 @@
 // node --test scripts/ (plain node: the build scripts are not app code, so
 // they stay out of vitest's jsdom setup)
 //
-// Task F20: the updater signing key must only ever be visible to the single
+// The updater signing key must only ever be visible to the single
 // explicit "Sign updater artifacts" step in the release job - never to
 // `pnpm tauri build` (frontend hooks, Cargo build scripts and pnpm's
 // auto-install all inherit the build step's environment). Two groups:

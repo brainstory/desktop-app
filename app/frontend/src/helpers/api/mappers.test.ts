@@ -146,7 +146,7 @@ describe("getIdeaChildrenApi item index", () => {
 	});
 });
 
-describe("getIdeaChildrenApi malformed structured feedback (F01)", () => {
+describe("getIdeaChildrenApi malformed structured feedback", () => {
 	// stored structured_result is unknown-typed: only the backend's own
 	// serialization of the other fields is trustworthy. These cases pin
 	// the malformed-data policy: skip unusable MEMBERS (never the whole

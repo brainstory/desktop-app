@@ -124,7 +124,7 @@ describe("useVoiceCapture", () => {
 		expect(callbacks.onWavCaptured).not.toHaveBeenCalled();
 	});
 
-	it("releases the mic on pagehide during a recording (F03)", async () => {
+	it("releases the mic on pagehide during a recording", async () => {
 		mockInvoke({
 			start_voice_capture: () => null,
 			stop_voice_capture: () => new ArrayBuffer(0)

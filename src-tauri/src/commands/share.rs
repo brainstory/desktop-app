@@ -1147,7 +1147,7 @@ mod tests {
 		}
 	}
 
-	/// F01: a malformed structured document must not take the readable
+	/// A malformed structured document must not take the readable
 	/// feedback down with it. An unusable container (non-array
 	/// feedback_items, a document without the key, a non-object
 	/// document) degrades the document to none - exactly what

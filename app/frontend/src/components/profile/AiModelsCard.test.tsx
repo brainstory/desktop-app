@@ -806,7 +806,7 @@ describe("useAiModels.saveSecret", () => {
 		});
 		expect(confirmed).toBe(true);
 		await waitFor(() => expect(result.current.savedSettings?.hfTokenSet).toBe(true));
-		// the DISPLAYED settings reflect the confirmed save too (F04)
+		// the DISPLAYED settings reflect the confirmed save too
 		expect(result.current.settings?.hfTokenSet).toBe(true);
 		expect(result.current.settings?.hfTokenHint).toBe("••••hf42");
 	});

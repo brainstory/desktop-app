@@ -172,7 +172,7 @@ fn sha256_of_file(path: &Path) -> Option<String> {
 /// have. An existing blob counts as "already cached" only once its
 /// bytes verify against the pin, and the app copy is dropped only
 /// after a verified blob is published under a snapshot the resolver
-/// can read, so every failure leaves a usable copy behind (F14).
+/// can read, so every failure leaves a usable copy behind.
 pub fn migrate_legacy_models(models_dir: &Path, cache: &Path) {
 	for spec in LLM_MODELS.iter().chain(STT_MODELS.iter()) {
 		migrate_one(models_dir, cache, spec);
@@ -1621,7 +1621,7 @@ mod resume_tests {
 
 	#[tokio::test]
 	async fn resumes_a_chunked_206_with_a_content_range_total() {
-		// F08: the suffix arrives chunked (no Content-Length), so the
+		// The suffix arrives chunked (no Content-Length), so the
 		// whole-file size is only declared by Content-Range. A valid
 		// resume must not be mistaken for a size mismatch.
 		let body = b"abcdef".to_vec();
@@ -2047,7 +2047,7 @@ mod cache_storage_tests {
 		assert!(hf_cache_model_path(&cache, &dup_spec).is_some());
 	}
 
-	/// The F14 migration regressions share one shape: an app-dir source,
+	/// The migration regressions share one shape: an app-dir source,
 	/// a cache the test corrupts/blocks, and assertions that a usable
 	/// copy survives every injected failure.
 	fn migration_fixture(
@@ -2062,11 +2062,11 @@ mod cache_storage_tests {
 
 	#[test]
 	fn a_corrupt_cached_blob_never_costs_the_good_app_copy() {
-		// F14: a hash-named blob whose bytes do not match the pin must
+		// A hash-named blob whose bytes do not match the pin must
 		// be treated as absent and replaced, never trusted by filename
 		// - deleting the good app copy on its word would leave the
 		// user with a corrupt, load-failing model
-		let (_dir, models, cache) = migration_fixture("f14-corrupt");
+		let (_dir, models, cache) = migration_fixture("corrupt");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2107,7 +2107,7 @@ mod cache_storage_tests {
 		// a blob that cannot be READ is uncertainty, not validity: the
 		// app copy is the only provably-good copy and must survive
 		use std::os::unix::fs::PermissionsExt;
-		let (_dir, models, cache) = migration_fixture("f14-unreadable");
+		let (_dir, models, cache) = migration_fixture("unreadable");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2139,10 +2139,10 @@ mod cache_storage_tests {
 
 	#[test]
 	fn migration_publishes_the_snapshot_before_dropping_the_app_copy() {
-		// F14: a snapshot that cannot be created (here: a regular file
+		// A snapshot that cannot be created (here: a regular file
 		// squatting on the revision dir) must leave the app copy in
 		// place - a bare blob is not discoverable by the resolver
-		let (_dir, models, cache) = migration_fixture("f14-blocked");
+		let (_dir, models, cache) = migration_fixture("blocked");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2183,11 +2183,11 @@ mod cache_storage_tests {
 
 	#[test]
 	fn migration_heals_a_missing_snapshot_when_the_app_copy_is_already_gone() {
-		// the pre-F14 ordering renamed the app copy into the blob and
+		// the previous ordering renamed the app copy into the blob and
 		// only then failed to publish the snapshot, leaving nothing
 		// discoverable; the fixed migration repairs that state instead
 		// of skipping it (no app file to act on)
-		let (_dir, models, cache) = migration_fixture("f14-heal");
+		let (_dir, models, cache) = migration_fixture("heal");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let blob = hf_blob_path(&cache, &spec);
@@ -2224,7 +2224,7 @@ mod cache_storage_tests {
 		// under the pinned name is left untouched here: with no
 		// migration decision to make, verification has nothing to say,
 		// and a genuinely bad model is caught at engine-load time.
-		let (_dir, models, cache) = migration_fixture("f14-fast-path");
+		let (_dir, models, cache) = migration_fixture("fast-path");
 		let spec = pinned_spec(b"original content");
 		let blob = hf_blob_path(&cache, &spec);
 		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
@@ -2248,7 +2248,7 @@ mod cache_storage_tests {
 
 	#[test]
 	fn same_volume_migration_is_complete_and_repeatable() {
-		let (_dir, models, cache) = migration_fixture("f14-same");
+		let (_dir, models, cache) = migration_fixture("same");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2300,7 +2300,7 @@ mod cache_storage_tests {
 	fn an_interrupted_migration_retries_cleanly() {
 		// interrupted mid-copy: a partial staging file plus the intact
 		// app copy; the retry must converge and leave no junk behind
-		let (_dir, models, cache) = migration_fixture("f14-retry-copy");
+		let (_dir, models, cache) = migration_fixture("retry-copy");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2320,7 +2320,7 @@ mod cache_storage_tests {
 
 		// interrupted between publish and cleanup: the verified blob
 		// and the app copy coexist; the retry dedupes them
-		let (_dir, models, cache) = migration_fixture("f14-retry-dedup");
+		let (_dir, models, cache) = migration_fixture("retry-dedup");
 		let mut spec2 = pinned_spec(good);
 		spec2.filename = "second.gguf";
 		let app2 = models.join(spec2.filename);
@@ -2340,7 +2340,7 @@ mod cache_storage_tests {
 	fn migration_survives_a_readonly_blobs_dir() {
 		// a copy that cannot even start leaves the original untouched
 		use std::os::unix::fs::PermissionsExt;
-		let (_dir, models, cache) = migration_fixture("f14-ro");
+		let (_dir, models, cache) = migration_fixture("ro");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2373,7 +2373,7 @@ mod cache_storage_tests {
 	fn migration_survives_a_directory_squatting_on_the_blob_name() {
 		// publishing over a directory fails: the app copy must survive
 		// and the squatting entry must not be damaged
-		let (_dir, models, cache) = migration_fixture("f14-dir");
+		let (_dir, models, cache) = migration_fixture("dir");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2403,7 +2403,7 @@ mod cache_storage_tests {
 		// same length, one byte off - only the sha256 catches it)
 		// stays exactly as it was (the mismatch is reported through
 		// the warn! log, the pre-existing reporting path)
-		let (_dir, models, cache) = migration_fixture("f14-source");
+		let (_dir, models, cache) = migration_fixture("source");
 		let good = b"good model content";
 		let spec = pinned_spec(good);
 		let app = models.join(spec.filename);
@@ -2466,7 +2466,7 @@ mod cache_storage_tests {
 	#[cfg(target_family = "unix")]
 	#[test]
 	fn remove_spares_a_different_revision_with_the_same_filename() {
-		// F10: two revisions carry the same filename; only the pinned
+		// Two revisions carry the same filename; only the pinned
 		// content is ours, so only the pinned revision's entry may go
 		let cache = tempfile::tempdir().expect("tempdir");
 		let content = b"pinned model bytes";
