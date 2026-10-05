@@ -1,0 +1,13 @@
+[advisories]
+ignore = [
+  # glib 0.18.5 VariantStrIter unsoundness (informational). Pulled in by
+  # tauri 2 -> gtk ^0.18 on Linux only; patched only in glib >= 0.20, which
+  # no tauri 2.x can use. Nothing in src/ or in the twelve glib-dependent
+  # crates in Cargo.lock calls VariantStrIter. Revisit when tauri moves
+  # off gtk 0.18 (tauri 3).
+  "RUSTSEC-2024-0429",
+  # proc-macro-error is unmaintained (informational). Transitive via
+  # glib-macros 0.18 / gtk3-macros 0.18 on Linux only; upstream removed it
+  # in 0.19, which tauri 2's gtk 0.18 pin cannot use. Same revisit trigger.
+  "RUSTSEC-2024-0370",
+]
