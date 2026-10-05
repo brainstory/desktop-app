@@ -1,4 +1,6 @@
-# Vendored whisper-rs
+# Vendored crates
+
+## whisper-rs
 
 whisper-rs and whisper-rs-sys live here instead of coming from crates.io so
 that whisper.cpp can be built against **the same ggml as llama.cpp**. Two
@@ -30,7 +32,7 @@ not vendored: ggml comes from llama-cpp-sys-2.
 Licenses: whisper-rs is released into the public domain (Unlicense), whisper.cpp
 is MIT (`whisper-rs-sys/whisper.cpp/LICENSE`).
 
-## Local changes
+### Local changes (whisper-rs)
 
 Every change to the upstream files is in this repository's git history on
 top of the commit that added them unmodified ("Vendor whisper-rs ..."). In
@@ -48,10 +50,57 @@ short, all in `whisper-rs-sys/` (marked `Brainstory:` in the code):
 - `src/lib.rs`: `extern crate llama_cpp_sys_2` so rustc links llama's ggml
   after libwhisper (static archives resolve left to right on Linux).
 
-## Updating
+### Updating (whisper-rs)
 
 - llama-cpp-2 / llama-cpp-sys-2: bump the app's pins and the version in
   `whisper-rs-sys/Cargo.toml` together, then pick the whisper.cpp commit whose
   `ggml/CMakeLists.txt` has the same `GGML_VERSION_*` as llama.cpp's.
 - Run the env-gated engine tests against real models (README, "Manual model
   tests") before merging: they are the only proof both engines still work.
+
+## glib-macros / gtk3-macros
+
+glib-macros and gtk3-macros (the proc-macro crates behind gtk-rs, pulled in
+via tauri's Linux GTK stack) are vendored to drop the **unmaintained
+`proc-macro-error` crate** ([RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370.html)).
+Tauri 2.x pins gtk-rs to the 0.18 series, whose macros crates depend on
+`proc-macro-error` (and through it `syn 1.x`). Upstream removed the dependency,
+but only in newer series than tauri allows:
+
+- `glib-macros`: removed in [gtk-rs/gtk-rs-core#1288](https://github.com/gtk-rs/gtk-rs-core/pull/1288)
+  (commit `c74a40a16`), first released in **0.19.0**; the 0.18 series ended at
+  0.18.5 without a backport.
+- `gtk3-macros`: removed in commit
+  [`45782251fa3`](https://github.com/gtk-rs/gtk3-rs/commit/45782251fa35ecf8bfe759ffceb3db32659a0c97),
+  first released in **0.19.0**; 0.18.2 is the last 0.18.
+
+## Origins (gtk)
+
+| Path | Source | Version |
+| --- | --- | --- |
+| `glib-macros/` | crates.io `glib-macros` | 0.18.5 (gtk-rs/gtk-rs-core @ 42b9caf, tag `0.18.5`) |
+| `gtk3-macros/` | crates.io `gtk3-macros` | 0.18.2 (gtk-rs/gtk3-rs @ 00133512bf) |
+
+Only the published crate contents are kept (`src/`, `Cargo.toml`, `LICENSE`,
+`COPYRIGHT`); each crate's `tests/` (dev-only, needs the full glib/gtk
+workspace) is omitted.
+
+Licenses: both are MIT (`glib-macros/LICENSE`, `gtk3-macros/LICENSE`).
+
+### Local changes (gtk)
+
+Each crate replaces `proc-macro-error`'s `abort!`/`abort_call_site!` /
+`#[proc_macro_error]` with explicit `syn::Result` propagation, exactly
+mirroring the upstream commits above (the changes are on top of the commit
+that vendored the crates unmodified). `proc-macro-error` is removed from each
+`Cargo.toml`. The generated code and the compile errors users see are
+unchanged; only the error-reporting mechanism differs (a `syn::Error` rendered
+as `compile_error!` instead of a proc-macro panic).
+
+### Updating (gtk)
+
+Drop the `[patch.crates-io]` entries for `glib-macros`/`gtk3-macros` (and
+delete these directories) once tauri moves to a gtk-rs series whose macros no
+longer need `proc-macro-error` - i.e. glib-macros >= 0.19 and gtk3-macros >=
+0.19. Until then, if the 0.18 versions are ever bumped, re-apply the two
+removal commits on top of the new crates.io sources.

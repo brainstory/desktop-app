@@ -2,11 +2,10 @@
 
 use heck::{ToKebabCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use proc_macro_error::abort_call_site;
 use quote::{quote, quote_spanned};
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute, Data, DeriveInput, Ident,
-    Variant, Visibility,
+    punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute, DeriveInput, Ident, Variant,
+    Visibility,
 };
 
 use crate::utils::{crate_ident_new, parse_nested_meta_items, NestedMetaItem};
@@ -114,14 +113,19 @@ fn gen_bitflags(
     }
 }
 
-pub fn impl_flags(attrs: AttrInput, input: &DeriveInput) -> TokenStream {
+pub fn impl_flags(attrs: AttrInput, input: &DeriveInput) -> syn::Result<TokenStream> {
     let gtype_name = attrs.enum_name.value();
     let name = &input.ident;
     let visibility = &input.vis;
 
     let enum_variants = match input.data {
-        Data::Enum(ref e) => &e.variants,
-        _ => abort_call_site!("#[glib::flags] only supports enums"),
+        syn::Data::Enum(ref e) => &e.variants,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "#[glib::flags] only supports enums",
+            ))
+        }
     };
 
     let crate_ident = crate_ident_new();
@@ -129,7 +133,7 @@ pub fn impl_flags(attrs: AttrInput, input: &DeriveInput) -> TokenStream {
     let bitflags = gen_bitflags(name, visibility, enum_variants, &crate_ident);
     let (flags_values, nb_flags_values) = gen_flags_values(name, enum_variants);
 
-    quote! {
+    Ok(quote! {
         #bitflags
 
         impl #crate_ident::translate::IntoGlib for #name {
@@ -229,5 +233,5 @@ pub fn impl_flags(attrs: AttrInput, input: &DeriveInput) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }

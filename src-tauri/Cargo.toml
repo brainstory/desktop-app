@@ -96,6 +96,11 @@ tempfile = "3.27.0"
 # whisper-rs is vendored so whisper.cpp builds against llama-cpp-sys-2's
 # ggml instead of bundling a second, incompatible copy (see
 # vendor/VENDORED.md). The versions match the pins above.
+# glib-macros and gtk3-macros are vendored to drop the unmaintained
+# proc-macro-error (RUSTSEC-2024-0370); the 0.18 series never got upstream's
+# fix (see vendor/VENDORED.md).
 [patch.crates-io]
 whisper-rs = { path = "vendor/whisper-rs" }
 whisper-rs-sys = { path = "vendor/whisper-rs-sys" }
+glib-macros = { path = "vendor/glib-macros" }
+gtk3-macros = { path = "vendor/gtk3-macros" }

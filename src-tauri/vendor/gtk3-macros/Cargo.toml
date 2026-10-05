@@ -12,29 +12,45 @@
 [package]
 edition = "2021"
 rust-version = "1.70"
-name = "glib-macros"
-version = "0.18.5"
+name = "gtk3-macros"
+version = "0.18.2"
 authors = ["The gtk-rs Project Developers"]
-description = "Rust bindings for the GLib library, proc macros crate"
+build = false
+exclude = [
+    "gir-files/*",
+    "src/composite_template.ui",
+]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "UNMAINTAINED Rust bindings for the GTK 3 library (use gtk4-macros instead)"
 homepage = "https://gtk-rs.org/"
-documentation = "https://gtk-rs.org/gtk-rs-core/stable/latest/docs/glib_macros/"
+documentation = "https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk3_macros/"
+readme = false
 keywords = [
-    "glib",
+    "gtk",
+    "gtk3",
     "gtk-rs",
     "gnome",
     "GUI",
 ]
+categories = [
+    "api-bindings",
+    "gui",
+]
 license = "MIT"
-repository = "https://github.com/gtk-rs/gtk-rs-core"
+repository = "https://github.com/gtk-rs/gtk3-rs"
+resolver = "1"
 
 [lib]
+name = "gtk3_macros"
+path = "src/lib.rs"
 proc-macro = true
 
-[dependencies.heck]
-version = "0.4"
-
 [dependencies.proc-macro-crate]
-version = "2.0"
+version = "1.0"
 
 [dependencies.proc-macro2]
 version = "1.0"
@@ -46,11 +62,5 @@ version = "1.0"
 version = "2.0"
 features = ["full"]
 
-[dev-dependencies.glib]
+[dev-dependencies.gtk]
 version = "0.18"
-
-[dev-dependencies.once_cell]
-version = "1.9.0"
-
-[dev-dependencies.trybuild2]
-version = "1.1"
