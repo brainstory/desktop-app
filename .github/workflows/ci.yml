@@ -145,6 +145,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           # Cargo.lock lives in src-tauri/, not the repo root
           working-directory: src-tauri
+          # RUSTSEC-2024-0429 (glib::VariantStrIter, informational "unsound"):
+          # no fixable upgrade exists. glib 0.18.5 is the final 0.18.x and the
+          # advisory's only patched range is >=0.20.0, but tauri 2.x pins
+          # gtk ^0.18 -> glib ^0.18, so no tauri 2.x bump (incl. latest 2.12.1)
+          # can reach a patched glib. The app also never calls VariantStrIter
+          # (no glib/gtk use in src/); glib is only linked by the Linux tray.
+          # Revisit once tauri moves to glib >= 0.20 (tauri 3.x).
+          ignore: RUSTSEC-2024-0429
 
       # pnpm version: the packageManager field in package.json (a
       # `version:` input here too makes the action fail on mismatch)
