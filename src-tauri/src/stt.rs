@@ -1,5 +1,10 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+/// The error a user-cancelled transcription resolves with. The UI treats
+/// it like a cancelled generation: no error banner, just back to idle.
+pub const TRANSCRIPTION_CANCELLED: &str = "transcription cancelled";
 
 pub struct SttEngine {
 	ctx: Arc<whisper_rs::WhisperContext>,
@@ -294,6 +299,7 @@ fn shared_client() -> Result<reqwest::Client, String> {
 	}
 	let client = reqwest::Client::builder()
 		.connect_timeout(std::time::Duration::from_secs(10))
+		.redirect(crate::models::hardened_redirect_policy())
 		// upload + transcription of a few minutes of audio can take a while,
 		// but not forever
 		.timeout(std::time::Duration::from_secs(180))
@@ -304,11 +310,14 @@ fn shared_client() -> Result<reqwest::Client, String> {
 
 /// OpenAI-compatible audio transcription endpoint
 /// (whisper.cpp server, faster-whisper-server, Groq, OpenAI, ...).
+/// `cancel` is polled before the request and while it is in flight, so a
+/// user who cancels a stuck transcription does not wait out the timeout.
 pub async fn transcribe_external(
 	base_url: &str,
 	api_key: &str,
 	model: &str,
 	wav: Vec<u8>,
+	cancel: &AtomicBool,
 ) -> Result<String, String> {
 	let base = base_url.trim_end_matches('/');
 	// re-vet at use time, not only at save time: older builds and
@@ -342,11 +351,28 @@ pub async fn transcribe_external(
 	if !api_key.is_empty() {
 		request = request.bearer_auth(api_key);
 	}
+	if cancel.load(Ordering::Relaxed) {
+		return Err(TRANSCRIPTION_CANCELLED.into());
+	}
 
-	let response = request
-		.send()
-		.await
-		.map_err(|e| format!("request failed: {e}"))?;
+	// The upload can stall (server slow, network flaky); cancel is raced
+	// against it in short ticks so the user's click lands promptly.
+	let send = request.send();
+	tokio::pin!(send);
+	let response = loop {
+		if cancel.load(Ordering::Relaxed) {
+			return Err(TRANSCRIPTION_CANCELLED.into());
+		}
+		let tick = tokio::time::sleep(std::time::Duration::from_millis(150));
+		tokio::pin!(tick);
+		tokio::select! {
+			res = &mut send => break res.map_err(|e| format!("request failed: {e}"))?,
+			_ = &mut tick => continue,
+		}
+	};
+	if cancel.load(Ordering::Relaxed) {
+		return Err(TRANSCRIPTION_CANCELLED.into());
+	}
 	if !response.status().is_success() {
 		return Err(format!("external STT error ({})", response.status()));
 	}
@@ -364,9 +390,63 @@ pub async fn transcribe_external(
 #[cfg(test)]
 mod tests {
 	use super::{
-		checked_resample_len, is_non_speech_annotation, is_speech, resample_to_16k, wav_to_samples,
-		whisper_language,
+		checked_resample_len, is_non_speech_annotation, is_speech, resample_to_16k,
+		transcribe_external, wav_to_samples, whisper_language, TRANSCRIPTION_CANCELLED,
 	};
+
+	#[tokio::test]
+	async fn external_transcription_cancel_ends_a_pending_request() {
+		// a server that accepts the POST and never answers
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		let (release, held) = std::sync::mpsc::channel::<()>();
+		std::thread::spawn(move || {
+			let (_stream, _) = listener.accept().expect("accept");
+			// hold the connection open until the test is done with it
+			let _ = held.recv_timeout(std::time::Duration::from_secs(10));
+		});
+
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let flipper = cancel.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(std::time::Duration::from_millis(250));
+			flipper.store(true, std::sync::atomic::Ordering::Relaxed);
+		});
+
+		let started = std::time::Instant::now();
+		let result = transcribe_external(
+			&format!("http://127.0.0.1:{}", addr.port()),
+			"",
+			"whisper-1",
+			vec![0u8; 64],
+			&cancel,
+		)
+		.await;
+		let err = result.expect_err("a cancelled transcription must not succeed");
+		assert!(
+			err.contains(TRANSCRIPTION_CANCELLED),
+			"unexpected error: {err}"
+		);
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(5),
+			"cancel took {:?}",
+			started.elapsed()
+		);
+		let _ = release.send(());
+	}
+
+	#[tokio::test]
+	async fn external_transcription_stops_before_a_pre_cancelled_request() {
+		// nothing listens on this port: the pre-check must fire first
+		let cancel = std::sync::atomic::AtomicBool::new(true);
+		let err = transcribe_external("http://127.0.0.1:1", "", "", vec![0u8; 8], &cancel)
+			.await
+			.expect_err("a pre-cancelled transcription must not be sent");
+		assert!(
+			err.contains(TRANSCRIPTION_CANCELLED),
+			"unexpected error: {err}"
+		);
+	}
 
 	#[test]
 	fn segments_whisper_rates_as_no_speech_are_dropped() {

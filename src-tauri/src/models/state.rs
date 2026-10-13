@@ -92,6 +92,10 @@ pub struct AppState {
 	/// Cancel token for the in-flight LLM generation. Only generations use
 	/// this - downloads get their own token in `download_cancels`.
 	pub generation_cancel: std::sync::Mutex<Arc<AtomicBool>>,
+	/// Cancel token for the in-flight transcription (whisper, Apple
+	/// Speech or the external endpoint). Its own token, for the same
+	/// reason as the generation one.
+	pub transcription_cancel: std::sync::Mutex<Arc<AtomicBool>>,
 	/// model id -> progress percentage for in-flight downloads
 	pub download_progress: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 	/// model id -> cancel token for in-flight downloads
@@ -226,6 +230,7 @@ impl AppState {
 			llm_status: std::sync::Mutex::new(EngineStatus::new(EngineState::Missing, None, None)),
 			stt_status: std::sync::Mutex::new(EngineStatus::new(EngineState::Missing, None, None)),
 			generation_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
+			transcription_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
 			download_progress: std::sync::Mutex::new(std::collections::HashMap::new()),
 			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
 			llm_loading: AtomicBool::new(false),
@@ -1983,7 +1988,7 @@ mod delete_flow_tests {
 				std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
 				deleted = true;
 			}
-			deleted |= crate::models::remove_cached_model(&cache_path, &spec)?;
+			deleted |= crate::models::remove_cached_model(&cache_path, &spec, &Default::default())?;
 			Ok(deleted)
 		};
 		delete_stt(

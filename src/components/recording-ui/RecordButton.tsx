@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { AppContext } from "@src/components/chat/reusable/AppWrapper";
 import { CONVERSATION_STATE, type ConversationState } from "@src/const";
-import { transcribeApi } from "@helpers/api/ai";
+import { transcribeApi, cancelTranscriptionApi } from "@helpers/api/ai";
 import { callApiWithRetry } from "@helpers/helpers";
 import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 import { describeError } from "@helpers/describeError";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 import { useVoiceCapture } from "./useVoiceCapture";
-import { isTransientTranscriptionError } from "./transcription";
+import { isTranscriptionCancelled, isTransientTranscriptionError } from "./transcription";
 import { MicButton, MicPermissionDenied } from "./MicButton";
 import { RecordingWarnings, TextComposer, useRecordingWarnings } from "./RecordingWarnings";
 import type { CoachResponseOutcome } from "@components/chat/useChatSession";
@@ -58,6 +58,13 @@ function RecordButton({
 	/** text of the visually hidden live region (screen readers only; the
 	 * visible recording timer is aria-live="off" so it doesn't chatter) */
 	const [announcement, setAnnouncement] = useState("");
+	/** local mirror of the parent's transcribing flag: this component needs
+	 * it to offer the cancel affordance while a transcription runs */
+	const [isTranscribing, setIsTranscribingLocal] = useState(false);
+	const updateTranscribing = (value: boolean): void => {
+		setIsTranscribingLocal(value);
+		setIsTranscribing(value);
+	};
 
 	// one-shot guard so the coach response fires once per ReadyToSend
 	const respondedRef = useRef(false);
@@ -73,7 +80,7 @@ function RecordButton({
 	const unmountSignal = useUnmountSignal();
 
 	const handleError = (error: unknown): void => {
-		setIsTranscribing(false);
+		updateTranscribing(false);
 		// the error itself is announced by the role="alert" banner; only
 		// retract a stale "Transcribing…"
 		setAnnouncement((current) => (current === TRANSCRIBING ? "" : current));
@@ -87,7 +94,7 @@ function RecordButton({
 
 	const handleStopError = (error: unknown): void => {
 		console.error("failed to stop the microphone", error);
-		setIsTranscribing(false);
+		updateTranscribing(false);
 		setErrorMessage(
 			"Couldn't stop the microphone - try again. If it stays on, restart the app."
 		);
@@ -95,7 +102,7 @@ function RecordButton({
 	};
 
 	const generateTranscript = (blobby: Blob): void => {
-		setIsTranscribing(true);
+		updateTranscribing(true);
 		setAnnouncement(TRANSCRIBING);
 		// Transient transport hiccups deserve one retry; configuration
 		// and input problems ("no model downloaded", bad audio) never fix
@@ -112,18 +119,39 @@ function RecordButton({
 				// silence or noise: there is nothing to send, and an empty
 				// user message would only confuse the coach
 				if (!transcript.trim()) {
-					setIsTranscribing(false);
+					updateTranscribing(false);
 					setErrorMessage("No speech was heard. Try again, or type your message.");
 					setWarningType("error");
 					return;
 				}
 				onTranscript(transcript);
-				setIsTranscribing(false);
+				updateTranscribing(false);
 			})
 			.catch((error: unknown) => {
 				if (!mountedRef.current) return;
+				// a user cancel: the UI already returned to idle, and an
+				// error banner for a button the person pressed would be
+				// noise
+				if (isTranscriptionCancelled(error)) {
+					updateTranscribing(false);
+					setAnnouncement("");
+					return;
+				}
 				handleError(error);
 			});
+	};
+
+	/** Stop waiting for a transcription. The backend poll cancels an
+	 * external request at once and discards a local inference's result
+	 * when it finishes. */
+	const handleCancelTranscription = (): void => {
+		cancelTranscriptionApi().catch((err) =>
+			console.error("failed to cancel the transcription", err)
+		);
+		// release the UI now; the in-flight invoke settles with the
+		// cancellation error handled above
+		updateTranscribing(false);
+		setAnnouncement("");
 	};
 
 	const voice = useVoiceCapture({
@@ -207,6 +235,17 @@ function RecordButton({
 					onAnimationTrigger={context.setSludgeman}
 					isCompressed={isCompressed}
 				/>
+			)}
+			{isTranscribing && (
+				<div className="text-center mt-1">
+					<button
+						type="button"
+						className="text-xs text-stone-500 underline hover:no-underline"
+						onClick={handleCancelTranscription}
+					>
+						Cancel transcription
+					</button>
+				</div>
 			)}
 			<RecordingWarnings
 				warningType={warningType}

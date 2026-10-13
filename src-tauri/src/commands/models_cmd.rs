@@ -455,11 +455,13 @@ const DELETE_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(300
 /// hub-cache candidate (snapshot links, and the blob only when no
 /// other snapshot in that repo still references it - huggingface's
 /// own pruning rule; anything unverifiable is retained). Returns
-/// whether anything was removed.
+/// whether anything was removed. `verified` carries the snapshot-file
+/// hashes taken before the engine-slot claim.
 fn delete_model_files(
 	state: &AppState,
 	spec: &crate::models::ModelSpec,
 	caches: &[std::path::PathBuf],
+	verified: &crate::models::VerifiedSnapshotFiles,
 ) -> Result<bool, String> {
 	let mut deleted = false;
 	let app_path = state.model_path(spec);
@@ -468,7 +470,7 @@ fn delete_model_files(
 		deleted = true;
 	}
 	for cache in caches {
-		deleted |= crate::models::remove_cached_model(cache, spec)?;
+		deleted |= crate::models::remove_cached_model(cache, spec, verified)?;
 	}
 	Ok(deleted)
 }
@@ -483,7 +485,12 @@ fn delete_model_events(
 	caches: &[std::path::PathBuf],
 	slot_wait: std::time::Duration,
 ) -> Result<(), String> {
-	let delete_files = || delete_model_files(state, spec, caches);
+	// Hash verification of snapshot files runs BEFORE the engine-slot
+	// claim: the delete can wait a long time for an in-flight model load,
+	// and hashing multi-GB files while holding that claim would extend
+	// the window in which every other engine operation is blocked.
+	let verified = crate::models::verified_snapshot_files(caches, spec);
+	let delete_files = || delete_model_files(state, spec, caches, &verified);
 	let blocked = || delete_blocked(state, spec);
 	state.delete_model_kind_events(events, spec, &blocked, &delete_files, slot_wait)
 }

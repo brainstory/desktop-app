@@ -13,6 +13,8 @@ interface SecretRowProps {
 	saveLabel?: string;
 	/** Resolves false (or rejects) when the value was not stored. */
 	onSave: (value: string) => Promise<boolean> | void;
+	/** Mirrors the typed value upward (e.g. for a Test button) */
+	onValueChange?: (value: string) => void;
 }
 
 /** A labelled secret (token / API key) field. */

@@ -456,6 +456,20 @@ describe("AiModelsCard", () => {
 		expect(await screen.findByText("Stored keys are not encrypted")).toBeInTheDocument();
 	});
 
+	it("tests the LLM endpoint with a typed, unsaved key", async () => {
+		const user = userEvent.setup();
+		mockCard({ test_llm_endpoint: () => "endpoint OK" });
+		renderCard();
+		const llm = await screen.findByRole("region", { name: /Language model/ });
+		await user.click(within(llm).getByText("External LLM endpoint"));
+		await user.type(within(llm).getByLabelText("LLM API key (if needed)"), "sk-candidate");
+		await user.click(within(llm).getByRole("button", { name: "Test LLM endpoint" }));
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "test_llm_endpoint");
+			expect(call?.[1]).toEqual({ apiKey: "sk-candidate" });
+		});
+	});
+
 	it("shows the context window select with per-option memory estimates", async () => {
 		mockCard();
 		renderCard();

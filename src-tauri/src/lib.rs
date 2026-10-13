@@ -100,6 +100,7 @@ pub fn run() {
 			commands::ai::generate_response,
 			commands::ai::generate_streaming_response,
 			commands::ai::cancel_generation,
+			commands::ai::cancel_transcription,
 			commands::ai::send_test_notification,
 			commands::ai::start_voice_capture,
 			commands::ai::stop_voice_capture,

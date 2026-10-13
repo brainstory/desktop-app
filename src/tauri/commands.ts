@@ -46,6 +46,7 @@ export const COMMANDS = {
 	generateResponse: "generate_response",
 	generateStreamingResponse: "generate_streaming_response",
 	cancelGeneration: "cancel_generation",
+	cancelTranscription: "cancel_transcription",
 	sendTestNotification: "send_test_notification",
 	startVoiceCapture: "start_voice_capture",
 	stopVoiceCapture: "stop_voice_capture",
@@ -137,6 +138,7 @@ interface CommandSignatures {
 		result: GenerationResult;
 	};
 	cancelGeneration: { args: undefined; result: void };
+	cancelTranscription: { args: undefined; result: void };
 	startVoiceCapture: { args: undefined; result: void };
 	stopVoiceCapture: { args: undefined; result: ArrayBuffer };
 	getUserSettings: { args: undefined; result: RawUserSettings };
@@ -146,8 +148,8 @@ interface CommandSignatures {
 	setUpdatesEnabled: { args: { enabled: boolean }; result: void };
 	getAiSettings: { args: undefined; result: AiSettingsResponse };
 	saveAiSettings: { args: { ai: object }; result: void };
-	testLlmEndpoint: { args: undefined; result: string };
-	testSttEndpoint: { args: undefined; result: string };
+	testLlmEndpoint: { args: { apiKey?: string } | undefined; result: string };
+	testSttEndpoint: { args: { apiKey?: string } | undefined; result: string };
 	listModels: { args: undefined; result: ModelsResponse };
 	getRuntimeStatus: { args: undefined; result: { llm: EngineStatus; stt: EngineStatus } };
 	getAppleSttStatus: { args: undefined; result: AppleSttStatus };

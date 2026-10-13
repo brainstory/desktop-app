@@ -358,7 +358,10 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 }
 
 #[tauri::command]
-pub async fn test_llm_endpoint(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn test_llm_endpoint(
+	app: tauri::AppHandle,
+	api_key: Option<String>,
+) -> Result<String, String> {
 	// keychain reads are blocking: keep them off the async workers
 	let settings =
 		tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
@@ -369,9 +372,15 @@ pub async fn test_llm_endpoint(app: tauri::AppHandle) -> Result<String, String> 
 	}
 	crate::models::validate_endpoint_url(&settings.ext_llm_base_url)
 		.map_err(|e| format!("invalid endpoint URL: {e}"))?;
+	// A user-typed key wins over the stored one: Test can validate a
+	// candidate before it is ever saved, without sending the stored
+	// secret to a freshly configured host.
+	let candidate_key = api_key.filter(|key| !key.trim().is_empty());
 	let client = crate::llm::ExternalLlm::new(
 		&settings.ext_llm_base_url,
-		&settings.ext_llm_api_key,
+		candidate_key
+			.as_deref()
+			.unwrap_or(&settings.ext_llm_api_key),
 		if settings.ext_llm_model.is_empty() {
 			"default"
 		} else {
@@ -405,7 +414,10 @@ pub async fn test_llm_endpoint(app: tauri::AppHandle) -> Result<String, String> 
 }
 
 #[tauri::command]
-pub async fn test_stt_endpoint(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn test_stt_endpoint(
+	app: tauri::AppHandle,
+	api_key: Option<String>,
+) -> Result<String, String> {
 	// keychain reads are blocking: keep them off the async workers
 	let settings =
 		tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
@@ -414,14 +426,20 @@ pub async fn test_stt_endpoint(app: tauri::AppHandle) -> Result<String, String> 
 	if settings.ext_stt_base_url.is_empty() {
 		return Err("no external STT endpoint configured".into());
 	}
+	// A user-typed key wins over the stored one (see test_llm_endpoint).
+	let candidate_key = api_key.filter(|key| !key.trim().is_empty());
 	// 0.5 s of silence is enough to validate auth + routing.
 	let silence = vec![0.0f32; 8000];
 	let wav = crate::voice::encode_wav_16k(&silence)?;
+	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let _ = crate::stt::transcribe_external(
 		&settings.ext_stt_base_url,
-		&settings.ext_stt_api_key,
+		candidate_key
+			.as_deref()
+			.unwrap_or(&settings.ext_stt_api_key),
 		&settings.ext_stt_model,
 		wav,
+		&cancel,
 	)
 	.await?;
 	if !settings.uses_external_stt() {

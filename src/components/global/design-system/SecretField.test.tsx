@@ -18,6 +18,20 @@ describe("SecretField", () => {
 		expect(input).toHaveValue("");
 	});
 
+	it("mirrors the typed value and clears it after a confirmed save", async () => {
+		const user = userEvent.setup();
+		const onSave = vi.fn(async () => true);
+		const onValueChange = vi.fn();
+		const { container } = render(
+			<SecretField inputId="k" onSave={onSave} onValueChange={onValueChange} />
+		);
+		const input = container.querySelector("input")!;
+		await user.type(input, "sk-abc");
+		expect(onValueChange).toHaveBeenLastCalledWith("sk-abc");
+		await user.click(screen.getByRole("button", { name: "Save" }));
+		expect(onValueChange).toHaveBeenLastCalledWith("");
+	});
+
 	it("keeps a rejected value for a retry and says so", async () => {
 		const user = userEvent.setup();
 		const onSave = vi.fn(async () => false);

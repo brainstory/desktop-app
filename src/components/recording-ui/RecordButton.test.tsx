@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -73,6 +73,35 @@ describe("RecordButton", () => {
 	});
 
 	describe("transcription", () => {
+		it("cancels a pending transcription without an error banner", async () => {
+			let fail!: (e: unknown) => void;
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav,
+				transcribe: () => new Promise((_res, rej) => (fail = rej)),
+				cancel_transcription: () => null
+			});
+			const { props } = renderRecorder();
+			await recordAndStop();
+			expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
+
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("button", { name: "Cancel transcription" }));
+			expect(callsTo("cancel_transcription")).toHaveLength(1);
+			// the recorder is released immediately
+			await waitFor(() => expect(props.setIsTranscribing).toHaveBeenLastCalledWith(false));
+			expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
+
+			// the pending invoke settles with the backend's cancel error:
+			// no banner, no retry
+			await act(async () => {
+				fail("transcription cancelled");
+				await Promise.resolve();
+			});
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+			expect(callsTo("transcribe")).toHaveLength(1);
+		});
+
 		it("does not retry a permanent transcription error", async () => {
 			vi.useFakeTimers({ shouldAdvanceTime: true });
 			vi.spyOn(console, "error").mockImplementation(() => {});

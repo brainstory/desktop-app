@@ -408,6 +408,51 @@ impl Db {
 				own_activity_filter(table)
 			))?;
 		}
+		// Self-healing soft references: daily.log_id, daily.intent_idea_id,
+		// daily.survey_id and surveys.idea_id have no foreign key (the
+		// delete paths clear them transactionally), so a crash mid-delete
+		// or a hand edit can leave them dangling. Clearing them at open
+		// keeps the dashboard from linking to a ghost.
+		conn.execute_batch(
+			"UPDATE daily SET intent_idea_id = NULL
+			   WHERE intent_idea_id IS NOT NULL AND intent_idea_id NOT IN (SELECT id FROM ideas);
+			 UPDATE daily SET log_id = NULL
+			   WHERE log_id IS NOT NULL AND log_id NOT IN (SELECT id FROM log_entries);
+			 UPDATE daily SET survey_id = NULL
+			   WHERE survey_id IS NOT NULL AND survey_id NOT IN (SELECT id FROM surveys);
+			 UPDATE surveys SET idea_id = NULL
+			   WHERE idea_id IS NOT NULL AND idea_id NOT IN (SELECT id FROM ideas);",
+		)?;
+		// The JSON columns are written from already-parsed values, so a
+		// row failing json_valid can only come from a hand edit or a
+		// foreign tool. The read paths guard with json_valid; report the
+		// count here so a broken store leaves a trace instead of silently
+		// reading as empty.
+		for (table, column, nullable) in [
+			("ideas", "idea_metadata", false),
+			("ideas", "structured_result", true),
+			("ideas", "transcript", false),
+			("log_entries", "answers", false),
+			("surveys", "answers", false),
+		] {
+			let guard = if nullable {
+				format!("{column} IS NOT NULL AND ")
+			} else {
+				String::new()
+			};
+			let count: i64 = conn
+				.query_row(
+					&format!("SELECT COUNT(*) FROM {table} WHERE {guard}NOT json_valid({column})"),
+					[],
+					|row| row.get(0),
+				)
+				.unwrap_or(0);
+			if count > 0 {
+				log::warn!(
+					"{count} {table}.{column} row(s) are not valid JSON; reads degrade to empty for them"
+				);
+			}
+		}
 		// The authoritative user timezone: read once at open so day
 		// boundaries resolve without a settings query on every write.
 		// Empty/missing/unparseable rows mean OS-local (the behavior
@@ -1544,6 +1589,65 @@ mod tests {
 			.update_idea("ghost", Some("t"), None, None, None)
 			.expect_err("updating a missing idea must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn dangling_soft_references_are_cleared_on_open() {
+		let (path, _dir) = temp_db_path();
+		{
+			let db = Db::open(&path).expect("open");
+			// rows pointing at ids that do not exist (a crash mid-delete
+			// or a hand edit)
+			db.lock()
+				.execute_batch(
+					"INSERT INTO daily (date, log_id, intent_idea_id, survey_id, is_completed)
+					   VALUES ('2026-01-02', 'ghost-log', 'ghost-idea', 'ghost-survey', 0);
+					 INSERT INTO surveys (id, idea_id, answers, created_at)
+					   VALUES ('s1', 'ghost-idea', '{}', '2026-01-02T00:00:00');",
+				)
+				.unwrap();
+		}
+		let db = Db::open(&path).expect("reopen");
+		let conn = db.lock();
+		let (log_id, intent, survey): (Option<String>, Option<String>, Option<String>) = conn
+			.query_row(
+				"SELECT log_id, intent_idea_id, survey_id FROM daily WHERE date = '2026-01-02'",
+				[],
+				|r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+			)
+			.unwrap();
+		assert_eq!(log_id, None, "dangling log reference cleared");
+		assert_eq!(intent, None, "dangling intent reference cleared");
+		assert_eq!(survey, None, "dangling survey reference cleared");
+		let survey_idea: Option<String> = conn
+			.query_row("SELECT idea_id FROM surveys WHERE id = 's1'", [], |r| {
+				r.get(0)
+			})
+			.unwrap();
+		assert_eq!(survey_idea, None, "dangling survey->idea reference cleared");
+	}
+
+	#[test]
+	fn invalid_json_rows_are_reported_not_fatal() {
+		let (path, _dir) = temp_db_path();
+		{
+			let db = Db::open(&path).expect("open");
+			db.lock()
+				.execute_batch(
+					"INSERT INTO ideas (id, title, result, idea_metadata, transcript, created_at)
+					   VALUES ('broken', 'Broken', '', 'not-json', 'also not json', '2026-01-02T00:00:00');",
+				)
+				.unwrap();
+		}
+		// the open reports the row (logged) instead of failing, and every
+		// guarded query still reads past it
+		let db = Db::open(&path).expect("reopen");
+		let ideas = db.list_ideas().expect("list");
+		assert_eq!(ideas.len(), 1);
+		assert_eq!(ideas[0].id, "broken");
+		// the activity filter's json_valid CASE returns false, not an error
+		let _ = db.has_activity_today();
+		let _ = db.get_daily_status();
 	}
 
 	#[test]

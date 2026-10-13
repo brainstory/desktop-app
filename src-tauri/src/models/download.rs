@@ -430,6 +430,39 @@ fn snapshot_file_is_pinned(
 	sha256_of_file(target).map(|hash| hash.eq_ignore_ascii_case(spec.sha256))
 }
 
+/// Snapshot regular files of `spec` verified against the pin BEFORE the
+/// engine-slot claim, keyed by path: `Some(true)` = pinned (removable),
+/// `Some(false)` = same name, foreign content, `None` = could not verify
+/// (must be retained). Symlinks are not hashed and not listed - the
+/// delete-time check for them is a cheap readlink.
+pub type VerifiedSnapshotFiles = std::collections::HashMap<std::path::PathBuf, Option<bool>>;
+
+/// Pre-verify (hash) the snapshot files a later [`remove_cached_model`]
+/// would need to check, so multi-GB hashing never runs while the delete
+/// flow holds the engine-slot claim. A file that appears after this scan
+/// is still hashed by [`remove_cached_model`] itself.
+pub fn verified_snapshot_files(caches: &[PathBuf], spec: &ModelSpec) -> VerifiedSnapshotFiles {
+	let mut verified = std::collections::HashMap::new();
+	for cache in caches {
+		let snapshots = hf_repo_dir(cache, spec).join("snapshots");
+		let Ok(revs) = std::fs::read_dir(&snapshots) else {
+			continue;
+		};
+		for rev in revs.flatten() {
+			let target = rev.path().join(spec.filename);
+			let Ok(meta) = target.symlink_metadata() else {
+				continue;
+			};
+			if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+				continue;
+			}
+			let pinned = snapshot_file_is_pinned(&target, &meta, spec);
+			verified.insert(target, pinned);
+		}
+	}
+	verified
+}
+
 /// Remove this model's cache entry from its own catalog repo, kept
 /// for the pinned content only - never a same-named file that holds
 /// something else. A snapshot link goes when its target is
@@ -438,8 +471,13 @@ fn snapshot_file_is_pinned(
 /// unidentifiable (read errors, unresolvable links) is retained and
 /// logged, so a delete cannot break another tool's revision (worst
 /// case, a tool whose snapshot was intentionally kept re-downloads a
-/// blob we removed as unreferenced).
-pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, String> {
+/// blob we removed as unreferenced). `verified` carries the hashes of
+/// files already checked before the caller took its exclusive claim.
+pub fn remove_cached_model(
+	cache: &Path,
+	spec: &ModelSpec,
+	verified: &VerifiedSnapshotFiles,
+) -> Result<bool, String> {
 	let repo_dir = hf_repo_dir(cache, spec);
 	let snapshots = repo_dir.join("snapshots");
 	if !snapshots.is_dir() {
@@ -487,7 +525,15 @@ pub fn remove_cached_model(cache: &Path, spec: &ModelSpec) -> Result<bool, Strin
 				None => log::warn!("skipping {}: cannot resolve the link", target.display()),
 			}
 		} else if file_type.is_file() {
-			match snapshot_file_is_pinned(&target, &meta, spec) {
+			// The pre-claim scan already hashed what it saw; only an
+			// entry that appeared afterwards pays the hash here (the rare
+			// path the pre-scan exists to avoid).
+			let pinned = verified
+				.get(&target)
+				.copied()
+				.flatten()
+				.or_else(|| snapshot_file_is_pinned(&target, &meta, spec));
+			match pinned {
 				Some(true) => {
 					std::fs::remove_file(&target).map_err(|e| e.to_string())?;
 					removed = true;
@@ -725,6 +771,9 @@ async fn download_with_timeouts(
 
 	let client = reqwest::Client::builder()
 		.connect_timeout(std::time::Duration::from_secs(15))
+		// never let a redirect downgrade the token-bearing transfer to
+		// plaintext http on a remote host
+		.redirect(super::hardened_redirect_policy())
 		.build()
 		.map_err(|e| e.to_string())?;
 
@@ -1925,7 +1974,7 @@ mod hf_cache_tests {
 mod cache_storage_tests {
 	use super::{
 		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, part_path,
-		remove_cached_model, LLM_MODELS,
+		remove_cached_model, verified_snapshot_files, LLM_MODELS,
 	};
 	use sha2::{Digest, Sha256};
 
@@ -2431,6 +2480,42 @@ mod cache_storage_tests {
 
 	#[cfg(target_family = "unix")]
 	#[test]
+	fn the_pre_scan_classifies_snapshot_files_before_the_claim() {
+		let cache = tempfile::tempdir().expect("tempdir");
+		let content = b"pinned model bytes";
+		let spec = pinned_spec(content);
+		let blob = hf_blob_path(cache.path(), &spec);
+		std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+		std::fs::write(&blob, content).unwrap();
+		// the app's own revision: a link on unix, which the pre-scan skips
+		materialize_snapshot(cache.path(), &spec).expect("materialize");
+		let snapshots = blob.parent().unwrap().parent().unwrap().join("snapshots");
+
+		// a foreign regular file with the same name and different content
+		let foreign = snapshots.join("foreign-rev");
+		std::fs::create_dir_all(&foreign).unwrap();
+		std::fs::write(foreign.join(spec.filename), b"someone else's").unwrap();
+		// a regular file holding the pinned content
+		let pinned_rev = snapshots.join("regular-pinned");
+		std::fs::create_dir_all(&pinned_rev).unwrap();
+		std::fs::write(pinned_rev.join(spec.filename), content).unwrap();
+
+		let verified = verified_snapshot_files(&[cache.path().to_path_buf()], &spec);
+		assert_eq!(verified.len(), 2, "symlinks are not hashed: {verified:?}");
+		assert_eq!(
+			verified.get(&foreign.join(spec.filename)),
+			Some(&Some(false)),
+			"foreign content is classified, not removed"
+		);
+		assert_eq!(
+			verified.get(&pinned_rev.join(spec.filename)),
+			Some(&Some(true)),
+			"pinned content is pre-verified"
+		);
+	}
+
+	#[cfg(target_family = "unix")]
+	#[test]
 	fn remove_prunes_snapshots_and_only_unreferenced_blobs() {
 		let cache = tempfile::tempdir().expect("tempdir");
 		let content = b"shared model bytes";
@@ -2452,7 +2537,7 @@ mod cache_storage_tests {
 		.unwrap();
 
 		// delete: both snapshot links go, blob kept while referenced
-		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(remove_cached_model(cache.path(), &spec, &Default::default()).expect("remove"));
 		assert!(!hf_cache_model_path(cache.path(), &spec).is_some());
 		assert!(
 			blob.is_file(),
@@ -2460,11 +2545,15 @@ mod cache_storage_tests {
 		);
 
 		// the other tool's link is the only thing holding the blob now
-		assert!(!remove_cached_model(cache.path(), &spec).expect("no-op remove"));
+		assert!(
+			!remove_cached_model(cache.path(), &spec, &Default::default()).expect("no-op remove")
+		);
 		assert!(blob.is_file(), "still referenced: kept");
 		// once that link is gone too, the next remove prunes the blob
 		std::fs::remove_file(other.join("different-name.gguf")).unwrap();
-		assert!(remove_cached_model(cache.path(), &spec).expect("prune remove"));
+		assert!(
+			remove_cached_model(cache.path(), &spec, &Default::default()).expect("prune remove")
+		);
 		assert!(!blob.is_file(), "unreferenced blob is pruned");
 	}
 
@@ -2502,7 +2591,7 @@ mod cache_storage_tests {
 		// an unrelated file in the pinned revision: never a candidate
 		std::fs::write(snapshots.join(spec.sha256).join("unrelated.txt"), b"notes").unwrap();
 
-		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(remove_cached_model(cache.path(), &spec, &Default::default()).expect("remove"));
 		// the pinned revision's link is gone...
 		assert!(!snapshots.join(spec.sha256).join(spec.filename).exists());
 		// ...and everything that is not the pinned content survives
@@ -2545,7 +2634,7 @@ mod cache_storage_tests {
 		std::fs::write(forged_rev.join(spec.filename), b"pinned model bytez").unwrap();
 		std::fs::write(shorter_rev.join(spec.filename), b"tiny").unwrap();
 
-		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(remove_cached_model(cache.path(), &spec, &Default::default()).expect("remove"));
 		assert!(
 			!pinned_rev.join(spec.filename).exists(),
 			"a regular file whose streamed hash matches the pin is removed"
@@ -2560,7 +2649,9 @@ mod cache_storage_tests {
 		);
 
 		// repeat deletion: nothing left that identifies as pinned
-		assert!(!remove_cached_model(cache.path(), &spec).expect("no-op remove"));
+		assert!(
+			!remove_cached_model(cache.path(), &spec, &Default::default()).expect("no-op remove")
+		);
 	}
 
 	#[cfg(target_family = "unix")]
@@ -2589,7 +2680,7 @@ mod cache_storage_tests {
 			"precondition: the link is broken"
 		);
 
-		remove_cached_model(cache.path(), &spec).expect("remove");
+		remove_cached_model(cache.path(), &spec, &Default::default()).expect("remove");
 		assert!(
 			dead.join(spec.filename).symlink_metadata().is_ok(),
 			"a broken link to a different blob is not the pinned model"
@@ -2612,7 +2703,7 @@ mod cache_storage_tests {
 		let mut perms = std::fs::metadata(&snapshots).unwrap().permissions();
 		perms.set_mode(0o000);
 		std::fs::set_permissions(&snapshots, perms).unwrap();
-		let removed = remove_cached_model(cache.path(), &spec);
+		let removed = remove_cached_model(cache.path(), &spec, &Default::default());
 		let mut perms = std::fs::metadata(&snapshots).unwrap().permissions();
 		perms.set_mode(0o755);
 		std::fs::set_permissions(&snapshots, perms).unwrap();
@@ -2656,7 +2747,7 @@ mod cache_storage_tests {
 		std::fs::set_permissions(&locked, perms).unwrap();
 
 		// our own pinned link is still identified and removed
-		assert!(remove_cached_model(cache.path(), &spec).expect("remove"));
+		assert!(remove_cached_model(cache.path(), &spec, &Default::default()).expect("remove"));
 
 		let mut perms = std::fs::metadata(&locked).unwrap().permissions();
 		perms.set_mode(0o755);

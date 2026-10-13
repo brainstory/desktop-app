@@ -824,6 +824,7 @@ impl ExternalLlm {
 		// surface that as an error instead (and retry on the next call).
 		let client = reqwest::Client::builder()
 			.connect_timeout(std::time::Duration::from_secs(10))
+			.redirect(crate::models::hardened_redirect_policy())
 			.build()
 			.map_err(|e| format!("failed to build HTTP client: {e}"))?;
 		Ok(CLIENT.get_or_init(|| client).clone())

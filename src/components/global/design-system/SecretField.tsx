@@ -16,6 +16,9 @@ interface SecretFieldProps {
 	saveLabel?: string;
 	/** Resolves false (or rejects) when the value was not stored. */
 	onSave: (value: string) => Promise<boolean> | void;
+	/** Mirrors the typed value (e.g. so a Test button can try it before
+	 * it is saved); fires with "" once a confirmed save clears it. */
+	onValueChange?: (value: string) => void;
 	inputClasses?: string;
 	/** id for the input, so a <label htmlFor> can point at it */
 	inputId?: string;
@@ -27,6 +30,7 @@ export default function SecretField({
 	hint,
 	saveLabel = "Save",
 	onSave,
+	onValueChange,
 	inputClasses = "",
 	inputId
 }: SecretFieldProps) {
@@ -52,6 +56,7 @@ export default function SecretField({
 		} else {
 			// confirmed: the raw value only ever lived in this input
 			setValue("");
+			onValueChange?.("");
 		}
 	};
 
@@ -75,6 +80,7 @@ export default function SecretField({
 					onChange={(e) => {
 						setValue(e.target.value);
 						setError(null);
+						onValueChange?.(e.target.value);
 					}}
 					className={`border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 flex-1 min-w-0 p-2 ${inputClasses}`}
 					placeholder={stored ? "Leave empty to keep the saved value" : placeholder}

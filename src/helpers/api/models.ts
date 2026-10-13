@@ -136,10 +136,12 @@ export async function saveAiSettingsApi(ai: object): Promise<void> {
 	return invokeCommand("saveAiSettings", { ai });
 }
 
-export function testLlmEndpointApi(): Promise<string> {
-	return invokeCommand("testLlmEndpoint");
+export function testLlmEndpointApi(apiKey?: string): Promise<string> {
+	// a typed candidate key is used for the test instead of the stored
+	// one; empty/whitespace counts as "use the stored key"
+	return invokeCommand("testLlmEndpoint", apiKey?.trim() ? { apiKey } : undefined);
 }
 
-export function testSttEndpointApi(): Promise<string> {
-	return invokeCommand("testSttEndpoint");
+export function testSttEndpointApi(apiKey?: string): Promise<string> {
+	return invokeCommand("testSttEndpoint", apiKey?.trim() ? { apiKey } : undefined);
 }

@@ -86,3 +86,13 @@ export async function generateResponseApi({
 export function cancelGenerationApi(): Promise<void> {
 	return invokeCommand("cancelGeneration");
 }
+
+/**
+ * Cancel the in-flight transcription: the backend stops waiting on the
+ * external request immediately, and discards a local inference's result
+ * when it finishes (whisper cannot be interrupted mid-call). The invoke
+ * rejects with "transcription cancelled", which the UI treats as silent.
+ */
+export function cancelTranscriptionApi(): Promise<void> {
+	return invokeCommand("cancelTranscription");
+}

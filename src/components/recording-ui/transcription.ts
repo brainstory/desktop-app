@@ -21,6 +21,9 @@ const PERMANENT_TRANSCRIPTION_ERRORS = [
 	"invalid sample rate",
 	// misconfigured external endpoint (stt.rs)
 	"invalid STT endpoint URL",
+	// a user cancel: retrying it would resurrect a transcription the
+	// person explicitly stopped
+	"transcription cancelled",
 	// explicit Apple Speech choice surfaces real failures (stt_apple.rs)
 	"Apple Speech transcription",
 	"speech recognition permission was denied"
@@ -31,4 +34,12 @@ const PERMANENT_TRANSCRIPTION_ERRORS = [
 export function isTransientTranscriptionError(error: unknown): boolean {
 	const raw = normalizeApiError(error);
 	return !PERMANENT_TRANSCRIPTION_ERRORS.some((marker) => raw.includes(marker));
+}
+
+/** The backend's exact rejection for a user-cancelled transcription. */
+export const TRANSCRIPTION_CANCELLED = "transcription cancelled";
+
+/** A user cancel: never retried, never shown as an error. */
+export function isTranscriptionCancelled(error: unknown): boolean {
+	return normalizeApiError(error).includes(TRANSCRIPTION_CANCELLED);
 }

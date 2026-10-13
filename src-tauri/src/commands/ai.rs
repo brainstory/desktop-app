@@ -24,6 +24,34 @@ fn take_cancel_token(state: &AppState) -> Arc<AtomicBool> {
 	token
 }
 
+/// Cancel any in-flight transcription and return the fresh token for this
+/// one (the same swap discipline as `take_cancel_token`).
+fn take_transcription_token(state: &AppState) -> Arc<AtomicBool> {
+	let token = Arc::new(AtomicBool::new(false));
+	let mut current = state
+		.transcription_cancel
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	let old = std::mem::replace(&mut *current, token.clone());
+	old.store(true, Ordering::Relaxed);
+	token
+}
+
+/// Cancel an in-flight transcription. The token is checked before the
+/// request and every 150 ms while it is in flight. The local whisper (and
+/// Apple Speech) inference itself cannot be interrupted: a cancelled one
+/// keeps running to completion in the background and its result is
+/// discarded.
+#[tauri::command]
+pub fn cancel_transcription(app: AppHandle) {
+	let state = app.state::<AppState>();
+	let token = state
+		.transcription_cancel
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	token.store(true, Ordering::Relaxed);
+}
+
 #[tauri::command]
 pub async fn transcribe(
 	app: AppHandle,
@@ -55,6 +83,9 @@ pub async fn transcribe(
 			.await
 			.map_err(|e| format!("read ai settings task failed: {e}"))?
 	};
+	// This transcription's cancel token: a previous one is cancelled by
+	// the swap, and `cancel_transcription` reaches this one.
+	let cancel = take_transcription_token(&app.state::<AppState>());
 	// STT offload rule: the external endpoint when switched on (sttMode);
 	// otherwise the engine setting picks Apple Speech or local whisper.
 	if settings.uses_external_stt() {
@@ -63,6 +94,7 @@ pub async fn transcribe(
 			&settings.ext_stt_api_key,
 			&settings.ext_stt_model,
 			bytes,
+			&cancel,
 		)
 		.await?;
 		return Ok(serde_json::json!({ "transcript": transcript }));
@@ -78,6 +110,9 @@ pub async fn transcribe(
 			settings.stt_engine,
 			crate::models::SpeechEngine::Apple | crate::models::SpeechEngine::Auto
 		) {
+		if cancel.load(Ordering::Relaxed) {
+			return Err(stt::TRANSCRIPTION_CANCELLED.into());
+		}
 		let apple_bytes = bytes.clone();
 		let locale = settings.stt_language.clone();
 		let result = tauri::async_runtime::spawn_blocking(move || {
@@ -85,6 +120,11 @@ pub async fn transcribe(
 		})
 		.await
 		.map_err(|e| e.to_string());
+		// a cancel while Apple was transcribing must not fall through to
+		// whisper (nor report a success)
+		if cancel.load(Ordering::Relaxed) {
+			return Err(stt::TRANSCRIPTION_CANCELLED.into());
+		}
 		match result {
 			Ok(Ok(transcript)) => return Ok(serde_json::json!({ "transcript": transcript })),
 			Ok(Err(e)) => {
@@ -107,17 +147,27 @@ pub async fn transcribe(
 	let engine = engine.ok_or_else(|| {
 		"Speech model not downloaded yet. Open Settings > AI Models to download one.".to_string()
 	})?;
+	if cancel.load(Ordering::Relaxed) {
+		return Err(stt::TRANSCRIPTION_CANCELLED.into());
+	}
 
 	// WAV decoding of a multi-minute recording is CPU work too; keep it off
 	// the async runtime alongside the whisper inference. The configured
 	// language rides along so multilingual models honor it.
 	let language = settings.stt_language.clone();
-	let transcript = tauri::async_runtime::spawn_blocking(move || {
+	let outcome = tauri::async_runtime::spawn_blocking(move || {
 		let samples = stt::wav_to_samples(&bytes)?;
 		engine.transcribe(&samples, &language)
 	})
 	.await
-	.map_err(|e| e.to_string())??;
+	.map_err(|e| e.to_string());
+	// whisper cannot be interrupted mid-inference: a cancel discards the
+	// outcome (the background call finishes on its own) and reports the
+	// same cancellation the UI already knows
+	if cancel.load(Ordering::Relaxed) {
+		return Err(stt::TRANSCRIPTION_CANCELLED.into());
+	}
+	let transcript = outcome??;
 
 	Ok(serde_json::json!({ "transcript": transcript }))
 }

@@ -151,6 +151,38 @@ pub struct AiSettings {
 	pub ext_stt_model: String,
 }
 
+/// Whether `host` names the local machine (localhost, 127.0.0.0/8, ::1).
+pub fn is_loopback_host(host: &str) -> bool {
+	let unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+	unbracketed.eq_ignore_ascii_case("localhost")
+		|| unbracketed
+			.parse::<std::net::IpAddr>()
+			.map(|ip| ip.is_loopback())
+			.unwrap_or(false)
+}
+
+/// Redirect policy for every HTTP client the app builds: follow a
+/// handful of hops (model downloads legitimately bounce through CDN
+/// hosts), but never accept a redirect that downgrades the connection to
+/// plaintext http on a non-local host - that is where a stored bearer
+/// token would end up on the wire unprotected.
+pub fn hardened_redirect_policy() -> reqwest::redirect::Policy {
+	/// Model downloads hop huggingface.co -> *.hf.co in one step; five
+	/// leaves room for a mirror in between without permitting a chain.
+	const MAX_REDIRECTS: usize = 5;
+	reqwest::redirect::Policy::custom(|attempt| {
+		if attempt.previous().len() >= MAX_REDIRECTS {
+			return attempt.error("too many redirects");
+		}
+		let target = attempt.url();
+		let loopback = target.host_str().map(is_loopback_host).unwrap_or(false);
+		if target.scheme() == "http" && !loopback {
+			return attempt.error("refused a redirect to a plaintext http:// address");
+		}
+		attempt.follow()
+	})
+}
+
 /// Parse and vet a configurable endpoint URL: https may point anywhere,
 /// plain http only at a loopback address (a local server). Anything else
 /// would put a stored API key on the wire in the clear, or accept a
@@ -161,13 +193,7 @@ pub fn validate_endpoint_url(url: &str) -> Result<(), String> {
 		"https" => Ok(()),
 		"http" => {
 			let host = parsed.host_str().unwrap_or_default();
-			let unbracketed = host.trim_start_matches('[').trim_end_matches(']');
-			let is_loopback = unbracketed.eq_ignore_ascii_case("localhost")
-				|| unbracketed
-					.parse::<std::net::IpAddr>()
-					.map(|ip| ip.is_loopback())
-					.unwrap_or(false);
-			if is_loopback {
+			if is_loopback_host(host) {
 				Ok(())
 			} else {
 				Err(format!(

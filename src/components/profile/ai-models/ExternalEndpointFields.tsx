@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import Button from "@ds/Button";
 import { normalizeApiError } from "@helpers/helpers";
 import {
@@ -73,6 +73,9 @@ export function ExternalEndpointFields({
 		{ key: k.urlKey, label: `${k.name} base URL`, placeholder: k.urlPlaceholder },
 		{ key: k.modelKey, label: `${k.name} model`, placeholder: k.modelPlaceholder }
 	];
+	// a typed-but-unsaved API key: Test uses it instead of the stored one,
+	// so a candidate can be validated before it is ever saved
+	const [candidateKey, setCandidateKey] = useState("");
 
 	// only this endpoint's edited fields are sent: the backend validates
 	// every key it receives, so re-sending an untouched stale value would
@@ -99,7 +102,7 @@ export function ExternalEndpointFields({
 	const saveAndTest = (): void => {
 		const runTest = () =>
 			k
-				.test()
+				.test(candidateKey)
 				.then((msg) => openSnackbar(true, msg))
 				.catch((e) => openSnackbar(false, normalizeApiError(e)));
 		if (dirty) {
@@ -155,6 +158,7 @@ export function ExternalEndpointFields({
 				hint={settings[k.secretHint]}
 				placeholder="sk-..."
 				onSave={(value) => saveSecret(k.secretKey, value)}
+				onValueChange={setCandidateKey}
 			/>
 		</div>
 	);
