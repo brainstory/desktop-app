@@ -17,6 +17,10 @@ pub mod setting {
 	pub const SHOW_IN_DOCK: &str = "show_in_dock";
 	pub const SHOW_IN_TRAY: &str = "show_in_tray";
 
+	/// the global quick capture shortcut ("false" = released for other
+	/// apps; unset = on)
+	pub const QUICK_CAPTURE_ENABLED: &str = "quick_capture_enabled";
+
 	/// automatic update checks ("false" = opted out; unset = on)
 	pub const UPDATES_ENABLED: &str = "updates_enabled";
 

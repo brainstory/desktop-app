@@ -55,6 +55,7 @@ export const COMMANDS = {
 	getUserSettings: "get_user_settings",
 	saveUserSettings: "save_user_settings",
 	setAppPresence: "set_app_presence",
+	setQuickCaptureEnabled: "set_quick_capture_enabled",
 	getUpdatesEnabled: "get_updates_enabled",
 	setUpdatesEnabled: "set_updates_enabled",
 	getAiSettings: "get_ai_settings",
@@ -154,6 +155,7 @@ interface CommandSignatures {
 	getUserSettings: { args: undefined; result: RawUserSettings };
 	saveUserSettings: { args: Record<string, unknown>; result: { id: string } };
 	setAppPresence: { args: { dock: boolean; tray: boolean }; result: void };
+	setQuickCaptureEnabled: { args: { enabled: boolean }; result: void };
 	getUpdatesEnabled: { args: undefined; result: boolean };
 	setUpdatesEnabled: { args: { enabled: boolean }; result: void };
 	getAiSettings: { args: undefined; result: AiSettingsResponse };

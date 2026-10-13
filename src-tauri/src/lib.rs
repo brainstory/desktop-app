@@ -109,6 +109,7 @@ pub fn run() {
 			commands::settings::get_user_settings,
 			commands::settings::save_user_settings,
 			commands::settings::set_app_presence,
+			commands::settings::set_quick_capture_enabled,
 			commands::settings::get_updates_enabled,
 			commands::settings::set_updates_enabled,
 			commands::settings::get_ai_settings,
@@ -235,7 +236,11 @@ pub fn run() {
 			app.manage(AppState::new(db, data_dir));
 
 			setup_tray(app)?;
-			register_quick_capture_shortcut(app.handle());
+			// Quick capture is on by default; a stored "false" releases
+			// the global shortcut for another app (settings can re-enable).
+			if quick_capture_enabled(&app.state::<AppState>().db) {
+				register_quick_capture_shortcut(app.handle());
+			}
 
 			// Apply the dock/tray visibility preferences from settings.
 			{
@@ -521,7 +526,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 /// Where quick capture lands: a brand-new idea session.
-const QUICK_CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
+pub(crate) const QUICK_CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
 
 /// Open the window on a fresh idea page. Wired to the tray's "New Idea"
 /// item and the global quick capture shortcut.
@@ -536,6 +541,15 @@ fn open_new_idea(app: &AppHandle) {
 	if let Err(e) = window.eval("window.location.href = '/chat';") {
 		log::warn!("failed to open the new idea page: {e}");
 	}
+}
+
+/// The quick capture shortcut is on unless the setting says otherwise;
+/// the setting exists so a conflicting global hotkey can be released for
+/// another app (and retried later).
+pub(crate) fn quick_capture_enabled(db: &crate::db::Db) -> bool {
+	db.get_setting(crate::keys::setting::QUICK_CAPTURE_ENABLED)
+		.map(|v| v == "true")
+		.unwrap_or(true)
 }
 
 /// Register the global quick capture shortcut. Failure is not fatal: the

@@ -74,6 +74,7 @@ pub async fn get_user_settings(app: tauri::AppHandle) -> Result<UserSettings, St
 			updates: UpdatesSettings {
 				enabled: updates_enabled(&state),
 			},
+			quick_capture: crate::quick_capture_enabled(&state.db),
 		})
 	})
 	.await
@@ -478,6 +479,37 @@ pub fn set_app_presence(
 	Ok(())
 }
 
+/// Enable or release the global quick capture shortcut. Registering can
+/// fail when another app already owns the combination; that failure is
+/// surfaced and the setting stays off, instead of pretending the
+/// shortcut exists.
+#[tauri::command]
+pub async fn set_quick_capture_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+	run_blocking("set quick capture", move || {
+		use tauri_plugin_global_shortcut::GlobalShortcutExt;
+		if enabled {
+			app.global_shortcut()
+				.register(crate::QUICK_CAPTURE_SHORTCUT)
+				.map_err(|e| {
+					format!(
+						"Couldn't register the quick capture shortcut - another app may already use it ({e})"
+					)
+				})?;
+		} else {
+			// releasing something that is not registered is a no-op
+			let _ = app
+				.global_shortcut()
+				.unregister(crate::QUICK_CAPTURE_SHORTCUT);
+		}
+		let state = app.state::<AppState>();
+		state.db.set_setting(
+			keys::setting::QUICK_CAPTURE_ENABLED,
+			if enabled { "true" } else { "false" },
+		)
+	})
+	.await
+}
+
 /// Automatic update checks are on unless the user turned them off.
 pub(crate) fn updates_enabled(state: &AppState) -> bool {
 	state
@@ -525,6 +557,17 @@ mod updates_tests {
 		std::fs::create_dir_all(dir.path().join("models")).expect("make models dir");
 		let db = crate::db::Db::open(&dir.path().join("t.db")).expect("db");
 		(AppState::new(db, dir.path().to_path_buf()), dir)
+	}
+
+	#[test]
+	fn quick_capture_is_on_by_default_and_can_be_released() {
+		let (state, _dir) = state();
+		assert!(crate::quick_capture_enabled(&state.db));
+		state
+			.db
+			.set_setting(crate::keys::setting::QUICK_CAPTURE_ENABLED, "false")
+			.expect("store");
+		assert!(!crate::quick_capture_enabled(&state.db));
 	}
 
 	#[test]

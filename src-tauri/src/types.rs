@@ -143,6 +143,8 @@ pub struct UserSettings {
 	pub notifications: Vec<NotificationSettingsItem>,
 	pub presence: AppPresence,
 	pub updates: UpdatesSettings,
+	/// the global quick capture shortcut is enabled
+	pub quick_capture: bool,
 }
 
 /// Automatic update checks (the frontend updater banner reads this).

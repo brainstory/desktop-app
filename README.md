@@ -73,7 +73,8 @@ Start an idea without hunting for the window: press **Cmd+Shift+Space**
 (**Ctrl+Shift+Space** on Windows and Linux), or pick **New Idea** from the tray menu.
 The app comes to the front on a fresh session; a draft you left behind is already
 saved and stays in the library. If another app owns the shortcut, the tray item
-still works.
+still works — or release the shortcut entirely under **Settings → General → Quick
+Capture** (enabling it back fails visibly while the other app holds it).
 
 ## Install
 

@@ -12,6 +12,7 @@ import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
 import AppPresenceCard from "./AppPresenceCard";
+import QuickCaptureCard from "./QuickCaptureCard";
 import { UpdatesCard, UpdatesDisabledWarning, useUpdatesEnabled } from "./UpdatesCard";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
@@ -48,6 +49,7 @@ function ProfileInner() {
 	const [notifications, setNotifications] = useState<NotificationSetting[]>([]);
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
+	const [quickCapture, setQuickCapture] = useState(true);
 	const { openSnackbar, snackbars } = useSnackbar();
 	const updates = useUpdatesEnabled(openSnackbar);
 	const [isLoading, setIsLoading] = useState(true);
@@ -65,6 +67,7 @@ function ProfileInner() {
 				setDailyLogSettings(res.dailyLog);
 				setNotifications(res.notifications);
 				setPresence(res.presence);
+				setQuickCapture(res.quickCapture);
 				loadUpdates(res.updates.enabled);
 			})
 			.catch((e) => {
@@ -149,6 +152,7 @@ function ProfileInner() {
 						saveSettings={handleNotificationsSave}
 					/>
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
+					<QuickCaptureCard enabled={quickCapture} openSnackbar={openSnackbar} />
 					<UpdatesCard enabled={updates.enabled} onToggle={updates.save} />
 				</div>
 			)

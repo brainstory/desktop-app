@@ -40,6 +40,8 @@ export interface UserSettingsResponse {
 	updates: {
 		enabled: boolean;
 	};
+	/** the global quick capture shortcut is enabled */
+	quickCapture: boolean;
 }
 
 /** User settings as serialized by the backend (snake_case). */
@@ -55,6 +57,7 @@ export interface RawUserSettings {
 	}[];
 	presence: { dock: boolean; tray: boolean };
 	updates?: { enabled: boolean };
+	quickCapture?: boolean;
 }
 
 /** Get user settings */
@@ -91,13 +94,19 @@ export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
 		},
 		updates: {
 			enabled: response.updates?.enabled ?? true
-		}
+		},
+		quickCapture: response.quickCapture ?? true
 	};
 }
 
 /** Toggle dock / menu-bar (tray) icon visibility */
 export function setAppPresenceApi(dock: boolean, tray: boolean): Promise<void> {
 	return invokeCommand("setAppPresence", { dock, tray });
+}
+
+/** Enable/release the global quick capture shortcut. */
+export function setQuickCaptureEnabledApi(enabled: boolean): Promise<void> {
+	return invokeCommand("setQuickCaptureEnabled", { enabled });
 }
 
 /** Whether automatic update checks are on (default true). */
