@@ -701,6 +701,42 @@ describe("AiModelsCard", () => {
 		expect(screen.queryByText(/download cancelled/i)).not.toBeInTheDocument();
 	});
 
+	it("a paused event swaps the row to Resume with its stop point", async () => {
+		const handlers = captureListeners();
+		mockCard();
+		renderCard();
+		await screen.findByText("Whisper tiny (English)");
+		await waitFor(() =>
+			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
+		);
+
+		emit(handlers, "model-download", {
+			modelId: "whisper-tiny-en",
+			kind: "progress",
+			pct: 41.2
+		});
+		emit(handlers, "model-download", {
+			modelId: "whisper-tiny-en",
+			kind: "paused",
+			pct: 41.2
+		});
+		expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+		expect(screen.getByText("41%")).toBeInTheDocument();
+
+		// resuming: a progress event takes the row back to the live state
+		emit(handlers, "model-download", {
+			modelId: "whisper-tiny-en",
+			kind: "progress",
+			pct: 44,
+			bytesPerSec: 5_500_000,
+			etaSecs: 40
+		});
+		expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+		expect(screen.getByText("5.5 MB/s · about 40s left")).toBeInTheDocument();
+	});
+
 	it("a failed download reads in plain language and offers a retry on the row", async () => {
 		const handlers = captureListeners();
 		const notDownloaded = {

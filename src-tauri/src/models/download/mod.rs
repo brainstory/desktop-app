@@ -13,4 +13,7 @@ pub use hub_cache::{
 	migrate_legacy_models, model_url, primary_hub_cache, remove_cached_model,
 	verified_snapshot_files, VerifiedSnapshotFiles,
 };
-pub use stream::{download_model_file, sweep_stale_part_files, DOWNLOAD_CANCELLED};
+pub use stream::{
+	download_model_file, download_model_file_with_pause, remove_staged_part,
+	sweep_stale_part_files, DOWNLOAD_CANCELLED, DOWNLOAD_PAUSED,
+};

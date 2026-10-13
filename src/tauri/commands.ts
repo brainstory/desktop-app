@@ -68,6 +68,7 @@ export const COMMANDS = {
 	getFreeDiskSpace: "get_free_disk_space",
 	downloadModel: "download_model",
 	cancelDownload: "cancel_download",
+	pauseDownload: "pause_download",
 	deleteModel: "delete_model",
 	activateModel: "activate_model",
 	exportIdea: "export_idea",
@@ -168,6 +169,7 @@ interface CommandSignatures {
 	getFreeDiskSpace: { args: undefined; result: number };
 	downloadModel: { args: ModelIdArgs & { onEvent: Channel<DownloadEvent> }; result: void };
 	cancelDownload: { args: ModelIdArgs; result: void };
+	pauseDownload: { args: ModelIdArgs; result: void };
 	deleteModel: { args: ModelIdArgs; result: void };
 	activateModel: { args: ModelIdArgs; result: void };
 	exportIdea: { args: IdeaIdArgs; result: ExportIdeaResult };

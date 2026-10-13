@@ -15,6 +15,10 @@ export interface ActiveDownload {
 	/** 0-100; negative when the backend cannot tell the total size */
 	pct: number;
 	label: string;
+	/** bytes per second, when the backend could compute it */
+	bytesPerSec?: number;
+	/** estimated seconds left, when known */
+	etaSecs?: number;
 }
 
 export interface DownloadFailure {
@@ -25,11 +29,14 @@ export interface DownloadFailure {
 
 export interface DownloadsState {
 	active: Record<string, ActiveDownload>;
+	/** user-paused downloads: the transfer stopped keeping its `.part`
+	 * (Resume continues from there), so these are not failures */
+	paused: Record<string, ActiveDownload>;
 	/** last failure per model id; a user cancel is never recorded here */
 	failures: Record<string, DownloadFailure>;
 }
 
-const IDLE: DownloadsState = { active: {}, failures: {} };
+const IDLE: DownloadsState = { active: {}, paused: {}, failures: {} };
 export const $downloads = atom<DownloadsState>(IDLE);
 
 export interface ModelDownloadEvent {
@@ -37,6 +44,8 @@ export interface ModelDownloadEvent {
 	label?: string;
 	kind?: string;
 	pct?: number;
+	bytesPerSec?: number;
+	etaSecs?: number;
 	message?: string;
 }
 
@@ -94,26 +103,41 @@ export function formatDownloadError(raw: string): string {
 }
 
 function applyEvent(event: ModelDownloadEvent): void {
-	const { modelId, kind, label, pct, message } = event;
+	const { modelId, kind, label, pct, bytesPerSec, etaSecs, message } = event;
 	if (!modelId || !kind) return;
 	const state = $downloads.get();
 	const active = { ...state.active };
+	const paused = { ...state.paused };
 	const failures = { ...state.failures };
 	switch (kind) {
 		case "progress":
 			active[modelId] = {
 				pct: typeof pct === "number" ? pct : -1,
-				label: label ?? active[modelId]?.label ?? modelId
+				label: label ?? active[modelId]?.label ?? modelId,
+				...(typeof bytesPerSec === "number" ? { bytesPerSec } : {}),
+				...(typeof etaSecs === "number" ? { etaSecs } : {})
 			};
+			// an actively transferring model is no longer paused
+			delete paused[modelId];
 			delete failures[modelId];
+			break;
+		case "paused":
+			delete active[modelId];
+			delete failures[modelId];
+			paused[modelId] = {
+				pct: typeof pct === "number" ? pct : -1,
+				label: label ?? paused[modelId]?.label ?? modelId
+			};
 			break;
 		case "done":
 		case "cancelled":
 			delete active[modelId];
+			delete paused[modelId];
 			delete failures[modelId];
 			break;
 		case "error":
 			delete active[modelId];
+			delete paused[modelId];
 			failures[modelId] = {
 				label: label ?? failures[modelId]?.label ?? modelId,
 				message: formatDownloadError(message ?? "")
@@ -125,7 +149,7 @@ function applyEvent(event: ModelDownloadEvent): void {
 		default:
 			return;
 	}
-	$downloads.set({ active, failures });
+	$downloads.set({ active, paused, failures });
 }
 
 /** Drop a recorded failure, e.g. when its row is retried. */
@@ -138,14 +162,18 @@ export function clearDownloadFailure(modelId: string): void {
 }
 
 /**
- * Rehydrate in-flight downloads from a models listing (the settings page
- * re-reads the catalog on mount): add the models it reports as
- * downloading unless the store already tracks them - an event pct is
- * always fresher than the listing's snapshot.
+ * Rehydrate in-flight (and paused) downloads from a models listing (the
+ * settings page re-reads the catalog on mount): add the models it reports
+ * unless the store already tracks them - an event pct is always fresher
+ * than the listing's snapshot.
  */
-export function seedDownloads(entries: Record<string, ActiveDownload>): void {
+export function seedDownloads(
+	entries: Record<string, ActiveDownload>,
+	pausedEntries: Record<string, ActiveDownload> = {}
+): void {
 	const state = $downloads.get();
 	const active = { ...state.active };
+	const paused = { ...state.paused };
 	let changed = false;
 	for (const [id, entry] of Object.entries(entries)) {
 		if (!(id in active)) {
@@ -153,8 +181,14 @@ export function seedDownloads(entries: Record<string, ActiveDownload>): void {
 			changed = true;
 		}
 	}
+	for (const [id, entry] of Object.entries(pausedEntries)) {
+		if (!(id in paused) && !(id in active)) {
+			paused[id] = entry;
+			changed = true;
+		}
+	}
 	if (changed) {
-		$downloads.set({ ...state, active });
+		$downloads.set({ ...state, active, paused });
 	}
 }
 

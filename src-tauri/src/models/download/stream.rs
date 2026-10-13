@@ -82,6 +82,18 @@ pub(super) fn part_path(dest: &Path) -> PathBuf {
 	PathBuf::from(name)
 }
 
+/// Remove a model's staged `.part` download, if one exists: the delete
+/// flow calls this so a paused or interrupted transfer leaves nothing
+/// behind.
+pub fn remove_staged_part(base_file: &Path) -> Result<bool, String> {
+	let part = part_path(base_file);
+	if part.is_file() {
+		std::fs::remove_file(&part).map_err(|e| e.to_string())?;
+		return Ok(true);
+	}
+	Ok(false)
+}
+
 /// Parse a `Content-Range: bytes <start>-<end>/<total|*>` header into
 /// `(start, end, total)`, with `total` None for `*` (unknown). None
 /// when the header is missing or malformed: wrong unit, unparsable
@@ -122,6 +134,15 @@ enum StreamFailure {
 /// distinguish "the user cancelled" from a real failure compare against
 /// this (the UI shows no error for a cancel).
 pub const DOWNLOAD_CANCELLED: &str = "download cancelled";
+
+/// The error a user-paused download produces. Deliberately distinct from
+/// a cancel: the staged `.part` survives, so resuming continues where the
+/// transfer stopped instead of restarting from zero.
+pub const DOWNLOAD_PAUSED: &str = "download paused";
+
+/// For callers (and tests) that only ever cancel: a pause token that is
+/// never set.
+pub(super) static NEVER_PAUSED: AtomicBool = AtomicBool::new(false);
 
 /// The running total after one more chunk arrives, or None when the
 /// counter would wrap (checked arithmetic: a server lying with huge
@@ -171,7 +192,9 @@ impl Timeouts {
 /// and integrity/size failures remove it. Every wait - headers, body
 /// chunks - is bounded and cancellation-aware (see [`Timeouts`]); any
 /// byte that would outgrow `expected_size` is rejected before it is
-/// written.
+/// written. This entry never pauses; use
+/// [`download_model_file_with_pause`] when the transfer should be
+/// resumable on request.
 pub async fn download_model_file(
 	url: &str,
 	dest: &Path,
@@ -181,6 +204,34 @@ pub async fn download_model_file(
 	cancel: &AtomicBool,
 	on_progress: &mut (impl FnMut(f64) + Send),
 ) -> Result<(), String> {
+	download_model_file_with_pause(
+		url,
+		dest,
+		expected_size,
+		expected_sha256,
+		hf_token,
+		cancel,
+		&NEVER_PAUSED,
+		on_progress,
+	)
+	.await
+}
+
+/// [`download_model_file`] with a pause token: setting `pause` stops the
+/// transfer keeping its staged prefix (the same policy as a transient
+/// failure), so a later call resumes from it. Returns [`DOWNLOAD_PAUSED`]
+/// as the error in that case.
+#[allow(clippy::too_many_arguments)]
+pub async fn download_model_file_with_pause(
+	url: &str,
+	dest: &Path,
+	expected_size: u64,
+	expected_sha256: &str,
+	hf_token: &str,
+	cancel: &AtomicBool,
+	pause: &AtomicBool,
+	on_progress: &mut (impl FnMut(f64) + Send),
+) -> Result<(), String> {
 	download_with_timeouts(
 		url,
 		dest,
@@ -188,6 +239,7 @@ pub async fn download_model_file(
 		expected_sha256,
 		hf_token,
 		cancel,
+		pause,
 		on_progress,
 		Timeouts::PRODUCTION,
 	)
@@ -202,6 +254,7 @@ async fn download_with_timeouts(
 	expected_sha256: &str,
 	hf_token: &str,
 	cancel: &AtomicBool,
+	pause: &AtomicBool,
 	on_progress: &mut (impl FnMut(f64) + Send),
 	timeouts: Timeouts,
 ) -> Result<(), String> {
@@ -262,6 +315,11 @@ async fn download_with_timeouts(
 		if cancel.load(Ordering::Relaxed) {
 			let _ = tokio::fs::remove_file(&tmp).await;
 			return Err(DOWNLOAD_CANCELLED.into());
+		}
+		if pause.load(Ordering::Relaxed) {
+			// paused while waiting for the server: nothing was written
+			// here, and any staged prefix stays for the resume
+			return Err(DOWNLOAD_PAUSED.into());
 		}
 		let now = tokio::time::Instant::now();
 		if now >= header_deadline {
@@ -354,6 +412,10 @@ async fn download_with_timeouts(
 					let _ = tokio::fs::remove_file(&tmp).await;
 					return Err(DOWNLOAD_CANCELLED.into());
 				}
+				if pause.load(Ordering::Relaxed) {
+					drop(file);
+					return Err(DOWNLOAD_PAUSED.into());
+				}
 				let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
 				if n == 0 {
 					break;
@@ -430,6 +492,11 @@ async fn download_with_timeouts(
 		loop {
 			if cancel.load(Ordering::Relaxed) {
 				return Err(Discard(DOWNLOAD_CANCELLED.into()));
+			}
+			if pause.load(Ordering::Relaxed) {
+				// a pause keeps the staged prefix, exactly like a
+				// transient failure: the next attempt resumes from it
+				return Err(Resumable(DOWNLOAD_PAUSED.into()));
 			}
 			let chunk = tokio::select! {
 				_ = &mut stall => {
@@ -1618,6 +1685,7 @@ mod transport_timeout_tests {
 				&sha256_hex(b"abcdef"),
 				"",
 				&cancel,
+				&super::NEVER_PAUSED,
 				&mut |_| {},
 				test_timeouts(300, Duration::from_secs(5)),
 			),
@@ -1655,6 +1723,7 @@ mod transport_timeout_tests {
 				&sha256_hex(b"abcdef"),
 				"",
 				&cancel,
+				&super::NEVER_PAUSED,
 				&mut |_| {},
 				test_timeouts(10_000, Duration::from_secs(5)),
 			),
@@ -1671,6 +1740,91 @@ mod transport_timeout_tests {
 		assert!(!tmp.exists(), "a user cancel discards the staged prefix");
 		assert!(!dest.exists());
 		canceller.join().unwrap();
+	}
+
+	/// Flip the pause flag from another thread after `delay`, the way the
+	/// UI's pause button lands mid-download.
+	fn pauser_after(delay: Duration, pause: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
+		let pause = pause.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(delay);
+			pause.store(true, std::sync::atomic::Ordering::Relaxed);
+		})
+	}
+
+	#[tokio::test]
+	async fn pausing_while_headers_are_pending_keeps_the_staged_prefix() {
+		let url = serve_then_hold(Vec::new());
+		let (dest, _dir) = dest("pausehdr");
+		let tmp = part_path(&dest);
+		std::fs::write(&tmp, b"abc").expect("stage prefix");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let pause = Arc::new(AtomicBool::new(false));
+		let pauser = pauser_after(Duration::from_millis(100), &pause);
+		let err = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				6,
+				&sha256_hex(b"abcdef"),
+				"",
+				&cancel,
+				&pause,
+				&mut |_| {},
+				test_timeouts(10_000, Duration::from_secs(5)),
+			),
+		)
+		.await
+		.expect("pause must not wait out the header deadline")
+		.expect_err("a paused download must fail with its own message");
+		assert_eq!(err, super::DOWNLOAD_PAUSED);
+		// unlike a cancel, a pause keeps everything: the resume needs it
+		assert_eq!(std::fs::read(&tmp).expect("prefix kept"), b"abc".to_vec());
+		assert!(!dest.exists(), "dest is never touched on error");
+		pauser.join().unwrap();
+	}
+
+	#[tokio::test]
+	async fn pausing_during_a_stalled_body_keeps_the_staged_bytes() {
+		// headers plus a partial body, then the server goes silent: the
+		// pause must land within the short poll bound and keep the prefix
+		let url = serve_then_hold(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nprefix".to_vec());
+		let (dest, _dir) = dest("pausebody");
+		let cancel = Arc::new(AtomicBool::new(false));
+		let pause = Arc::new(AtomicBool::new(false));
+		let pauser = pauser_after(Duration::from_millis(150), &pause);
+		let start = Instant::now();
+		let err = tokio::time::timeout(
+			Duration::from_secs(5),
+			download_with_timeouts(
+				&url,
+				&dest,
+				100,
+				&sha256_hex(&[0u8; 100]),
+				"",
+				&cancel,
+				&pause,
+				&mut |_| {},
+				test_timeouts(5_000, Duration::from_secs(10)),
+			),
+		)
+		.await
+		.expect("pause must not wait out the stall timeout")
+		.expect_err("a paused download must fail with its own message");
+		assert_eq!(err, super::DOWNLOAD_PAUSED);
+		assert!(
+			start.elapsed() < Duration::from_secs(1),
+			"pause answered in {:?}, not after the stall timeout",
+			start.elapsed()
+		);
+		// the received bytes stay staged, ready for a Range resume
+		assert_eq!(
+			std::fs::read(part_path(&dest)).expect("partial body kept"),
+			b"prefix".to_vec()
+		);
+		assert!(!dest.exists());
+		pauser.join().unwrap();
 	}
 
 	#[tokio::test]
@@ -1691,6 +1845,7 @@ mod transport_timeout_tests {
 				&sha256_hex(&[0u8; 100]),
 				"",
 				&cancel,
+				&super::NEVER_PAUSED,
 				&mut |_| {},
 				test_timeouts(5_000, Duration::from_secs(10)),
 			),
@@ -1737,6 +1892,7 @@ mod transport_timeout_tests {
 				&sha256_hex(&served[..expected]),
 				"",
 				&cancel,
+				&super::NEVER_PAUSED,
 				&mut |_| {},
 				test_timeouts(5_000, Duration::from_secs(10)),
 			),
@@ -1789,6 +1945,7 @@ mod transport_timeout_tests {
 				&sha256_hex(&suffix),
 				"",
 				&cancel,
+				&super::NEVER_PAUSED,
 				&mut |_| {},
 				test_timeouts(5_000, Duration::from_secs(5)),
 			),

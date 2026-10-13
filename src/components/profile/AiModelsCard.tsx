@@ -20,6 +20,8 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		savedSettings,
 		runtime,
 		downloadProgress,
+		downloadRates,
+		pausedDownloads,
 		downloadFailures,
 		rowPending,
 		appleStt,
@@ -36,6 +38,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		setSettings,
 		deleteModel,
 		cancelDownload,
+		pauseDownload,
 		activateModel
 	} = useAiModels(openSnackbar);
 
@@ -65,12 +68,15 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 
 	const modelList: ModelListContext = {
 		downloadProgress,
+		pausedDownloads,
+		downloadRates,
 		failures: downloadFailures,
 		pending: rowPending,
 		freeBytes,
 		actions: {
 			onDownload: download,
 			onCancel: cancelDownload,
+			onPause: pauseDownload,
 			onDelete: deleteModel,
 			onActivate: activateModel
 		}

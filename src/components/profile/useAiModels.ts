@@ -20,6 +20,7 @@ import {
 	getAppleSttStatusApi,
 	getFreeDiskSpaceApi,
 	listModelsApi,
+	pauseDownloadApi,
 	saveAiSettingsApi,
 	deleteModelApi,
 	type AiSettingsResponse,
@@ -74,7 +75,11 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	/** last persisted snapshot of the endpoint fields, for dirty tracking */
 	const [savedSettings, setSavedSettings] = useState<AiSettingsResponse | null>(null);
 	const runtime = useStore($aiStatus);
-	const { active: activeDownloads, failures: downloadFailures } = useStore($downloads);
+	const {
+		active: activeDownloads,
+		paused: pausedDownloadEntries,
+		failures: downloadFailures
+	} = useStore($downloads);
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
 	/** long-running per-row action, so the buttons can say "Deleting…"
@@ -87,11 +92,12 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 			.then((data) => {
 				setModels(data);
 				setModelsError(false);
-				// Rehydrate in-flight downloads (e.g. after navigating away
-				// and back). The listing is a snapshot; the live event
-				// stream is fresher, so it only fills ids the store does
-				// not track yet.
+				// Rehydrate in-flight and paused downloads (e.g. after
+				// navigating away and back). The listing is a snapshot; the
+				// live event stream is fresher, so it only fills ids the
+				// store does not track yet.
 				const entries: Record<string, { pct: number; label: string }> = {};
+				const pausedEntries: Record<string, { pct: number; label: string }> = {};
 				for (const list of [data.llm, data.stt]) {
 					for (const model of list) {
 						if (model.downloading) {
@@ -99,10 +105,15 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 								pct: model.progress ?? -1,
 								label: model.label
 							};
+						} else if (model.paused) {
+							pausedEntries[model.id] = {
+								pct: model.progress ?? -1,
+								label: model.label
+							};
 						}
 					}
 				}
-				seedDownloads(entries);
+				seedDownloads(entries, pausedEntries);
 			})
 			.catch((e) => {
 				console.error("list models failed", e);
@@ -161,7 +172,8 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		const unlisten = listen<{
 			modelId: string;
 			label?: string;
-			kind: "progress" | "done" | "cancelled" | "error" | "load-error" | "activated";
+			kind:
+				"progress" | "paused" | "done" | "cancelled" | "error" | "load-error" | "activated";
 			pct?: number;
 			message?: string;
 		}>(EVENTS.modelDownload, (event) => {
@@ -170,6 +182,10 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 				openSnackbar(true, "Model downloaded");
 				refreshModels();
 				refreshDiskSpace();
+			} else if (kind === "paused") {
+				// the paused flag and stop point live in the listing; the
+				// row's Resume button reads them from there
+				refreshModels();
 			} else if (kind === "activated") {
 				// the selection moved to the finished download: the
 				// "Active" badge must follow
@@ -319,6 +335,13 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		[openSnackbar]
 	);
 
+	const pauseDownload = useCallback(
+		(modelId: string): void => {
+			pauseDownloadApi(modelId).catch((e) => openSnackbar(false, normalizeApiError(e)));
+		},
+		[openSnackbar]
+	);
+
 	const activateModel = useCallback(
 		(modelId: string): void => {
 			setRowPending((prev) => ({ ...prev, [modelId]: "activate" }));
@@ -336,10 +359,21 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		[openSnackbar, refreshModels]
 	);
 
-	// Row-shaped projection of the store (ModelRow reads a plain pct)
+	// Row-shaped projection of the store (ModelRow reads plain numbers)
 	const downloadProgress: Record<string, number> = {};
+	const downloadRates: Record<string, { bytesPerSec: number; etaSecs: number | null }> = {};
 	for (const [modelId, entry] of Object.entries(activeDownloads)) {
 		downloadProgress[modelId] = entry.pct;
+		if (entry.bytesPerSec !== undefined) {
+			downloadRates[modelId] = {
+				bytesPerSec: entry.bytesPerSec,
+				etaSecs: entry.etaSecs ?? null
+			};
+		}
+	}
+	const pausedDownloads: Record<string, number> = {};
+	for (const [modelId, entry] of Object.entries(pausedDownloadEntries)) {
+		pausedDownloads[modelId] = entry.pct;
 	}
 
 	return {
@@ -351,6 +385,8 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		setSavedSettings,
 		runtime,
 		downloadProgress,
+		downloadRates,
+		pausedDownloads,
 		downloadFailures,
 		rowPending,
 		appleStt,
@@ -366,6 +402,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		saveEndpoint,
 		deleteModel,
 		cancelDownload,
+		pauseDownload,
 		activateModel
 	};
 }

@@ -3,7 +3,7 @@ import Button from "@ds/Button";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 import type { ModelStatus } from "@helpers/api/models";
 import type { DownloadFailure } from "@components/global/downloadStore";
-import { formatSize } from "./format";
+import { formatEta, formatRate, formatSize } from "./format";
 
 /** Headroom required on top of the model file before we warn about space */
 const DOWNLOAD_SPACE_MARGIN_BYTES = 1_000_000_000;
@@ -19,6 +19,7 @@ const downloadPercent = (pct: number): number | null =>
 export interface ModelRowActions {
 	onDownload: (modelId: string) => void;
 	onCancel: (modelId: string) => void;
+	onPause: (modelId: string) => void;
 	onDelete: (modelId: string) => void;
 	onActivate: (modelId: string) => void;
 }
@@ -27,6 +28,10 @@ interface ModelRowProps extends ModelRowActions {
 	model: ModelStatus;
 	/** download percentage while downloading (negative = size unknown) */
 	progress: number | undefined;
+	/** stop point of a paused download (negative = size unknown) */
+	pausedPct?: number;
+	/** speed/ETA of the running download, when known */
+	rate?: { bytesPerSec: number; etaSecs: number | null };
 	/** the last download failure for this model, if any */
 	error?: string;
 	/** a long-running action for this row (delete/activate can wait out a
@@ -42,17 +47,32 @@ interface ModelRowProps extends ModelRowActions {
 export const ModelRow = memo(function ModelRow({
 	model,
 	progress,
+	pausedPct,
+	rate,
 	error,
 	pending,
 	freeBytes,
 	onDownload,
 	onCancel,
+	onPause,
 	onDelete,
 	onActivate
 }: ModelRowProps) {
 	const isDownloading = progress !== undefined;
+	// the store's paused marker is immediate; the model listing's flag
+	// covers a page that loaded mid-pause. A transfer always wins.
+	const isPaused = !isDownloading && (pausedPct !== undefined || model.paused === true);
+	const shownPct = isPaused ? (pausedPct ?? model.progress) : progress;
+	const pct = shownPct === undefined ? null : downloadPercent(shownPct);
 	const isPending = pending !== undefined;
-	const pct = progress === undefined ? null : downloadPercent(progress);
+	const rateLine =
+		isPaused || isDownloading
+			? isPaused
+				? "Paused — Resume continues where it stopped."
+				: rate
+					? `${formatRate(rate.bytesPerSec)}${rate.etaSecs !== null ? ` · about ${formatEta(rate.etaSecs)} left` : ""}`
+					: ""
+			: "";
 	return (
 		<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
 			<div className="flex justify-between items-baseline gap-4">
@@ -90,7 +110,7 @@ export const ModelRow = memo(function ModelRow({
 							onConfirm={() => onDelete(model.id)}
 						/>
 					)}
-					{!model.downloaded && !isDownloading && (
+					{!model.downloaded && !isDownloading && !isPaused && (
 						<>
 							<Button variant="pink" onClick={() => onDownload(model.id)}>
 								{error ? "Retry" : `Download (${formatSize(model.sizeBytes)})`}
@@ -101,35 +121,55 @@ export const ModelRow = memo(function ModelRow({
 						</>
 					)}
 					{isDownloading && (
-						<Button variant="bordered" onClick={() => onCancel(model.id)}>
-							Cancel
-						</Button>
+						<>
+							<Button variant="bordered" onClick={() => onPause(model.id)}>
+								Pause
+							</Button>
+							<Button variant="bordered" onClick={() => onCancel(model.id)}>
+								Cancel
+							</Button>
+						</>
+					)}
+					{isPaused && (
+						<>
+							<Button variant="pink" onClick={() => onDownload(model.id)}>
+								Resume
+							</Button>
+							<DiscardDownloadButton
+								disabled={isPending}
+								busy={pending === "delete"}
+								onConfirm={() => onDelete(model.id)}
+							/>
+						</>
 					)}
 				</div>
 			</div>
-			{isDownloading && (
-				<div className="flex items-center gap-3">
-					<div
-						role="progressbar"
-						aria-label={`${model.label} download progress`}
-						aria-valuemin={0}
-						aria-valuemax={100}
-						aria-valuenow={pct ?? undefined}
-						className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden"
-					>
-						{pct === null ? (
-							// backend couldn't determine the total size
-							<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
-						) : (
-							<div
-								className="bg-pink-500 h-2.5 rounded-full transition-all"
-								style={{ width: `${pct}%` }}
-							></div>
-						)}
+			{(isDownloading || isPaused) && (
+				<div className="flex flex-col gap-1">
+					<div className="flex items-center gap-3">
+						<div
+							role="progressbar"
+							aria-label={`${model.label} download progress`}
+							aria-valuemin={0}
+							aria-valuemax={100}
+							aria-valuenow={pct ?? undefined}
+							className="w-full bg-stone-200 rounded-full h-2.5 overflow-hidden"
+						>
+							{pct === null ? (
+								// backend couldn't determine the total size
+								<div className="bg-pink-500 h-2.5 w-1/3 rounded-full animate-pulse"></div>
+							) : (
+								<div
+									className="bg-pink-500 h-2.5 rounded-full transition-all"
+									style={{ width: `${pct}%` }}
+								></div>
+							)}
+						</div>
+						<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
+							{pct === null ? "…" : `${pct}%`}
+						</span>
 					</div>
-					<span className="text-xs text-stone-500 tabular-nums shrink-0 w-10 text-right">
-						{pct === null ? "…" : `${pct}%`}
-					</span>
+					{rateLine !== "" && <p className="text-xs text-stone-500">{rateLine}</p>}
 				</div>
 			)}
 		</div>
@@ -139,6 +179,10 @@ export const ModelRow = memo(function ModelRow({
 /** What every model list needs besides the models themselves. */
 export interface ModelListContext {
 	downloadProgress: Record<string, number>;
+	/** stop points of paused downloads (see the $downloads store) */
+	pausedDownloads: Record<string, number>;
+	/** speed/ETA of running downloads, when the backend computed them */
+	downloadRates: Record<string, { bytesPerSec: number; etaSecs: number | null }>;
 	/** last download failures by model id (see the $downloads store) */
 	failures: Record<string, DownloadFailure>;
 	/** long-running per-row action, if any */
@@ -151,6 +195,8 @@ export interface ModelListContext {
 export function ModelList({
 	models,
 	downloadProgress,
+	pausedDownloads,
+	downloadRates,
 	failures,
 	pending,
 	freeBytes,
@@ -161,6 +207,8 @@ export function ModelList({
 			key={model.id}
 			model={model}
 			progress={downloadProgress[model.id]}
+			pausedPct={pausedDownloads[model.id]}
+			rate={downloadRates[model.id]}
 			error={failures[model.id]?.message}
 			pending={pending[model.id]}
 			freeBytes={freeBytes}
@@ -203,6 +251,41 @@ function DeleteModelButton({
 				</span>
 			) : (
 				"Delete"
+			)}
+		</Button>
+	);
+}
+
+/**
+ * Discard a paused download (its staged `.part` is removed) behind the
+ * same two-click confirm as a delete: pausing is easy to reverse with
+ * Resume, discarding is not.
+ */
+function DiscardDownloadButton({
+	disabled,
+	busy,
+	onConfirm
+}: {
+	disabled: boolean;
+	busy: boolean;
+	onConfirm: () => void;
+}) {
+	const { isConfirming, secondsLeft, confirm } = useConfirmClick();
+	return (
+		<Button
+			variant="bordered"
+			disabled={disabled}
+			onClick={() => {
+				if (confirm()) onConfirm();
+			}}
+			classes={isConfirming ? "ring-red-400 text-red-600 whitespace-nowrap" : ""}
+		>
+			{busy ? (
+				<span aria-live="polite">Discarding…</span>
+			) : isConfirming ? (
+				<span aria-live="polite">{`Really discard? (${secondsLeft ?? 0}s)`}</span>
+			) : (
+				"Discard"
 			)}
 		</Button>
 	);

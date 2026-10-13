@@ -5,7 +5,10 @@ use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
-use crate::models::{download_model_file, find_model, kv_bytes_per_token, model_url, ModelKind};
+use crate::models::{
+	download_model_file_with_pause, find_model, kv_bytes_per_token, model_url, ModelKind,
+	PauseEntry,
+};
 use crate::types::ModelStatus;
 use crate::AppState;
 
@@ -18,16 +21,24 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
 		let settings = state.ai_settings();
-		// Snapshot the progress under the lock, then release it: the loop
-		// below stats every catalog file (and can scan hub-cache dirs), and
-		// holding the mutex across that would block every download-progress
-		// event that arrives mid-scan.
+		// Snapshot the progress and paused markers under the locks, then
+		// release them: the loop below stats every catalog file (and can
+		// scan hub-cache dirs), and holding the mutexes across that would
+		// block every download event that arrives mid-scan.
 		let progress: std::collections::HashMap<String, f64> = state
 			.download_progress
 			.lock()
 			.unwrap_or_else(|e| e.into_inner())
 			.iter()
 			.map(|(id, pct)| (id.clone(), *pct))
+			.collect();
+		let paused: std::collections::HashMap<String, f64> = state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.iter()
+			.filter(|(_, entry)| entry.paused)
+			.map(|(id, entry)| (id.clone(), entry.pct))
 			.collect();
 		let build = |kind: ModelKind| -> Vec<serde_json::Value> {
 			let list: &[crate::models::ModelSpec] = match kind {
@@ -36,6 +47,10 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 			};
 			list.iter()
 				.map(|spec| {
+					// an actively downloading model's live pct wins over
+					// the marker a pause left behind
+					let active_pct = progress.get(spec.id).copied();
+					let paused_pct = paused.get(spec.id).copied();
 					let mut row = serde_json::to_value(ModelStatus {
 						id: spec.id.to_string(),
 						label: spec.label.to_string(),
@@ -61,7 +76,8 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 							}
 						},
 						downloading: progress.contains_key(spec.id),
-						progress: progress.get(spec.id).copied(),
+						progress: active_pct.or(paused_pct),
+						paused: active_pct.is_none() && paused_pct.is_some(),
 						filename: Some(spec.filename.to_string()),
 					})
 					.expect("serializing a ModelStatus row cannot fail");
@@ -141,6 +157,69 @@ struct DownloadGuard {
 	model_id: String,
 }
 
+/// Bytes-per-second and ETA from consecutive progress reports. Progress
+/// arrives every ~2 MB (or on completion), so each delta is a meaningful
+/// sample; the rate is lightly smoothed so the label does not flicker,
+/// and the ETA derives from the smoothed rate.
+struct ProgressRate {
+	total: u64,
+	last: Option<(std::time::Instant, u64)>,
+	smoothed: Option<f64>,
+}
+
+impl ProgressRate {
+	fn new(total: u64) -> Self {
+		Self {
+			total,
+			last: None,
+			smoothed: None,
+		}
+	}
+
+	/// Feed a progress percentage; None when there is nothing new to say
+	/// (unknown size, the first report, or a non-advancing sample).
+	fn update(&mut self, pct: f64) -> Option<(f64, u64)> {
+		if self.total == 0 || pct < 0.0 {
+			return None;
+		}
+		let bytes = ((pct / 100.0) * self.total as f64).round() as u64;
+		self.update_at(bytes, std::time::Instant::now())
+	}
+
+	/// [`Self::update`] with an injected clock, so the arithmetic is
+	/// testable without sleeping.
+	fn update_at(&mut self, bytes: u64, now: std::time::Instant) -> Option<(f64, u64)> {
+		let (previous_at, previous_bytes) = match self.last {
+			// the first report is the baseline, nothing to measure yet
+			None => {
+				self.last = Some((now, bytes));
+				return None;
+			}
+			Some(previous) => previous,
+		};
+		let elapsed = now.duration_since(previous_at).as_secs_f64();
+		let advanced = bytes.saturating_sub(previous_bytes) as f64;
+		// a non-advancing sample keeps the old baseline, so the next
+		// advancing report still spans the original interval
+		if elapsed <= 0.0 || advanced <= 0.0 {
+			return None;
+		}
+		self.last = Some((now, bytes));
+		let sample = advanced / elapsed;
+		let rate = match self.smoothed {
+			Some(previous_rate) => previous_rate * 0.7 + sample * 0.3,
+			None => sample,
+		};
+		self.smoothed = Some(rate);
+		let remaining = self.total.saturating_sub(bytes) as f64;
+		let eta = (remaining / rate).ceil();
+		if !eta.is_finite() || eta < 0.0 || eta > u64::MAX as f64 {
+			return None;
+		}
+		Some((rate, eta as u64))
+	}
+}
+
 impl Drop for DownloadGuard {
 	fn drop(&mut self) {
 		if let Some(state) = self.app.try_state::<AppState>() {
@@ -149,12 +228,17 @@ impl Drop for DownloadGuard {
 	}
 }
 
-/// Insert a download into both bookkeeping maps under one critical
-/// section, so a concurrent `cancel_download` or `download_model` can
-/// never observe a half-registered download. Err means this model is
-/// already downloading.
-fn register_download(state: &AppState, model_id: &str) -> Result<Arc<AtomicBool>, String> {
-	// Lock ordering (progress, then cancels) must match unregister_download.
+/// Insert a download into the bookkeeping maps under one critical
+/// section, so a concurrent `cancel_download`/`pause_download` or
+/// `download_model` can never observe a half-registered download. Err
+/// means this model is already downloading. Returns the fresh cancel and
+/// pause tokens.
+fn register_download(
+	state: &AppState,
+	model_id: &str,
+) -> Result<(Arc<AtomicBool>, Arc<AtomicBool>), String> {
+	// Lock ordering (progress, then cancels, then pauses) must match
+	// unregister_download.
 	let mut progress = state
 		.download_progress
 		.lock()
@@ -163,29 +247,53 @@ fn register_download(state: &AppState, model_id: &str) -> Result<Arc<AtomicBool>
 		.download_cancels
 		.lock()
 		.unwrap_or_else(|e| e.into_inner());
+	let mut pauses = state
+		.download_pauses
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
 	// a cancel entry without progress is a finished download whose
 	// auto-load still holds the slot
 	if progress.contains_key(model_id) || cancels.contains_key(model_id) {
 		return Err("model is already downloading".into());
 	}
 	let cancel = Arc::new(AtomicBool::new(false));
+	let pause = Arc::new(AtomicBool::new(false));
 	progress.insert(model_id.to_string(), 0.0);
 	cancels.insert(model_id.to_string(), cancel.clone());
-	Ok(cancel)
+	// a fresh attempt supersedes a paused one: Resume restarts the
+	// transfer from the kept `.part` under a new control
+	pauses.insert(
+		model_id.to_string(),
+		PauseEntry {
+			token: pause.clone(),
+			pct: 0.0,
+			paused: false,
+		},
+	);
+	Ok((cancel, pause))
 }
 
 /// The transfer finished: stop reporting the model as downloading, but
 /// keep its cancel entry (which still holds the slot) until the
-/// DownloadGuard drops after the auto-load.
+/// DownloadGuard drops after the auto-load. A paused marker cannot
+/// survive a completed download either.
 fn finish_download_progress(state: &AppState, model_id: &str) {
 	state
 		.download_progress
 		.lock()
 		.unwrap_or_else(|e| e.into_inner())
 		.remove(model_id);
+	state
+		.download_pauses
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.remove(model_id);
 }
 
 /// Remove a download's bookkeeping entries (inverse of register_download).
+/// A *paused* entry is kept on purpose: Resume needs its recorded
+/// progress, and it is cleared by the next registration, a cancel, a
+/// finished download or a model delete.
 fn unregister_download(state: &AppState, model_id: &str) {
 	state
 		.download_progress
@@ -197,6 +305,17 @@ fn unregister_download(state: &AppState, model_id: &str) {
 		.lock()
 		.unwrap_or_else(|e| e.into_inner())
 		.remove(model_id);
+	let mut pauses = state
+		.download_pauses
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	let paused = pauses
+		.get(model_id)
+		.map(|entry| entry.paused)
+		.unwrap_or(false);
+	if !paused {
+		pauses.remove(model_id);
+	}
 }
 
 #[tauri::command]
@@ -232,9 +351,10 @@ pub async fn download_model(
 	std::fs::create_dir_all(dest.parent().ok_or("blob path has no parent")?)
 		.map_err(|e| e.to_string())?;
 
-	// This download gets its own cancel token, fully independent of the
-	// generation token - chatting must never kill a download and vice versa.
-	let cancel = register_download(&state, &model_id)?;
+	// This download gets its own cancel and pause tokens, fully
+	// independent of the generation token - chatting must never kill a
+	// download and vice versa.
+	let (cancel, pause) = register_download(&state, &model_id)?;
 	// The guard exists before the spawn, so nothing between registration
 	// and the spawned task can leak the bookkeeping entries.
 	let guard = DownloadGuard {
@@ -259,6 +379,11 @@ pub async fn download_model(
 		{
 			let state = app_handle.state::<AppState>();
 			let model_id = model_id.clone();
+			// Speed/ETA come from consecutive progress reports: bytes
+			// derive from pct × the catalog size, the delta between
+			// reports gives the rate (lightly smoothed so the label does
+			// not flicker).
+			let mut rate = ProgressRate::new(spec.size_bytes);
 			let mut on_progress = |pct: f64| {
 				state
 					.download_progress
@@ -266,23 +391,26 @@ pub async fn download_model(
 					.unwrap_or_else(|e| e.into_inner())
 					.insert(model_id.clone(), pct);
 				let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
-				let _ = app_handle.emit(
-					"model-download",
-					json!({
-						"modelId": model_id,
-						"label": spec_label,
-						"kind": "progress",
-						"pct": pct
-					}),
-				);
+				let mut payload = json!({
+					"modelId": model_id,
+					"label": spec_label,
+					"kind": "progress",
+					"pct": pct
+				});
+				if let Some((bytes_per_sec, eta_secs)) = rate.update(pct) {
+					payload["bytesPerSec"] = json!(bytes_per_sec);
+					payload["etaSecs"] = json!(eta_secs);
+				}
+				let _ = app_handle.emit("model-download", payload);
 			};
-			let result = download_model_file(
+			let result = download_model_file_with_pause(
 				&url,
 				&dest,
 				spec.size_bytes,
 				spec.sha256,
 				&hf_token,
 				&cancel,
+				&pause,
 				&mut on_progress,
 			)
 			.await;
@@ -393,23 +521,60 @@ pub async fn download_model(
 					}
 				}
 				Err(e) => {
-					// A user cancel is not a failure: it gets its own kind
-					// (no red "download failed" for a button the user
-					// pressed), and the message is left off entirely.
+					// A user cancel and a user pause are not failures:
+					// each gets its own kind (no red "download failed" for
+					// a button the user pressed). A cancel discards the
+					// staged prefix; a pause keeps it and records where the
+					// transfer stopped so Resume continues from there.
 					let is_cancelled = e == crate::models::DOWNLOAD_CANCELLED;
-					let kind = if is_cancelled { "cancelled" } else { "error" };
-					if is_cancelled {
-						let _ = on_event.send(json!({ "kind": "cancelled" }));
+					let is_paused = e == crate::models::DOWNLOAD_PAUSED;
+					let state = app_handle.state::<AppState>();
+					let kind = if is_cancelled {
+						"cancelled"
+					} else if is_paused {
+						"paused"
 					} else {
-						let _ = on_event.send(json!({ "kind": "error", "message": e }));
-					}
+						"error"
+					};
 					let mut payload = json!({
 						"modelId": model_id,
 						"label": spec_label,
 						"kind": kind
 					});
-					if !is_cancelled {
+					if is_cancelled {
+						// a cancel discards the staged prefix: no paused
+						// state may linger for a retry to resume from
+						state
+							.download_pauses
+							.lock()
+							.unwrap_or_else(|e| e.into_inner())
+							.remove(&model_id);
+						let _ = on_event.send(json!({ "kind": "cancelled" }));
+					} else if is_paused {
+						// record where the transfer stopped; unregister
+						// keeps paused entries, so Resume (and a fresh page
+						// load) can show the progress
+						let pct = state
+							.download_progress
+							.lock()
+							.unwrap_or_else(|e| e.into_inner())
+							.get(&model_id)
+							.copied()
+							.unwrap_or(0.0);
+						let mut pauses = state
+							.download_pauses
+							.lock()
+							.unwrap_or_else(|e| e.into_inner());
+						if let Some(entry) = pauses.get_mut(&model_id) {
+							entry.pct = pct;
+							entry.paused = true;
+						}
+						drop(pauses);
+						payload["pct"] = json!(pct);
+						let _ = on_event.send(json!({ "kind": "paused", "pct": pct }));
+					} else {
 						payload["message"] = json!(e);
+						let _ = on_event.send(json!({ "kind": "error", "message": e }));
 					}
 					let _ = app_handle.emit("model-download", payload);
 				}
@@ -465,11 +630,18 @@ fn delete_model_files(
 ) -> Result<bool, String> {
 	let mut deleted = false;
 	let app_path = state.model_path(spec);
+	// a paused or interrupted transfer's staging file goes with the model
+	if crate::models::remove_staged_part(&app_path)? {
+		deleted = true;
+	}
 	if app_path.is_file() {
 		std::fs::remove_file(&app_path).map_err(|e| e.to_string())?;
 		deleted = true;
 	}
 	for cache in caches {
+		if crate::models::remove_staged_part(&crate::models::hf_blob_path(cache, spec))? {
+			deleted = true;
+		}
 		deleted |= crate::models::remove_cached_model(cache, spec, verified)?;
 	}
 	Ok(deleted)
@@ -504,6 +676,13 @@ pub async fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(),
 		let spec = find_model(&model_id, ModelKind::Llm)
 			.or_else(|| find_model(&model_id, ModelKind::Stt))
 			.ok_or_else(|| format!("unknown model {model_id}"))?;
+		// a paused download's marker goes with the model (its staged file
+		// is removed by the delete path itself)
+		state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.remove(&model_id);
 		let events = crate::AppStatusEvents(&app);
 		let caches = crate::models::hf_hub_cache_candidates();
 		delete_model_events(&state, &events, spec, &caches, DELETE_SLOT_WAIT)
@@ -529,6 +708,24 @@ pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(
 			Ok(())
 		}
 		None => Err(format!("no download in progress for {model_id}")),
+	}
+}
+
+/// Pause an in-flight download: the transfer stops within a tick and
+/// KEEPS its staged `.part`, and the UI is told to offer Resume (a fresh
+/// `download_model` continues from the prefix).
+#[tauri::command]
+pub fn pause_download(state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+	let pauses = state
+		.download_pauses
+		.lock()
+		.unwrap_or_else(|e| e.into_inner());
+	match pauses.get(&model_id) {
+		Some(entry) if !entry.paused => {
+			entry.token.store(true, Ordering::Relaxed);
+			Ok(())
+		}
+		_ => Err(format!("no download in progress for {model_id}")),
 	}
 }
 
@@ -1021,7 +1218,7 @@ mod tests {
 	#[test]
 	fn registration_is_atomic_and_cleanup_releases_the_slot() {
 		let (state, _dir) = temp_state("slot");
-		let cancel = register_download(&state, "m").expect("first registration wins");
+		let (cancel, _pause) = register_download(&state, "m").expect("first registration wins");
 		cancel.store(true, Ordering::Relaxed);
 
 		// both maps carry the entry, sharing the same cancel token
@@ -1056,6 +1253,103 @@ mod tests {
 			.get("m")
 			.is_none());
 		assert!(register_download(&state, "m").is_ok());
+	}
+
+	#[test]
+	fn pause_bookkeeping_survives_the_task_and_a_resume_resets_it() {
+		let (state, _dir) = temp_state("pause");
+		let (cancel, pause) = register_download(&state, "m").expect("register");
+		assert!(!cancel.load(Ordering::Relaxed));
+		assert!(!pause.load(Ordering::Relaxed));
+
+		// the UI pauses the transfer...
+		pause.store(true, Ordering::Relaxed);
+		// ...and the download task records where it stopped before its
+		// guard drops
+		{
+			let mut pauses = state
+				.download_pauses
+				.lock()
+				.unwrap_or_else(|e| e.into_inner());
+			let entry = pauses.get_mut("m").expect("pause entry");
+			entry.pct = 42.0;
+			entry.paused = true;
+		}
+		unregister_download(&state, "m");
+
+		// the paused entry outlives its task: Resume needs its pct
+		let paused = state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.get("m")
+			.map(|entry| (entry.paused, entry.pct));
+		assert_eq!(paused, Some((true, 42.0)));
+
+		// a resume (a fresh registration) clears the marker
+		let _ = register_download(&state, "m").expect("resume registers");
+		let resumed = state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.get("m")
+			.map(|entry| (entry.paused, entry.pct));
+		assert_eq!(resumed, Some((false, 0.0)));
+
+		// a plain (never paused) unregister cleans up everything
+		unregister_download(&state, "m");
+		assert!(!state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.contains_key("m"));
+	}
+
+	#[test]
+	fn a_completed_download_clears_a_stale_pause_marker() {
+		let (state, _dir) = temp_state("pausefin");
+		let _ = register_download(&state, "m").expect("register");
+		{
+			let mut pauses = state
+				.download_pauses
+				.lock()
+				.unwrap_or_else(|e| e.into_inner());
+			if let Some(entry) = pauses.get_mut("m") {
+				entry.pct = 90.0;
+				entry.paused = true;
+			}
+		}
+		super::finish_download_progress(&state, "m");
+		assert!(!state
+			.download_pauses
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.contains_key("m"));
+		unregister_download(&state, "m");
+	}
+
+	#[test]
+	fn progress_rate_reports_smoothed_speed_and_eta() {
+		let mut rate = super::ProgressRate::new(1_000_000);
+		let start = std::time::Instant::now();
+		// the first report has no baseline
+		assert_eq!(rate.update_at(0, start), None);
+		// 100 kB in 2 s -> 50 kB/s, 900 kB left -> 18 s
+		let first = rate.update_at(100_000, start + std::time::Duration::from_secs(2));
+		assert_eq!(first, Some((50_000.0, 18)));
+		// a non-advancing sample is ignored
+		assert_eq!(
+			rate.update_at(100_000, start + std::time::Duration::from_secs(4)),
+			None
+		);
+		// 200 kB more in 2 s (100 kB/s sample): 0.7*50k + 0.3*100k = 65 kB/s
+		let second = rate.update_at(300_000, start + std::time::Duration::from_secs(4));
+		assert_eq!(second, Some((65_000.0, 11)));
+		// an unknown total or an indeterminate pct reports nothing
+		let mut unknown = super::ProgressRate::new(0);
+		assert_eq!(unknown.update(10.0), None);
+		let mut known = super::ProgressRate::new(1_000);
+		assert_eq!(known.update(-1.0), None);
 	}
 
 	struct RecordingEvents(std::sync::Mutex<Vec<String>>);

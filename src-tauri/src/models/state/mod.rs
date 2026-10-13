@@ -14,6 +14,17 @@ use crate::db::Db;
 use crate::llm::LocalLlm;
 use crate::stt::SttEngine;
 
+/// A download's pause control: the token the running transfer polls,
+/// plus the progress it stopped at. A `paused` entry survives its task
+/// (until a resume, a cancel, a finished download or a delete) so the
+/// Resume affordance can show where the transfer will continue.
+#[derive(Clone)]
+pub struct PauseEntry {
+	pub token: Arc<AtomicBool>,
+	pub pct: f64,
+	pub paused: bool,
+}
+
 pub struct Runtime {
 	pub backend: Option<Arc<llama_cpp_2::llama_backend::LlamaBackend>>,
 	pub llm: Option<Arc<LocalLlm>>,
@@ -100,6 +111,10 @@ pub struct AppState {
 	pub download_progress: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 	/// model id -> cancel token for in-flight downloads
 	pub download_cancels: std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+	/// model id -> pause control for in-flight (or paused) downloads:
+	/// `paused` entries outlive their transfer task so the UI can offer
+	/// Resume from the recorded progress.
+	pub download_pauses: std::sync::Mutex<std::collections::HashMap<String, PauseEntry>>,
 	/// guards so only one load per engine kind runs at a time
 	pub llm_loading: AtomicBool,
 	pub stt_loading: AtomicBool,
@@ -236,6 +251,7 @@ impl AppState {
 			transcription_cancel: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
 			download_progress: std::sync::Mutex::new(std::collections::HashMap::new()),
 			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
+			download_pauses: std::sync::Mutex::new(std::collections::HashMap::new()),
 			llm_loading: AtomicBool::new(false),
 			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),

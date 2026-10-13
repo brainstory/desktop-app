@@ -122,6 +122,7 @@ pub fn run() {
 			commands::models_cmd::get_free_disk_space,
 			commands::models_cmd::download_model,
 			commands::models_cmd::cancel_download,
+			commands::models_cmd::pause_download,
 			commands::models_cmd::delete_model,
 			commands::models_cmd::activate_model,
 			commands::share::export_idea,

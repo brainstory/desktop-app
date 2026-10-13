@@ -65,12 +65,15 @@ function renderSection(
 	const save = vi.fn();
 	const modelList: ModelListContext = {
 		downloadProgress: {},
+		pausedDownloads: {},
+		downloadRates: {},
 		failures: {},
 		pending: {},
 		freeBytes: null,
 		actions: {
 			onDownload: vi.fn(),
 			onCancel: vi.fn(),
+			onPause: vi.fn(),
 			onDelete: vi.fn(),
 			onActivate: vi.fn()
 		}

@@ -203,7 +203,11 @@ pub struct ModelStatus {
 	pub active: bool,
 	/// true while a download is in flight
 	pub downloading: bool,
-	/// download progress 0-100, only meaningful while downloading
+	/// a user pause stopped the transfer; `progress` carries where it
+	/// stopped, and resuming continues from the kept `.part`
+	pub paused: bool,
+	/// download progress 0-100 (the live pct while downloading, the
+	/// stop point while paused)
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub progress: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]

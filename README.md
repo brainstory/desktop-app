@@ -24,8 +24,10 @@ First launch (or from **Settings → AI Models**), download:
 
 Downloads are verified against pinned file sizes and SHA-256 hashes before
 being activated, so a truncated or corrupted transfer can't brick a model slot.
-Downloads can be cancelled from the same card; a hard quit leaves no garbage
-behind (partial `.part` files are swept at the next launch). Switching models
+Downloads show speed and estimated time left, can be paused and resumed (Resume
+continues from the bytes already on disk; Discard drops them), and can be
+cancelled from the same card; a hard quit leaves no garbage behind (partial
+`.part` files are swept at the next launch). Switching models
 unloads the old engine only when the new one is ready to take over — if the
 new model fails to load, the previous one is restored and the app keeps
 working. Optionally paste a HuggingFace access token (Settings → AI Models) —

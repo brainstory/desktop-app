@@ -10,6 +10,8 @@ export interface ModelStatus {
 	downloaded: boolean;
 	active: boolean;
 	downloading: boolean;
+	/** a user pause stopped the transfer; `progress` says where */
+	paused?: boolean;
 	/** download progress 0-100; negative = total size unknown */
 	progress?: number;
 	filename?: string;
@@ -89,8 +91,10 @@ export function getFreeDiskSpaceApi(): Promise<number> {
 }
 
 export interface DownloadEvent {
-	kind: "progress" | "done" | "cancelled" | "error" | "load-error";
+	kind: "progress" | "paused" | "done" | "cancelled" | "error" | "load-error";
 	pct?: number;
+	bytesPerSec?: number;
+	etaSecs?: number;
 	message?: string;
 }
 
@@ -121,6 +125,14 @@ export async function deleteModelApi(modelId: string): Promise<void> {
 /** Cancel an in-flight download; the backend removes its .part file. */
 export async function cancelDownloadApi(modelId: string): Promise<void> {
 	return invokeCommand("cancelDownload", { modelId });
+}
+
+/**
+ * Pause an in-flight download: the transfer stops keeping its staged
+ * `.part`, and starting the same download again resumes from it.
+ */
+export async function pauseDownloadApi(modelId: string): Promise<void> {
+	return invokeCommand("pauseDownload", { modelId });
 }
 
 /** Activate a downloaded model (sets it active and loads it) */
