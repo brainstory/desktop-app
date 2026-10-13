@@ -3,9 +3,23 @@ import type { NotificationSetting } from "@helpers/api/settings";
 
 import { Card } from "./ProfileCards";
 import TimePickerInput from "@components/global/time-picker/TimePickerInput";
+import { useDirtySave } from "@src/hooks/useDirtySave";
 
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import Button from "@ds/Button";
+
+/** Same reminder list: same entries, same order, same field values. */
+const notificationsEqual = (a: NotificationSetting[], b: NotificationSetting[]): boolean =>
+	a.length === b.length &&
+	a.every((entry, i) => {
+		const other = b[i];
+		return (
+			other !== undefined &&
+			entry.title === other.title &&
+			entry.enabled === other.enabled &&
+			(entry.value ?? "") === (other.value ?? "")
+		);
+	});
 
 interface NotificationsCardProps {
 	notificationsData?: NotificationSetting[];
@@ -23,7 +37,6 @@ export function NotificationsCard({
 }: NotificationsCardProps) {
 	const [notificationFields, setNotificationFields] =
 		useState<NotificationSetting[]>(notificationsData);
-	const [hasChanged, setHasChanged] = useState(false);
 	const titleIdBase = useId();
 	// reset local edits whenever the parent passes fresh data (the
 	// documented "adjust state when props change" render-time pattern)
@@ -32,13 +45,13 @@ export function NotificationsCard({
 		setPrevData(notificationsData);
 		setNotificationFields(notificationsData);
 	}
+	// dirty is derived from the last confirmed-saved list: edits made
+	// while a save was pending stay dirty, a failed save stays retryable
+	const { isSaving, isDirty, save } = useDirtySave(notificationsData, notificationsEqual);
+	const hasChanged = isDirty(notificationFields);
 
 	const handleSaveClick = () => {
-		setHasChanged(false);
-		void saveSettings(notificationFields).then((saved) => {
-			// a failed save leaves the edits pending, so Save can be retried
-			if (!saved) setHasChanged(true);
-		});
+		void save(notificationFields, saveSettings);
 	};
 
 	const renderNotificationFields = (fields: NotificationSetting[]) => {
@@ -51,7 +64,6 @@ export function NotificationsCard({
 						idx === i ? { ...entry, enabled: !entry.enabled } : entry
 					)
 				);
-				setHasChanged(true);
 			};
 			const setHour = (inputDate: Date): void => {
 				const hourDigitPadded = String(inputDate.getHours()).padStart(2, "0");
@@ -60,7 +72,6 @@ export function NotificationsCard({
 						idx === i ? { ...entry, value: `${hourDigitPadded}:00:00` } : entry
 					)
 				);
-				setHasChanged(true);
 			};
 
 			if (field.valueType === "time") {
@@ -118,7 +129,7 @@ export function NotificationsCard({
 
 			<Button
 				variant="pink"
-				disabled={!hasChanged}
+				disabled={!hasChanged || isSaving}
 				onClick={handleSaveClick}
 				classes="mt-8 mx-auto"
 			>

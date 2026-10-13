@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::llm::ExternalLlm;
@@ -26,7 +26,7 @@ fn take_cancel_token(state: &AppState) -> Arc<AtomicBool> {
 
 #[tauri::command]
 pub async fn transcribe(
-	state: State<'_, AppState>,
+	app: AppHandle,
 	request: tauri::ipc::Request<'_>,
 ) -> Result<serde_json::Value, String> {
 	let bytes: Vec<u8> = match request.body() {
@@ -48,7 +48,13 @@ pub async fn transcribe(
 		));
 	}
 
-	let settings = state.ai_settings();
+	// keychain/DB reads are blocking: keep them off the async workers
+	let settings = {
+		let app = app.clone();
+		tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
+			.await
+			.map_err(|e| format!("read ai settings task failed: {e}"))?
+	};
 	// STT offload rule: the external endpoint when switched on (sttMode);
 	// otherwise the engine setting picks Apple Speech or local whisper.
 	if settings.uses_external_stt() {
@@ -94,6 +100,7 @@ pub async fn transcribe(
 	}
 
 	let engine = {
+		let state = app.state::<AppState>();
 		let runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
 		runtime.stt.clone()
 	};
@@ -189,6 +196,10 @@ where
 		.map(|m| m.content.split_whitespace().count())
 		.sum();
 	let cancel = take_cancel_token(state);
+	// A warm-cache clone in practice (the loader seeds the cache at
+	// startup); a cold read only happens after a failed save dropped it,
+	// so this stays synchronous instead of threading the app handle
+	// through the whole generation path.
 	let settings = state.ai_settings();
 
 	on_event(EmitKind::Status, "thinking...");

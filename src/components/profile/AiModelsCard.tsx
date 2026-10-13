@@ -21,6 +21,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		runtime,
 		downloadProgress,
 		downloadFailures,
+		rowPending,
 		appleStt,
 		freeBytes,
 		settingsError,
@@ -65,6 +66,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	const modelList: ModelListContext = {
 		downloadProgress,
 		failures: downloadFailures,
+		pending: rowPending,
 		freeBytes,
 		actions: {
 			onDownload: download,
@@ -125,6 +127,16 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 					<span className="font-medium">Speech-to-text:</span> {activeSttLabel}
 				</p>
 			</div>
+			{settings.secretsPlaintext && (
+				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
+					<p className="font-semibold mb-1">Stored keys are not encrypted</p>
+					<p>
+						No system keychain is in use here, so saved API keys live in the local
+						database instead. Anything that can read this computer&rsquo;s files can
+						read them.
+					</p>
+				</div>
+			)}
 			{needsLlm && (
 				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
 					<p className="font-semibold mb-1">No language model is set up yet</p>

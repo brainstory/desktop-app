@@ -38,7 +38,11 @@ export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
 		: "bg-red-600 z-50 fixed top-4 left-1/2 -translate-x-1/2 mt-0 p-4 pr-12 rounded-md shadow-lg text-center max-w-[90vw]";
 
 	return (
-		<div role="status" aria-live="polite" className={style}>
+		<div
+			role={isSuccess ? "status" : "alert"}
+			aria-live={isSuccess ? "polite" : "assertive"}
+			className={style}
+		>
 			<p className="text-white">{message}</p>
 			<button
 				className="absolute top-1/2 right-2 -translate-y-1/2 text-white/70 hover:text-white text-lg font-bold px-2"

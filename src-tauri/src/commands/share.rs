@@ -1,7 +1,8 @@
 use serde_json::json;
-use tauri::State;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::commands::run_blocking;
 use crate::reactions::{is_valid_reaction, SharedSectionReaction};
 use crate::types::IdeaType;
 use crate::AppState;
@@ -332,7 +333,7 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 	let payload = if is_feedback {
 		let (target_share_id, target_title, reactions) = match &idea.parent_idea {
 			Some(parent) => (
-				db.get_share_id(&parent.id)
+				db.get_share_id(&parent.id)?
 					.unwrap_or_else(|| parent.id.clone()),
 				parent.title.clone(),
 				// my own reactions on the idea this feedback is about
@@ -351,7 +352,9 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 			reactions,
 		}
 	} else {
-		let share_id = db.get_share_id(&idea.id).unwrap_or_else(|| idea.id.clone());
+		let share_id = db
+			.get_share_id(&idea.id)?
+			.unwrap_or_else(|| idea.id.clone());
 		SharePayload::Idea {
 			share_id,
 			title: idea.title.clone(),
@@ -374,10 +377,18 @@ fn export_share(db: &crate::db::Db, idea_id: &str) -> Result<(String, SharePaylo
 #[tauri::command]
 pub async fn export_idea(
 	app: tauri::AppHandle,
-	state: State<'_, AppState>,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
-	let (author, payload) = export_share(&state.db, &idea_id)?;
+	// reading the idea (and its reactions/settings) is a blocking DB walk
+	let (author, payload) = {
+		let app = app.clone();
+		let idea_id = idea_id.clone();
+		run_blocking("export idea", move || {
+			let state = app.state::<AppState>();
+			export_share(&state.db, &idea_id)
+		})
+		.await?
+	};
 	let envelope = build_export_payload(&author, &payload);
 	let file_tag = match &payload {
 		SharePayload::Idea { idea_type, .. } => idea_type.as_str(),
@@ -404,13 +415,17 @@ pub async fn export_idea(
 		return Ok(json!({ "cancelled": true }));
 	};
 	let path = path.into_path().map_err(|e| e.to_string())?;
+	let path_display = path.to_string_lossy().to_string();
 
 	let written = serde_json::to_string_pretty(&envelope).unwrap_or_default();
-	std::fs::write(&path, written).map_err(|e| e.to_string())?;
+	run_blocking("write share file", move || {
+		std::fs::write(&path, written).map_err(|e| e.to_string())
+	})
+	.await?;
 
 	Ok(json!({
 		"cancelled": false,
-		"path": path.to_string_lossy(),
+		"path": path_display,
 		"kind": payload.kind_label(),
 	}))
 }
@@ -420,10 +435,7 @@ pub async fn export_idea(
 /// to the matching local idea, attributed to the feedback author and marked
 /// unread.
 #[tauri::command]
-pub async fn import_share(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-) -> Result<serde_json::Value, String> {
+pub async fn import_share(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 	let (sender, receiver) = tokio::sync::oneshot::channel();
 	app.dialog()
 		.file()
@@ -437,22 +449,35 @@ pub async fn import_share(
 	};
 	let path = path.into_path().map_err(|e| e.to_string())?;
 
-	// Bound the read: a corrupt or hostile multi-GB "share file" must not
-	// spike memory (the dialog filter is only a hint; nothing enforces it).
-	let file_len = std::fs::metadata(&path)
-		.map_err(|e| format!("could not read file: {e}"))?
-		.len();
-	if file_len > MAX_SHARE_FILE_BYTES {
-		return Err(format!(
-			"share file is too large ({} MB, limit {} MB)",
-			file_len / (1024 * 1024),
-			MAX_SHARE_FILE_BYTES / (1024 * 1024)
-		));
-	}
-
-	let raw = std::fs::read_to_string(&path).map_err(|e| format!("could not read file: {e}"))?;
-	let parsed = parse_share_payload(&raw)?;
-	import_parsed(&state.db, parsed)
+	// reading + parsing the (untrusted) file is blocking work
+	let parsed = {
+		let path = path.clone();
+		run_blocking("read share file", move || {
+			// Bound the read: a corrupt or hostile multi-GB "share file"
+			// must not spike memory (the dialog filter is only a hint;
+			// nothing enforces it).
+			let file_len = std::fs::metadata(&path)
+				.map_err(|e| format!("could not read file: {e}"))?
+				.len();
+			if file_len > MAX_SHARE_FILE_BYTES {
+				return Err(format!(
+					"share file is too large ({} MB, limit {} MB)",
+					file_len / (1024 * 1024),
+					MAX_SHARE_FILE_BYTES / (1024 * 1024)
+				));
+			}
+			let raw =
+				std::fs::read_to_string(&path).map_err(|e| format!("could not read file: {e}"))?;
+			parse_share_payload(&raw)
+		})
+		.await?
+	};
+	// the import itself is one blocking DB transaction
+	run_blocking("import share", move || {
+		let state = app.state::<AppState>();
+		import_parsed(&state.db, parsed)
+	})
+	.await
 }
 
 /// Everything after the file dialog: dedupe, attach and store. Split out
@@ -473,7 +498,7 @@ fn import_parsed(
 			// Importing the same file twice should be a no-op, not a
 			// duplicate library entry with a colliding share id.
 			if !share_id.is_empty() {
-				if let Some(existing) = db.get_idea_by_share_id(&share_id) {
+				if let Some(existing) = db.get_idea_by_share_id(&share_id)? {
 					return Ok(json!({
 						"cancelled": false,
 						"kind": "idea",
@@ -521,34 +546,20 @@ fn import_parsed(
 			created_at,
 			reactions,
 		} => {
-			let parent = db
-				.get_idea_by_share_id(&target_share_id)
-				.or_else(|| {
-					// Fall back to a title match only when it is
-					// unambiguous: titles are derived and truncated, so
-					// collisions are plausible and attaching feedback to
-					// the wrong idea is worse than a clean refusal.
-					if target_title.is_empty() {
-						return None;
-					}
-					let matches: Vec<_> = db
-						.list_ideas()
-						.unwrap_or_else(|e| {
-							log::error!("library read failed during feedback import: {e}");
-							vec![]
-						})
-						.into_iter()
-						.filter(|i| i.title == target_title)
-						.collect();
-					if matches.len() == 1 {
-						matches.into_iter().next()
-					} else {
-						None
-					}
-				})
-				.ok_or_else(|| {
-					"the original idea for this feedback is not in your library".to_string()
-				})?;
+			let parent = if let Some(parent) = db.get_idea_by_share_id(&target_share_id)? {
+				Some(parent)
+			} else if target_title.is_empty() {
+				None
+			} else {
+				// Fall back to a title match only when it is unambiguous:
+				// titles are derived and truncated, so collisions are
+				// plausible and attaching feedback to the wrong idea is
+				// worse than a clean refusal.
+				db.find_idea_by_exact_title(&target_title)?
+			}
+			.ok_or_else(|| {
+				"the original idea for this feedback is not in your library".to_string()
+			})?;
 
 			let title = if title.is_empty() {
 				format!("Feedback: {}", parent.title)
@@ -587,13 +598,15 @@ fn import_parsed(
 				parent_idea_id: Some(&parent.id),
 				creator_name: Some(&author),
 				created_at: created_at.as_deref(),
+				// imported feedback arrives unread so it surfaces in the
+				// UI - written in the same insert, so no second statement
+				// can fail after the row exists
+				unread: true,
 				// stored on the parent's sections, attributed to this
 				// feedback (deleting it deletes them)
 				parent_section_reactions: &reactions,
 				..Default::default()
 			}))?;
-			// Imported feedback arrives unread so it surfaces in the UI.
-			db.set_idea_unread(&id, true)?;
 			Ok(json!({
 				"cancelled": false,
 				"kind": "feedback",

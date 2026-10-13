@@ -14,10 +14,11 @@ import { QUERY_PARAMS } from "@src/tauri/commands";
 import { finishedFeedback, isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
+import ErrorBoundary from "@components/global/ErrorBoundary";
 import { useSnackbar } from "@ds/Snackbar";
 import { useIdeaReactions } from "./reactions/useIdeaReactions";
 
-export default function IdeaResultContent() {
+function IdeaResultContentInner() {
 	const tabs: Record<string, number> = {
 		summary: 0,
 		transcript: 1,
@@ -79,8 +80,8 @@ export default function IdeaResultContent() {
 						});
 
 					setIsUnread(res.isUnread ?? false);
-					const ideaContent = {
-						id: ideaId,
+					const ideaContent: IdeaDetail = {
+						id,
 						title: res.title,
 						summary: res.summary,
 						transcript: res.transcript,
@@ -94,7 +95,7 @@ export default function IdeaResultContent() {
 						setParentIdea(res.parentIdea);
 					}
 
-					setIdea(ideaContent as IdeaDetail);
+					setIdea(ideaContent);
 					setIsLoading(false);
 				}
 			})
@@ -320,4 +321,13 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 			isCurrent = false;
 		};
 	}, [id, isUnread]);
+}
+
+/** The idea page as an island root, behind a crash boundary. */
+export default function IdeaResultContent() {
+	return (
+		<ErrorBoundary title="This idea page hit a snag">
+			<IdeaResultContentInner />
+		</ErrorBoundary>
+	);
 }

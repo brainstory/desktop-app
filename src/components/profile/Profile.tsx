@@ -16,6 +16,7 @@ import { UpdatesCard, UpdatesDisabledWarning, useUpdatesEnabled } from "./Update
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
+import ErrorBoundary from "@components/global/ErrorBoundary";
 import Button from "@ds/Button";
 import { SUCCESS_COPY, useSnackbar } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
@@ -27,6 +28,14 @@ const TAB_MAP: Record<string, number> = {
 };
 
 export default function Profile() {
+	return (
+		<ErrorBoundary title="The settings page hit a snag">
+			<ProfileInner />
+		</ErrorBoundary>
+	);
+}
+
+function ProfileInner() {
 	const userState = useStore($userState);
 	const { createdAt } = userState;
 
@@ -91,9 +100,7 @@ export default function Profile() {
 			});
 
 	const handleNotificationsSave = (notificationFields: NotificationSetting[]): Promise<boolean> =>
-		saveUserSettingsApi({
-			notifications: notificationFields as unknown as Record<string, unknown>[]
-		})
+		saveUserSettingsApi({ notifications: notificationFields })
 			.then(() => {
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 				return true;

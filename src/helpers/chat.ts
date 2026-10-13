@@ -1,25 +1,8 @@
-import { useEffect } from "react";
 import { TOPICS, CHAT_TYPE, ASK_A_DIFFERENT_QUESTION, type ChatType } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
-import type { RefObject, Dispatch, SetStateAction } from "react";
-
-export function useIdeaIdFromUrl(
-	hasMountedRef: RefObject<boolean>,
-	setIdeaId: Dispatch<SetStateAction<string | undefined>>
-): void {
-	useEffect(() => {
-		if (hasMountedRef.current) {
-			return;
-		}
-		// this is for safeguarding against extra idea saves from weird edges cases
-		// related to the ideaId once being in the query parameter but isn't anymore
-		setIdeaId(getQueryParam(QUERY_PARAMS.id) ?? undefined);
-		hasMountedRef.current = true;
-	}, [hasMountedRef, setIdeaId]);
-}
 
 /** Query params relevant to the first prompt (null/undefined = absent). */
 export type FirstPromptParams = Record<"qotd" | "topic", string | null | undefined>;

@@ -1,9 +1,14 @@
-import RivePencil from "@components/global/RivePencil";
+import { lazy, Suspense } from "react";
 import { useAppContext } from "@src/components/chat/reusable/AppWrapper";
 import Button from "@ds/Button";
 import Tooltip from "@ds/Tooltip";
 import { cn } from "@helpers/cn";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
+
+// lazy: the Rive runtime is a sizeable WASM bundle, and the pencil only
+// renders on wide viewports - it must not ride in the chat bundle for
+// everyone else
+const RivePencil = lazy(() => import("@components/global/RivePencil"));
 
 interface AssistantResponseTextProps {
 	content?: string | null;
@@ -53,11 +58,13 @@ export function AssistantResponseText({
 		<div className="flex flex-col gap-2 lg:gap-4 md:flex-row justify-center items-center">
 			{showPencil && (
 				<div className="sludge-sludge-maaaan">
-					{sludgeman == "idle" ? (
-						<RivePencil type="wave" small={styleSetting === "feedback"} />
-					) : (
-						<RivePencil type="jump" small={styleSetting === "feedback"} />
-					)}
+					<Suspense fallback={null}>
+						{sludgeman == "idle" ? (
+							<RivePencil type="wave" small={styleSetting === "feedback"} />
+						) : (
+							<RivePencil type="jump" small={styleSetting === "feedback"} />
+						)}
+					</Suspense>
 				</div>
 			)}
 			{renderText()}

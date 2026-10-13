@@ -151,11 +151,92 @@ pub struct AiSettings {
 	pub ext_stt_model: String,
 }
 
-/// True when `url` starts with an http:// or https:// scheme - the one
-/// check every configurable endpoint URL (external LLM/STT, HF mirror)
-/// goes through, at save time and again before use.
-pub fn has_http_scheme(url: &str) -> bool {
-	url.starts_with("http://") || url.starts_with("https://")
+/// Parse and vet a configurable endpoint URL: https may point anywhere,
+/// plain http only at a loopback address (a local server). Anything else
+/// would put a stored API key on the wire in the clear, or accept a
+/// scheme (file:, ftp:, ...) the HTTP clients never intended.
+pub fn validate_endpoint_url(url: &str) -> Result<(), String> {
+	let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL '{url}': {e}"))?;
+	match parsed.scheme() {
+		"https" => Ok(()),
+		"http" => {
+			let host = parsed.host_str().unwrap_or_default();
+			let unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+			let is_loopback = unbracketed.eq_ignore_ascii_case("localhost")
+				|| unbracketed
+					.parse::<std::net::IpAddr>()
+					.map(|ip| ip.is_loopback())
+					.unwrap_or(false);
+			if is_loopback {
+				Ok(())
+			} else {
+				Err(format!(
+					"http:// is only allowed for local addresses; use https:// for '{url}'"
+				))
+			}
+		}
+		other => Err(format!(
+			"unsupported URL scheme '{other}' for '{url}' (use https://, or http:// for a local address)"
+		)),
+	}
+}
+
+/// True when both URLs name the same endpoint for secret-routing
+/// purposes (scheme + host + port): a stored API key may travel to a new
+/// path on the same server without a warning, but not to another host.
+pub fn same_endpoint_host(a: &str, b: &str) -> bool {
+	let identity = |url: &str| -> Option<(String, String, u16)> {
+		let parsed = reqwest::Url::parse(url).ok()?;
+		Some((
+			parsed.scheme().to_string(),
+			parsed.host_str().unwrap_or_default().to_ascii_lowercase(),
+			parsed.port_or_known_default()?,
+		))
+	};
+	match (identity(a), identity(b)) {
+		(Some(x), Some(y)) => x == y,
+		// unparseable on either side: treat as different (conservative)
+		_ => false,
+	}
+}
+
+/// Describe the secret-bearing endpoint change in `ai` relative to
+/// `current`, if there is one: the save path makes the person confirm
+/// before a stored API key starts traveling to a different server. Pure,
+/// so the rule is testable without a dialog.
+pub fn secret_host_change(current: &AiSettings, ai: &serde_json::Value) -> Option<String> {
+	let change = |field: &str, label: &str, old: &str, secret: &str| -> Option<String> {
+		if secret.is_empty() {
+			return None;
+		}
+		let new = ai.get(field)?.as_str()?.trim();
+		if new.is_empty() || same_endpoint_host(old, new) {
+			return None;
+		}
+		Some(format!("{label} at {new}"))
+	};
+	change(
+		"extLlmBaseUrl",
+		"the language-model server",
+		&current.ext_llm_base_url,
+		&current.ext_llm_api_key,
+	)
+	.or_else(|| {
+		change(
+			"extSttBaseUrl",
+			"the transcription server",
+			&current.ext_stt_base_url,
+			&current.ext_stt_api_key,
+		)
+	})
+	.or_else(|| {
+		change(
+			"hfEndpoint",
+			"the model download mirror",
+			&current.hf_endpoint,
+			&current.hf_token,
+		)
+	})
 }
 
 /// Engine default for the first launch after this setting was introduced:
@@ -341,12 +422,10 @@ impl AiSettings {
 			}
 		}
 		let base_url = |field: &str, v: &str| -> Result<(), String> {
-			if v.is_empty() || has_http_scheme(v) {
+			if v.is_empty() {
 				Ok(())
 			} else {
-				Err(format!(
-					"invalid {field} '{v}' (include http:// or https://)"
-				))
+				validate_endpoint_url(v).map_err(|e| format!("invalid {field}: {e}"))
 			}
 		};
 		if let Some(v) = get_str("extLlmBaseUrl") {
@@ -922,6 +1001,92 @@ mod tests {
 				AiSettings::load(&db).llm_ctx_tokens,
 				0,
 				"{garbage:?} is not a valid window; loading keeps the app default"
+			);
+		}
+	}
+
+	#[test]
+	fn endpoint_urls_must_be_https_or_loopback_http() {
+		for ok in [
+			"https://example.com/v1",
+			"https://hf-mirror.com",
+			"http://localhost:11434",
+			"http://127.0.0.1:8080/v1",
+			"http://[::1]:9000",
+			"http://localhost", // no port: the scheme default
+		] {
+			assert!(
+				super::validate_endpoint_url(ok).is_ok(),
+				"{ok} should be accepted"
+			);
+		}
+		for bad in [
+			"http://example.com",       // plaintext to a remote host
+			"http://192.168.1.10:8080", // LAN is not loopback
+			"ftp://example.com",
+			"file:///etc/passwd",
+			"not a url",
+			"",
+		] {
+			assert!(
+				super::validate_endpoint_url(bad).is_err(),
+				"{bad:?} should be rejected"
+			);
+		}
+	}
+
+	#[test]
+	fn secret_host_change_flags_only_real_rehosting() {
+		let (db, _dir) = temp_db("rehost");
+		let mut current = AiSettings::load(&db);
+		current.ext_llm_base_url = "https://old.example/v1".into();
+		current.ext_llm_api_key = "sk-llm".into();
+		current.ext_stt_base_url = "http://localhost:8080".into();
+		current.ext_stt_api_key = "sk-stt".into();
+		current.hf_endpoint = "https://hf-mirror.com".into();
+		current.hf_token = "hf_123".into();
+
+		// another path/port on the same service is not rehosting
+		assert_eq!(
+			super::secret_host_change(
+				&current,
+				&serde_json::json!({ "extLlmBaseUrl": "https://old.example/v2" })
+			),
+			None
+		);
+		// a different host with a stored key must be confirmed
+		let flagged = super::secret_host_change(
+			&current,
+			&serde_json::json!({ "extLlmBaseUrl": "https://evil.example/v1" }),
+		)
+		.expect("a different host is a change");
+		assert!(flagged.contains("the language-model server"), "{flagged}");
+		assert!(flagged.contains("https://evil.example/v1"), "{flagged}");
+		// scheme downgrade on the same host is rehosting too
+		assert!(super::secret_host_change(
+			&current,
+			&serde_json::json!({ "extSttBaseUrl": "https://localhost:8080" })
+		)
+		.is_some());
+		// the mirror carries the HF token the same way
+		assert!(super::secret_host_change(
+			&current,
+			&serde_json::json!({ "hfEndpoint": "https://evil.example" })
+		)
+		.is_some());
+		// no stored secret, nothing to protect
+		let mut unlocked = current.clone();
+		unlocked.ext_llm_api_key = String::new();
+		unlocked.ext_stt_api_key = String::new();
+		unlocked.hf_token = String::new();
+		for field in ["extLlmBaseUrl", "extSttBaseUrl", "hfEndpoint"] {
+			assert_eq!(
+				super::secret_host_change(
+					&unlocked,
+					&serde_json::json!({ field: "https://evil.example" })
+				),
+				None,
+				"{field} with no stored secret needs no confirmation"
 			);
 		}
 	}

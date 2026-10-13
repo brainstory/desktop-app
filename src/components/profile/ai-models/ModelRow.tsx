@@ -29,6 +29,9 @@ interface ModelRowProps extends ModelRowActions {
 	progress: number | undefined;
 	/** the last download failure for this model, if any */
 	error?: string;
+	/** a long-running action for this row (delete/activate can wait out a
+	 * model load): its buttons say what is happening */
+	pending?: "delete" | "activate";
 	freeBytes: number | null;
 }
 
@@ -40,6 +43,7 @@ export const ModelRow = memo(function ModelRow({
 	model,
 	progress,
 	error,
+	pending,
 	freeBytes,
 	onDownload,
 	onCancel,
@@ -47,6 +51,7 @@ export const ModelRow = memo(function ModelRow({
 	onActivate
 }: ModelRowProps) {
 	const isDownloading = progress !== undefined;
+	const isPending = pending !== undefined;
 	const pct = progress === undefined ? null : downloadPercent(progress);
 	return (
 		<div className="flex flex-col gap-2 border border-stone-200 rounded-lg p-4">
@@ -69,13 +74,19 @@ export const ModelRow = memo(function ModelRow({
 				</div>
 				<div className="flex gap-2 items-center shrink-0">
 					{model.downloaded && !model.active && (
-						<Button variant="bordered" onClick={() => onActivate(model.id)}>
-							Use
+						<Button
+							variant="bordered"
+							disabled={isPending}
+							onClick={() => onActivate(model.id)}
+						>
+							{pending === "activate" ? "Activating…" : "Use"}
 						</Button>
 					)}
 					{model.downloaded && !isDownloading && (
 						<DeleteModelButton
 							isActive={model.active}
+							disabled={isPending}
+							busy={pending === "delete"}
 							onConfirm={() => onDelete(model.id)}
 						/>
 					)}
@@ -130,6 +141,8 @@ export interface ModelListContext {
 	downloadProgress: Record<string, number>;
 	/** last download failures by model id (see the $downloads store) */
 	failures: Record<string, DownloadFailure>;
+	/** long-running per-row action, if any */
+	pending: Record<string, "delete" | "activate">;
 	freeBytes: number | null;
 	actions: ModelRowActions;
 }
@@ -139,6 +152,7 @@ export function ModelList({
 	models,
 	downloadProgress,
 	failures,
+	pending,
 	freeBytes,
 	actions
 }: ModelListContext & { models: ModelStatus[] }) {
@@ -148,6 +162,7 @@ export function ModelList({
 			model={model}
 			progress={downloadProgress[model.id]}
 			error={failures[model.id]?.message}
+			pending={pending[model.id]}
 			freeBytes={freeBytes}
 			{...actions}
 		/>
@@ -158,17 +173,31 @@ export function ModelList({
  * Two-click delete with a visible countdown (the shared confirm pattern,
  * as on draft cards). The active model gets a stronger warning.
  */
-function DeleteModelButton({ isActive, onConfirm }: { isActive: boolean; onConfirm: () => void }) {
+function DeleteModelButton({
+	isActive,
+	disabled,
+	busy,
+	onConfirm
+}: {
+	isActive: boolean;
+	disabled: boolean;
+	/** the delete is running (it can wait out a model load) */
+	busy: boolean;
+	onConfirm: () => void;
+}) {
 	const { isConfirming, secondsLeft, confirm } = useConfirmClick();
 	return (
 		<Button
 			variant="bordered"
+			disabled={disabled}
 			onClick={() => {
 				if (confirm()) onConfirm();
 			}}
 			classes={isConfirming ? "ring-red-400 text-red-600 whitespace-nowrap" : ""}
 		>
-			{isConfirming ? (
+			{busy ? (
+				<span aria-live="polite">Deleting…</span>
+			) : isConfirming ? (
 				<span aria-live="polite">
 					{`${isActive ? "Really delete the ACTIVE model?" : "Really delete?"} (${secondsLeft ?? 0}s)`}
 				</span>

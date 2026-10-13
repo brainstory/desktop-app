@@ -1,5 +1,6 @@
-use tauri::State;
+use tauri::Manager;
 
+use crate::commands::run_blocking;
 use crate::reactions::IdeaReactions;
 use crate::AppState;
 
@@ -8,24 +9,32 @@ use crate::AppState;
 /// author's reactions on the comments of its feedback children.
 #[tauri::command]
 pub async fn get_reactions(
-	state: State<'_, AppState>,
+	app: tauri::AppHandle,
 	idea_id: String,
 ) -> Result<IdeaReactions, String> {
-	state.db.get_reactions(&idea_id)
+	run_blocking("get reactions", move || {
+		let state = app.state::<AppState>();
+		state.db.get_reactions(&idea_id)
+	})
+	.await
 }
 
 /// Toggle the user's own reaction on one section of an idea; returns true
 /// when the reaction is now on.
 #[tauri::command]
 pub async fn toggle_section_reaction(
-	state: State<'_, AppState>,
+	app: tauri::AppHandle,
 	idea_id: String,
 	section_index: i64,
 	emoji: String,
 ) -> Result<bool, String> {
-	state
-		.db
-		.toggle_section_reaction(&idea_id, section_index, &emoji)
+	run_blocking("toggle section reaction", move || {
+		let state = app.state::<AppState>();
+		state
+			.db
+			.toggle_section_reaction(&idea_id, section_index, &emoji)
+	})
+	.await
 }
 
 /// Toggle the idea author's reaction on one comment (feedback item) of a
@@ -33,12 +42,16 @@ pub async fn toggle_section_reaction(
 /// reactions stay local - no share file carries them.
 #[tauri::command]
 pub async fn toggle_comment_reaction(
-	state: State<'_, AppState>,
+	app: tauri::AppHandle,
 	feedback_idea_id: String,
 	item_index: i64,
 	emoji: String,
 ) -> Result<bool, String> {
-	state
-		.db
-		.toggle_comment_reaction(&feedback_idea_id, item_index, &emoji)
+	run_blocking("toggle comment reaction", move || {
+		let state = app.state::<AppState>();
+		state
+			.db
+			.toggle_comment_reaction(&feedback_idea_id, item_index, &emoji)
+	})
+	.await
 }

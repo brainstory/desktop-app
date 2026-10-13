@@ -77,6 +77,9 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const { active: activeDownloads, failures: downloadFailures } = useStore($downloads);
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
+	/** long-running per-row action, so the buttons can say "Deleting…"
+	 * instead of appearing dead while a load is waited out */
+	const [rowPending, setRowPending] = useState<Record<string, "delete" | "activate">>({});
 
 	/** Catalog + downloaded/active flags (downloads, deletes, activation, mode). */
 	const refreshModels = useCallback(() => {
@@ -291,12 +294,20 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 
 	const deleteModel = useCallback(
 		(modelId: string): void => {
+			setRowPending((prev) => ({ ...prev, [modelId]: "delete" }));
 			deleteModelApi(modelId)
 				.then(() => {
 					refreshModels();
 					refreshDiskSpace();
 				})
-				.catch((e) => openSnackbar(false, normalizeApiError(e)));
+				.catch((e) => openSnackbar(false, normalizeApiError(e)))
+				.finally(() =>
+					setRowPending((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					})
+				);
 		},
 		[openSnackbar, refreshModels, refreshDiskSpace]
 	);
@@ -310,9 +321,17 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 
 	const activateModel = useCallback(
 		(modelId: string): void => {
+			setRowPending((prev) => ({ ...prev, [modelId]: "activate" }));
 			activateModelApi(modelId)
 				.then(refreshModels)
-				.catch((e) => openSnackbar(false, normalizeApiError(e)));
+				.catch((e) => openSnackbar(false, normalizeApiError(e)))
+				.finally(() =>
+					setRowPending((prev) => {
+						const next = { ...prev };
+						delete next[modelId];
+						return next;
+					})
+				);
 		},
 		[openSnackbar, refreshModels]
 	);
@@ -333,6 +352,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		runtime,
 		downloadProgress,
 		downloadFailures,
+		rowPending,
 		appleStt,
 		freeBytes,
 		settingsError,

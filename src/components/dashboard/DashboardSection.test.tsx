@@ -31,6 +31,7 @@ const emptyAiSettings = {
 	sttLanguage: "en-US",
 	hfTokenSet: false,
 	hfTokenHint: null,
+	secretsPlaintext: false,
 	extLlmBaseUrl: "",
 	extLlmApiKeySet: false,
 	extLlmApiKeyHint: null,

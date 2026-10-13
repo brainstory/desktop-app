@@ -239,6 +239,13 @@ impl AppState {
 	/// this same mutex, so the cache can never go stale and a cold read
 	/// (load and publish inside the lock) can never overwrite a newer
 	/// published value.
+	///
+	/// The cold read holds the lock across a DB + keychain load. That is
+	/// deliberate: loading outside the lock would let a reader observe a
+	/// half-committed save (e.g. a new URL with an old secret) in the
+	/// window before the saver publishes. The cold path itself is rare -
+	/// startup, or after a failed save dropped the cache - and every
+	/// normal read hits the warm cache.
 	pub fn ai_settings(&self) -> AiSettings {
 		let mut cache = lock(&self.ai_settings_cache);
 		if let Some(cached) = cache.as_ref() {

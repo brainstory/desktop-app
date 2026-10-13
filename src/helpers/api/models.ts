@@ -45,6 +45,9 @@ export interface AiSettingsResponse {
 	sttLanguage: string;
 	hfTokenSet: boolean;
 	hfTokenHint: string | null;
+	/** true when at least one stored secret lives in the plaintext DB
+	 * fallback instead of the OS keychain */
+	secretsPlaintext: boolean;
 	/** Download endpoint override (mirror); empty = env/default */
 	hfEndpoint: string;
 	extLlmBaseUrl: string;

@@ -3,6 +3,7 @@ import { useStore } from "@nanostores/react";
 
 import Button from "@ds/Button";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
+import { useDirtySave } from "@src/hooks/useDirtySave";
 import { $userState } from "@components/global/userStore";
 
 interface CardProps {
@@ -105,13 +106,12 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 	const [editedName, setEditedName] = useState(userName ?? "");
 	const [selectedTimezone, setSelectedTimezone] = useState(timezone ?? "");
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
-	const [isSaving, setIsSaving] = useState(false);
 	const timezones = useMemo(() => timezoneOptions(timezone), [timezone]);
-	// the last CONFIRMED-saved snapshot: dirty state is derived from it,
-	// so a failed save stays retryable and edits made while a save was
-	// pending stay dirty without tracking the latest values in a ref
-	const [saved, setSaved] = useState({ name: userName ?? "", timezone: timezone ?? "" });
-	const hasChanged = editedName !== saved.name || selectedTimezone !== saved.timezone;
+	const { isSaving, isDirty, save } = useDirtySave(
+		{ name: userName ?? "", timezone: timezone ?? "" },
+		(a, b) => a.name === b.name && a.timezone === b.timezone
+	);
+	const hasChanged = isDirty({ name: editedName, timezone: selectedTimezone });
 
 	const handleNameChange = (e: ChangeEvent<HTMLInputElement>): void => {
 		const input = e.target.value;
@@ -130,22 +130,13 @@ export function GeneralCard({ userName, timezone, saveSettings }: GeneralCardPro
 	};
 
 	const handleSaveClick = () => {
-		if (isSaving) return;
 		if (editedName.trim().length > 0 && editedName.length <= 70) {
 			// "Detect automatically" stores the zone detected right now, the
 			// same thing userStore does on first launch; an empty string
 			// would be dropped by saveUserSettingsApi and never persist
-			const submitted = { name: editedName, timezone: selectedTimezone };
-			setIsSaving(true);
-			void saveSettings(submitted.name, submitted.timezone || detectedTimezone())
-				.then((savedOutcome) => {
-					if (savedOutcome) {
-						// only the submitted snapshot becomes clean: edits
-						// made while the save was pending stay dirty
-						setSaved(submitted);
-					}
-				})
-				.finally(() => setIsSaving(false));
+			void save({ name: editedName, timezone: selectedTimezone }, (submitted) =>
+				saveSettings(submitted.name, submitted.timezone || detectedTimezone())
+			);
 		}
 	};
 

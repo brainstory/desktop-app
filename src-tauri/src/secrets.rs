@@ -161,6 +161,24 @@ pub fn load(secret: Secret, db: &Db) -> Option<String> {
 	}
 }
 
+/// Whether the value `load` would serve for `secret` currently comes from
+/// the plaintext settings-table fallback rather than a real keychain
+/// entry. The settings form warns about it: still local-only, but
+/// unencrypted. (Dev builds store in dev-only plaintext rows by design,
+/// so they report true once a secret is set - which is honest.)
+pub fn served_from_plaintext_fallback(secret: Secret, db: &Db) -> bool {
+	if let Some(backend) = keychain_service(secret) {
+		// a readable keychain entry wins on load; the fallback row is
+		// only consulted when the keychain definitely holds nothing (or
+		// cannot be read)
+		if matches!((backend.get)(secret.account()), Ok(Some(_))) {
+			return false;
+		}
+	}
+	db.get_setting(secret.store_key())
+		.is_some_and(|v| !v.is_empty())
+}
+
 /// Store a secret in the keychain and clear any legacy DB row. With
 /// no keychain service the DB row is the only store, so the value
 /// goes there. When the service exists but the write fails, the
@@ -401,6 +419,36 @@ mod tests {
 		clear(Secret::HfToken, &db).unwrap();
 		assert_eq!(load(Secret::HfToken, &db), None);
 		assert_eq!(db.get_setting("hf_token").as_deref(), Some("release-token"));
+	}
+
+	#[cfg(debug_assertions)]
+	#[test]
+	fn plaintext_fallback_reports_what_load_serves() {
+		use super::served_from_plaintext_fallback;
+		let (db, _dir) = temp_db("plaintext-flag");
+		db.set_setting(Secret::HfToken.store_key(), "token-1")
+			.unwrap();
+
+		// keychain present but empty: load falls back to the DB row
+		let fake = Rc::new(Fake::default());
+		let backend = fake.backend();
+		assert!(with_fake_backend(backend, || {
+			served_from_plaintext_fallback(Secret::HfToken, &db)
+		}));
+
+		// a real keychain entry wins the load: nothing plaintext is served
+		fake.seed(Secret::HfToken.account(), "token-1");
+		let backend = fake.backend();
+		assert!(!with_fake_backend(backend, || {
+			served_from_plaintext_fallback(Secret::HfToken, &db)
+		}));
+
+		// an unreadable keychain also serves the fallback
+		fake.fail_get(Secret::HfToken.account());
+		let backend = fake.backend();
+		assert!(with_fake_backend(backend, || {
+			served_from_plaintext_fallback(Secret::HfToken, &db)
+		}));
 	}
 
 	#[cfg(debug_assertions)]

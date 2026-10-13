@@ -191,6 +191,9 @@ const REACTIONS_SCHEMA: &str = "
 ///      queries scan them on every dashboard load)
 ///   5: `section_reactions` and `comment_reactions` (emoji reactions
 ///      people put on idea sections and feedback comments)
+///   6: lookup indexes the first five missed: `ideas(created_at)` (the
+///      library grid's ORDER BY on every dashboard load) and
+///      `surveys(idea_id)` (cleared per idea on a delete)
 /// The baseline also gained `ideas.parent_idea_id REFERENCES ideas(id)
 /// ON DELETE CASCADE` before first release; databases from pre-release dev
 /// builds simply don't have the constraint (the app-level recursive delete
@@ -213,7 +216,7 @@ const REACTIONS_SCHEMA: &str = "
 ///   (deleting that feedback deletes its reactions).
 /// - `comment_reactions.item_index`: index into the feedback idea's
 ///   `structured_result.feedback_items`; the idea author's, never shared.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// SQL predicate matching idea rows that came from a share file
 /// (`idea_metadata.imported = true`). Imported rows never count as the
@@ -252,6 +255,9 @@ pub struct NewIdea<'a> {
 	/// overrides the timestamp (imports keep their original date)
 	pub created_at: Option<&'a str>,
 	pub imported: bool,
+	/// written as `is_unread` in the same insert (imported feedback
+	/// arrives unread; no second statement can fail after the row exists)
+	pub unread: bool,
 	/// Section reactions this (imported feedback) idea carries onto its
 	/// parent idea; stored in the same transaction, attributed to this
 	/// idea. Requires `parent_idea_id`.
@@ -272,6 +278,15 @@ impl<'a> NewIdea<'a> {
 impl Db {
 	pub fn open(path: &Path) -> Result<Self, OpenError> {
 		let mut conn = Connection::open(path)?;
+		// The settings table can hold plaintext secrets when no keychain
+		// exists: keep the database (and its journal/WAL sidecars, which
+		// inherit the file's mode) owner-only. Best effort on exotic
+		// filesystems.
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+		}
 		conn.pragma_update(None, "journal_mode", "WAL")?;
 		// A second app instance (or a stray backup tool) can hold the write
 		// lock briefly; wait instead of failing instantly with SQLITE_BUSY.
@@ -368,6 +383,18 @@ impl Db {
 			let tx = conn.transaction()?;
 			tx.execute_batch(REACTIONS_SCHEMA)?;
 			tx.pragma_update(None, "user_version", 5)?;
+			tx.commit()?;
+		}
+		if version < 6 {
+			// The library grid orders by created_at on every dashboard
+			// load, and a delete clears surveys by idea_id; both had no
+			// index to stand on.
+			let tx = conn.transaction()?;
+			tx.execute_batch(
+				"CREATE INDEX IF NOT EXISTS idx_ideas_created_at ON ideas(created_at);
+				 CREATE INDEX IF NOT EXISTS idx_surveys_idea_id ON surveys(idea_id);",
+			)?;
+			tx.pragma_update(None, "user_version", 6)?;
 			tx.commit()?;
 		}
 		// Self-healing backfill on every open: any row still carrying an
@@ -615,7 +642,13 @@ impl Db {
 		))
 	}
 
-	const IDEA_SUMMARY_COLS: &'static str = "id, title, idea_type, result, CASE WHEN result = '' THEN transcript END AS transcript, parent_idea_id, is_unread, creator_name, creator_email, created_at";
+	/// Library-list rows: a bounded result preview (the grid shows a
+	/// snippet, never the whole writeup - a large library otherwise
+	/// ships every result through JSON on each dashboard load), the
+	/// transcript only for drafts (the grid previews a draft's last user
+	/// message), and no structured or sectioned result - nothing in the
+	/// list reads them.
+	const IDEA_SUMMARY_COLS: &'static str = "id, title, idea_type, substr(result, 1, 600) AS result, CASE WHEN result = '' THEN transcript END AS transcript, parent_idea_id, is_unread, creator_name, creator_email, created_at";
 
 	const IDEA_COLS: &'static str =
 		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";
@@ -640,7 +673,7 @@ impl Db {
 		};
 		conn.execute(
 			"INSERT INTO ideas (id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at, local_date)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14)",
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
 			params![
 				idea.id,
 				idea.title,
@@ -651,6 +684,7 @@ impl Db {
 				idea.metadata.to_string(),
 				idea.parent_idea_id,
 				idea.log_id,
+				idea.unread as i64,
 				idea.creator_name,
 				idea.creator_email,
 				idea.share_id,
@@ -923,16 +957,6 @@ impl Db {
 		Ok(deleted)
 	}
 
-	pub fn set_idea_unread(&self, id: &str, unread: bool) -> Result<(), String> {
-		self.lock()
-			.execute(
-				"UPDATE ideas SET is_unread = ?1 WHERE id = ?2",
-				params![unread as i64, id],
-			)
-			.map_err(|e| format!("failed to flag idea: {e}"))?;
-		Ok(())
-	}
-
 	/// Fetch one idea. `Ok(None)` means genuinely not found; a SQL/decode
 	/// failure is an Err so the UI can distinguish "deleted" from "broken".
 	pub fn get_idea(&self, id: &str) -> Result<Option<IdeaItem>, String> {
@@ -966,8 +990,9 @@ impl Db {
 	}
 
 	/// Find an idea by its share id (used when importing feedback that
-	/// references an exported idea).
-	pub fn get_idea_by_share_id(&self, share_id: &str) -> Option<IdeaItem> {
+	/// references an exported idea). `Ok(None)` means genuinely absent; a
+	/// read failure is an Err so "not found" and "broken" stay distinct.
+	pub fn get_idea_by_share_id(&self, share_id: &str) -> Result<Option<IdeaItem>, String> {
 		let conn = self.lock();
 		conn.query_row(
 			&format!(
@@ -978,21 +1003,50 @@ impl Db {
 			Self::row_to_idea,
 		)
 		.optional()
-		.ok()
-		.flatten()
-		.map(|(_, idea)| idea)
+		.map_err(|e| format!("failed to look up the shared idea: {e}"))
+		.map(|row| row.map(|(_, idea)| idea))
 	}
 
-	pub fn get_share_id(&self, id: &str) -> Option<String> {
+	/// Root ideas whose title matches exactly, for the feedback import's
+	/// unambiguous title fallback. `Ok(None)` unless EXACTLY one root
+	/// matches: titles are derived and truncated, so a collision must
+	/// refuse rather than attach feedback to the wrong idea. A read
+	/// failure is an Err.
+	pub fn find_idea_by_exact_title(&self, title: &str) -> Result<Option<IdeaItem>, String> {
+		let conn = self.lock();
+		let mut stmt = conn
+			.prepare(&format!(
+				"SELECT {} FROM ideas WHERE title = ?1 AND parent_idea_id IS NULL LIMIT 2",
+				Self::IDEA_COLS
+			))
+			.map_err(|e| format!("failed to look up the idea by title: {e}"))?;
+		let mut matches: Vec<IdeaItem> = stmt
+			.query_map(params![title], Self::row_to_idea)
+			.map_err(|e| format!("failed to look up the idea by title: {e}"))?
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| format!("failed to look up the idea by title: {e}"))?
+			.into_iter()
+			.map(|(_, idea)| idea)
+			.collect();
+		if matches.len() == 1 {
+			Ok(Some(matches.remove(0)))
+		} else {
+			Ok(None)
+		}
+	}
+
+	/// This idea's share id, if it has one. `Ok(None)` means the row (or
+	/// the value) is genuinely absent; a read failure is an Err.
+	pub fn get_share_id(&self, id: &str) -> Result<Option<String>, String> {
 		let conn = self.lock();
 		conn.query_row(
 			"SELECT share_id FROM ideas WHERE id = ?1",
 			params![id],
-			|row| row.get(0),
+			|row| row.get::<_, Option<String>>(0),
 		)
 		.optional()
-		.ok()
-		.flatten()
+		.map_err(|e| format!("failed to read the share id: {e}"))
+		.map(Option::flatten)
 	}
 
 	/// Lightweight existence + title lookup (no transcript parsing). Used
@@ -1278,15 +1332,23 @@ impl Db {
 	pub fn get_log_answers_today(&self) -> Option<Vec<crate::types::LogAnswerItem>> {
 		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
-		let log_id: Option<String> = conn
+		// a read failure is logged before degrading to "no log today": the
+		// caller's None cannot tell the two apart, so the log is the only
+		// trace of a broken store
+		let log_id: Option<String> = match conn
 			.query_row(
 				"SELECT log_id FROM daily WHERE date = ?1",
 				params![today],
 				|row| row.get(0),
 			)
 			.optional()
-			.ok()
-			.flatten();
+		{
+			Ok(value) => value.flatten(),
+			Err(e) => {
+				log::warn!("today's daily log lookup failed: {e}");
+				None
+			}
+		};
 		let log_id = log_id?;
 		let answers: String = conn
 			.query_row(
@@ -1394,50 +1456,43 @@ impl Db {
 		// states exactly what keeps the streak alive. Each activity's
 		// local calendar day was frozen at write time (local_date), so the
 		// history is stable across timezone changes.
-		// Collect the raw date strings under the lock, then drop it before
-		// parsing so the scans don't block writers for longer than
-		// necessary.
-		let mut raw_days: Vec<String> = Vec::new();
-		match conn.prepare("SELECT DISTINCT local_date FROM log_entries WHERE local_date != ''") {
-			Ok(mut stmt) => {
-				let days: Vec<String> = stmt
-					.query_map([], |row| row.get(0))
-					.map(|rows| rows.filter_map(|r| r.ok()).collect())
-					.unwrap_or_default();
-				raw_days.extend(days);
+		//
+		// The walk is anchored at today: one indexed existence check per
+		// day counted, instead of loading every activity date in history
+		// on each dashboard load. Cost no longer grows with the library.
+		let day_counted = |day: NaiveDate| -> bool {
+			let date = day.format("%Y-%m-%d").to_string();
+			let logged = conn
+				.query_row(
+					"SELECT EXISTS(SELECT 1 FROM log_entries WHERE local_date = ?1)",
+					params![date],
+					|row| row.get::<_, i64>(0),
+				)
+				.map(|v| v != 0)
+				.unwrap_or(false);
+			if logged {
+				return true;
 			}
-			Err(e) => log::error!("streak query on log_entries failed: {e}"),
-		}
-		match conn
-			.prepare("SELECT date FROM daily WHERE intent_idea_id IS NOT NULL OR is_completed = 1")
-		{
-			Ok(mut stmt) => {
-				let days: Vec<String> = stmt
-					.query_map([], |row| row.get(0))
-					.map(|rows| rows.filter_map(|r| r.ok()).collect())
-					.unwrap_or_default();
-				raw_days.extend(days);
-			}
-			Err(e) => log::error!("streak query on daily failed: {e}"),
-		}
-		drop(conn);
-
-		let mut activity: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
-		for day in raw_days {
-			if let Ok(d) = NaiveDate::parse_from_str(&day, "%Y-%m-%d") {
-				activity.insert(d);
-			}
-		}
+			conn.query_row(
+				"SELECT EXISTS(SELECT 1 FROM daily WHERE date = ?1 AND (intent_idea_id IS NOT NULL OR is_completed = 1))",
+				params![date],
+				|row| row.get::<_, i64>(0),
+			)
+			.map(|v| v != 0)
+			.unwrap_or(false)
+		};
 
 		// Walk back from today; if today has no activity yet the streak
 		// isn't broken (it continues from yesterday).
+		let today_date = self.today_local();
 		let mut streak = 0i64;
-		let mut day = Some(self.today_local());
-		if day.map(|d| !activity.contains(&d)).unwrap_or(true) {
-			day = day.and_then(|d| d.pred_opt());
-		}
+		let mut day = if day_counted(today_date) {
+			Some(today_date)
+		} else {
+			today_date.pred_opt()
+		};
 		while let Some(d) = day {
-			if !activity.contains(&d) {
+			if !day_counted(d) {
 				break;
 			}
 			streak += 1;
@@ -2821,6 +2876,45 @@ mod v4_tests {
 			}
 		}
 	}
+
+	#[test]
+	fn migration_v6_adds_the_created_at_and_survey_indexes() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("t.db");
+		// a database exactly as schema version 5 left it
+		{
+			let conn = Connection::open(&path).unwrap();
+			conn.execute_batch(BASELINE_SCHEMA).unwrap();
+			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+				.unwrap();
+			for table in ["ideas", "log_entries", "surveys"] {
+				conn.execute_batch(&format!(
+					"ALTER TABLE {table} ADD COLUMN local_date TEXT NOT NULL DEFAULT '';"
+				))
+				.unwrap();
+			}
+			conn.execute_batch(REACTIONS_SCHEMA).unwrap();
+			conn.pragma_update(None, "user_version", 5).unwrap();
+		}
+		let db = Db::open(&path).expect("migrate v5 -> v6");
+		{
+			let conn = db.lock();
+			let version: i64 = conn
+				.query_row("PRAGMA user_version", [], |r| r.get(0))
+				.unwrap();
+			assert_eq!(version, SCHEMA_VERSION);
+			for index in ["idx_ideas_created_at", "idx_surveys_idea_id"] {
+				let has: i64 = conn
+					.query_row(
+						"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+						params![index],
+						|r| r.get(0),
+					)
+					.unwrap();
+				assert_eq!(has, 1, "{index} exists");
+			}
+		}
+	}
 }
 
 #[cfg(test)]
@@ -2888,7 +2982,6 @@ mod reaction_tests {
 			let version: i64 = conn
 				.query_row("PRAGMA user_version", [], |r| r.get(0))
 				.unwrap();
-			assert_eq!(version, 5);
 			assert_eq!(version, SCHEMA_VERSION);
 			for name in [
 				"section_reactions",

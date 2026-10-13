@@ -1,12 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { hasDoneGettingStarted } from "@helpers/storage";
 import { TOPICS } from "@src/const";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 
 import { useAppContext } from "@components/chat/reusable/AppWrapper";
 
-import RivePencil from "@components/global/RivePencil";
 import TextsFadeIn from "./reusable/TextsFadeIn";
+
+// lazy: the Rive WASM bundle is only needed for the pencil, which is
+// only mounted on wide viewports
+const RivePencil = lazy(() => import("@components/global/RivePencil"));
 
 export default function GetStartedIntro() {
 	const [isTextLoading, setIsTextLoading] = useState(true);
@@ -55,11 +58,13 @@ export default function GetStartedIntro() {
 			<div className="flex flex-col md:flex-row justify-center items-center">
 				{showPencil && (
 					<div className="sludge-sludge-maaaan mr-4">
-						{sludgeman == "idle" ? (
-							<RivePencil type="wave" small={false} />
-						) : (
-							<RivePencil type="jump" small={false} />
-						)}
+						<Suspense fallback={null}>
+							{sludgeman == "idle" ? (
+								<RivePencil type="wave" small={false} />
+							) : (
+								<RivePencil type="jump" small={false} />
+							)}
+						</Suspense>
 					</div>
 				)}
 				<TextsFadeIn classes="tracking-tight text-xl md:text-2xl max-w-2xl flex flex-col gap-3">

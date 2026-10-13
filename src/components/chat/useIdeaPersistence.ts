@@ -210,11 +210,16 @@ export function useIdeaPersistence(
 				})
 				.catch((err) => {
 					creatingIdeaRef.current = false;
-					onError(`Could not save this session: ${normalizeApiError(err)}`);
+					// the ref keeps the callback out of the deps: this effect
+					// must not re-run (and re-create) on every parent render
+					onErrorRef.current(`Could not save this session: ${normalizeApiError(err)}`);
 					// readyToCreateIdea stays true; the next conversation
 					// update re-runs this effect and retries creation
 				});
 		}
+		// `result` is intentionally not a dependency: it cannot become
+		// non-empty before the idea exists (the summary is only generated
+		// after creation), and re-running on it would create twice
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [readyToCreateIdea, dailyLogId, conversation, createAttempt]);
 
@@ -346,6 +351,9 @@ export function useDraftLoader(
 			fetchedParentRef.current = parentIdParam;
 			onParentIdea(parentIdParam);
 		}
+		// The loader runs only when the target id changes; the callback
+		// props are state setters from the parent (stable identities), and
+		// re-running on their identity would re-fetch the draft
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ideaId, parentIdParam]);
 }

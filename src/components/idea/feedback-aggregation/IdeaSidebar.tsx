@@ -27,21 +27,24 @@ export default function IdeaSidebar({
 			return <p className="w-[256px] text-sm">No comments found.</p>;
 		}
 
-		const allComments = [];
+		const allComments: (FeedbackComment & { hid: string; ideaId: string })[] = [];
 		for (let i = 0; i < sortedHeadingIndices.length; i++) {
-			const hid = sortedHeadingIndices[i];
-			const sectionComments = (headingIdxToComments[Number(hid)] ?? []).reduce(
-				(acc: (FeedbackComment & { hid: string })[], currValue: FeedbackComment) => {
-					acc.push({ hid: hid!, ...currValue });
-					return acc;
-				},
-				[]
+			const hid = sortedHeadingIndices[i]!;
+			const sectionComments = (headingIdxToComments[Number(hid)] ?? []).map(
+				(currValue: FeedbackComment) => ({
+					...currValue,
+					hid,
+					// the aggregation builds these from feedback ideas, so
+					// the id is always present; the fallback keeps the
+					// card's required string honest for a stray entry
+					ideaId: currValue.ideaId ?? ""
+				})
 			);
 			allComments.push(...sectionComments);
 		}
 
 		return allComments.map((comment, index) => {
-			const feedbackIdeaId = comment.ideaId ?? "";
+			const feedbackIdeaId = comment.ideaId;
 			const myReactions = commentReactions
 				.filter(
 					(r) => r.feedbackIdeaId === feedbackIdeaId && r.itemIndex === comment.itemIndex
@@ -49,7 +52,7 @@ export default function IdeaSidebar({
 				.map((r) => r.emoji);
 			return (
 				<IdeaFeedbackCard
-					feedback={comment as never}
+					feedback={comment}
 					key={comment.commentId ?? `${comment.ideaId}_${index}`}
 					focusSection={focusSection}
 					focusedIdea={currentFocusedFeedback}

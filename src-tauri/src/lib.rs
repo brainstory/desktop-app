@@ -174,6 +174,14 @@ pub fn run() {
 				}
 			};
 			std::fs::create_dir_all(data_dir.join("models")).ok();
+			// Secrets can fall back to plaintext rows in this folder when
+			// no keychain is available: keep it owner-only (best effort).
+			#[cfg(unix)]
+			{
+				use std::os::unix::fs::PermissionsExt;
+				let _ =
+					std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700));
+			}
 			// Drop only .part files that can never be resumed; a download
 			// interrupted by a quit continues from its .part next time.
 			models::sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());

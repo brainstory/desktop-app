@@ -20,6 +20,7 @@ const aiSettings = {
 	sttLanguage: "en-US",
 	hfTokenSet: false,
 	hfTokenHint: null as string | null,
+	secretsPlaintext: false,
 	hfEndpoint: "",
 	extLlmBaseUrl: "",
 	extLlmApiKeySet: false,
@@ -447,6 +448,12 @@ describe("AiModelsCard", () => {
 		expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "save_ai_settings")).toBe(
 			false
 		);
+	});
+
+	it("warns when stored keys live in the plaintext fallback", async () => {
+		mockCard({ get_ai_settings: () => ({ ...aiSettings, secretsPlaintext: true }) });
+		renderCard();
+		expect(await screen.findByText("Stored keys are not encrypted")).toBeInTheDocument();
 	});
 
 	it("shows the context window select with per-option memory estimates", async () => {

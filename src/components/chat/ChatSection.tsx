@@ -7,7 +7,8 @@ import {
 	CHAT_TYPE,
 	type ChatType
 } from "@src/const";
-import { findMostRecentAssistantContent, getFirstPrompt, useIdeaIdFromUrl } from "@helpers/chat";
+import { findMostRecentAssistantContent, getFirstPrompt } from "@helpers/chat";
+import { useIdeaIdFromUrl } from "@src/hooks/useIdeaIdFromUrl";
 import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import { getIdeaApi } from "@helpers/api/idea";

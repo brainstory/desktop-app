@@ -800,6 +800,9 @@ impl ExternalLlm {
 	const JSON_BODY_TIMEOUT_SECS: u64 = 120;
 
 	pub fn new(base_url: &str, api_key: &str, model: &str) -> Result<Self, String> {
+		// re-vet at use time, not only at save time: the setting can also
+		// arrive from an environment override or an older build
+		crate::models::validate_endpoint_url(base_url)?;
 		Ok(Self {
 			base_url: base_url.trim_end_matches('/').to_string(),
 			api_key: api_key.to_string(),

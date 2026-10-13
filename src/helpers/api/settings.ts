@@ -115,7 +115,7 @@ export interface SaveUserSettingsOptions {
 	name?: string | null;
 	timezone?: string | null;
 	enabledLogQids?: number[] | null;
-	notifications?: Record<string, unknown>[] | null;
+	notifications?: object[] | null;
 }
 
 /** Persist user settings. Only the provided fields are sent. */

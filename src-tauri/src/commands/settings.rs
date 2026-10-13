@@ -1,5 +1,6 @@
 use tauri::{Manager, State};
 
+use crate::commands::run_blocking;
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::keys;
 use crate::types::{
@@ -9,69 +10,73 @@ use crate::types::{
 use crate::AppState;
 
 #[tauri::command]
-pub async fn get_user_settings(state: State<'_, AppState>) -> Result<UserSettings, String> {
-	let name = state
-		.db
-		.get_setting(keys::setting::USER_NAME)
-		.filter(|s| !s.is_empty());
-	let timezone = state
-		.db
-		.get_setting(keys::setting::USER_TIMEZONE)
-		.filter(|s| !s.is_empty());
-	let reminder_enabled = state
-		.db
-		.get_setting(keys::setting::REMINDER_ENABLED)
-		.map(|v| v == "true")
-		.unwrap_or(false);
-	let reminder_time = state
-		.db
-		.get_setting(keys::setting::REMINDER_TIME)
-		.filter(|s| !s.is_empty())
-		.unwrap_or_else(|| "09:00".into());
-	let presence = AppPresence {
-		dock: state
+pub async fn get_user_settings(app: tauri::AppHandle) -> Result<UserSettings, String> {
+	run_blocking("get user settings", move || {
+		let state = app.state::<AppState>();
+		let name = state
 			.db
-			.get_setting(keys::setting::SHOW_IN_DOCK)
-			.map(|v| v == "true")
-			.unwrap_or(true),
-		tray: state
+			.get_setting(keys::setting::USER_NAME)
+			.filter(|s| !s.is_empty());
+		let timezone = state
 			.db
-			.get_setting(keys::setting::SHOW_IN_TRAY)
+			.get_setting(keys::setting::USER_TIMEZONE)
+			.filter(|s| !s.is_empty());
+		let reminder_enabled = state
+			.db
+			.get_setting(keys::setting::REMINDER_ENABLED)
 			.map(|v| v == "true")
-			.unwrap_or(true),
-	};
+			.unwrap_or(false);
+		let reminder_time = state
+			.db
+			.get_setting(keys::setting::REMINDER_TIME)
+			.filter(|s| !s.is_empty())
+			.unwrap_or_else(|| "09:00".into());
+		let presence = AppPresence {
+			dock: state
+				.db
+				.get_setting(keys::setting::SHOW_IN_DOCK)
+				.map(|v| v == "true")
+				.unwrap_or(true),
+			tray: state
+				.db
+				.get_setting(keys::setting::SHOW_IN_TRAY)
+				.map(|v| v == "true")
+				.unwrap_or(true),
+		};
 
-	let enabled_ids = crate::commands::data::enabled_log_ids(&state);
-	let log: Vec<LogSettingsItem> = DEFAULT_LOG_QUESTIONS
-		.iter()
-		.map(|(id, text, label)| LogSettingsItem {
-			id: *id,
-			label: label.to_string(),
-			text: text.to_string(),
-			enabled: enabled_ids.contains(id),
+		let enabled_ids = crate::commands::data::enabled_log_ids(&state);
+		let log: Vec<LogSettingsItem> = DEFAULT_LOG_QUESTIONS
+			.iter()
+			.map(|(id, text, label)| LogSettingsItem {
+				id: *id,
+				label: label.to_string(),
+				text: text.to_string(),
+				enabled: enabled_ids.contains(id),
+			})
+			.collect();
+
+		let notifications = vec![NotificationSettingsItem {
+			title: "Daily intention reminder".to_string(),
+			description: Some(
+				"A daily system notification reminding you to set your intention and think out loud."
+					.to_string(),
+			),
+			value: Some(reminder_time),
+			value_type: "time".to_string(),
+			enabled: reminder_enabled,
+		}];
+
+		Ok(UserSettings {
+			user: UserSettingsUser { name, timezone },
+			log,
+			notifications,
+			presence,
+			updates: UpdatesSettings {
+				enabled: updates_enabled(&state),
+			},
 		})
-		.collect();
-
-	let notifications = vec![NotificationSettingsItem {
-		title: "Daily intention reminder".to_string(),
-		description: Some(
-			"A daily system notification reminding you to set your intention and think out loud."
-				.to_string(),
-		),
-		value: Some(reminder_time),
-		value_type: "time".to_string(),
-		enabled: reminder_enabled,
-	}];
-
-	Ok(UserSettings {
-		user: UserSettingsUser { name, timezone },
-		log,
-		notifications,
-		presence,
-		updates: UpdatesSettings {
-			enabled: updates_enabled(&state),
-		},
 	})
+	.await
 }
 
 /// Strictly parse a "HH:MM" reminder time, also accepting the
@@ -220,28 +225,32 @@ fn collect_user_settings(
 
 #[tauri::command]
 pub async fn save_user_settings(
-	state: State<'_, AppState>,
+	app: tauri::AppHandle,
 	user: Option<serde_json::Value>,
 	enabled_log_question_ids: Option<Vec<i64>>,
 	notifications: Option<Vec<serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
-	// Side effects only run once the whole form is persisted.
-	let update = persist_user_settings(
-		&state.db,
-		user.as_ref(),
-		enabled_log_question_ids.as_deref(),
-		notifications.as_deref(),
-	)?;
-	if let Some(enabled) = update.reminder_enabled_after {
-		// keep the tray menu checkmark in sync with the persisted setting
-		crate::sync_tray_reminder_check(enabled);
-	}
-	if wakes_scheduler(&update) {
-		// wake the scheduler so a new time/state/zone applies immediately
-		crate::reminders::notify_settings_changed();
-	}
+	run_blocking("save user settings", move || {
+		let state = app.state::<AppState>();
+		// Side effects only run once the whole form is persisted.
+		let update = persist_user_settings(
+			&state.db,
+			user.as_ref(),
+			enabled_log_question_ids.as_deref(),
+			notifications.as_deref(),
+		)?;
+		if let Some(enabled) = update.reminder_enabled_after {
+			// keep the tray menu checkmark in sync with the persisted setting
+			crate::sync_tray_reminder_check(enabled);
+		}
+		if wakes_scheduler(&update) {
+			// wake the scheduler so a new time/state/zone applies immediately
+			crate::reminders::notify_settings_changed();
+		}
 
-	Ok(serde_json::json!({ "id": "settings" }))
+		Ok(serde_json::json!({ "id": "settings" }))
+	})
+	.await
 }
 
 #[tauri::command]
@@ -266,6 +275,17 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 		let (hf_set, hf_hint) = masked(&s.hf_token);
 		let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
 		let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
+		// Whether any stored secret is currently served from the plaintext
+		// DB fallback (no usable keychain): the form warns about it.
+		let secrets_plaintext = [
+			(&s.hf_token, crate::secrets::Secret::HfToken),
+			(&s.ext_llm_api_key, crate::secrets::Secret::ExtLlmApiKey),
+			(&s.ext_stt_api_key, crate::secrets::Secret::ExtSttApiKey),
+		]
+		.iter()
+		.any(|(value, secret)| {
+			!value.is_empty() && crate::secrets::served_from_plaintext_fallback(*secret, &state.db)
+		});
 		// camelCase to match the frontend's field access
 		Ok(serde_json::json!({
 			"llmMode": s.llm_mode.as_str(),
@@ -277,6 +297,7 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 			"sttLanguage": s.stt_language,
 			"hfTokenSet": hf_set,
 			"hfTokenHint": hf_hint,
+			"secretsPlaintext": secrets_plaintext,
 			"hfEndpoint": s.hf_endpoint,
 			"extLlmBaseUrl": s.ext_llm_base_url,
 			"extLlmApiKeySet": llm_key_set,
@@ -297,6 +318,28 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 	// keychain reads/writes plus the settings-row write are blocking work
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
+		// A stored API key must not silently start traveling to a different
+		// server because this call changed the URL setting: make the person
+		// confirm first (so a compromised webview cannot repoint a saved
+		// key at a host of its choosing).
+		let current = state.ai_settings();
+		if let Some(target) = crate::models::secret_host_change(&current, &ai) {
+			use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+			let confirmed = app
+				.dialog()
+				.message(format!(
+					"Your saved API key would be sent to {target}.\n\nSave this change?"
+				))
+				.title("Change AI endpoint")
+				.buttons(MessageDialogButtons::OkCancelCustom(
+					"Save".into(),
+					"Cancel".into(),
+				))
+				.blocking_show();
+			if !confirmed {
+				return Err("change was not saved (the new server was not confirmed)".into());
+			}
+		}
 		// one critical section over read-latest, apply and persist, so a
 		// concurrent writer (model activation, another save) can never be
 		// overwritten by a stale full snapshot
@@ -315,17 +358,17 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 }
 
 #[tauri::command]
-pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, String> {
-	let settings = state.ai_settings();
+pub async fn test_llm_endpoint(app: tauri::AppHandle) -> Result<String, String> {
+	// keychain reads are blocking: keep them off the async workers
+	let settings =
+		tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
+			.await
+			.map_err(|e| format!("read ai settings task failed: {e}"))?;
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("no external LLM endpoint configured".into());
 	}
-	if !crate::models::has_http_scheme(&settings.ext_llm_base_url) {
-		return Err(format!(
-			"invalid endpoint URL '{}' (include http:// or https://)",
-			settings.ext_llm_base_url
-		));
-	}
+	crate::models::validate_endpoint_url(&settings.ext_llm_base_url)
+		.map_err(|e| format!("invalid endpoint URL: {e}"))?;
 	let client = crate::llm::ExternalLlm::new(
 		&settings.ext_llm_base_url,
 		&settings.ext_llm_api_key,
@@ -362,8 +405,12 @@ pub async fn test_llm_endpoint(state: State<'_, AppState>) -> Result<String, Str
 }
 
 #[tauri::command]
-pub async fn test_stt_endpoint(state: State<'_, AppState>) -> Result<String, String> {
-	let settings = state.ai_settings();
+pub async fn test_stt_endpoint(app: tauri::AppHandle) -> Result<String, String> {
+	// keychain reads are blocking: keep them off the async workers
+	let settings =
+		tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
+			.await
+			.map_err(|e| format!("read ai settings task failed: {e}"))?;
 	if settings.ext_stt_base_url.is_empty() {
 		return Err("no external STT endpoint configured".into());
 	}
@@ -432,14 +479,22 @@ fn store_updates_enabled(state: &AppState, enabled: bool) -> Result<(), String> 
 /// Cheap read for the updater banner, which checks it before every
 /// (throttled) update check.
 #[tauri::command]
-pub async fn get_updates_enabled(state: State<'_, AppState>) -> Result<bool, String> {
-	Ok(updates_enabled(&state))
+pub async fn get_updates_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+	run_blocking("get updates enabled", move || {
+		let state = app.state::<AppState>();
+		Ok(updates_enabled(&state))
+	})
+	.await
 }
 
 /// Opt in to / out of automatic update checks.
 #[tauri::command]
-pub async fn set_updates_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-	store_updates_enabled(&state, enabled)
+pub async fn set_updates_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+	run_blocking("set updates enabled", move || {
+		let state = app.state::<AppState>();
+		store_updates_enabled(&state, enabled)
+	})
+	.await
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ import { Card } from "./ProfileCards";
 import LogEntry from "@components/form/LogEntryInput";
 import type { LogSettingsQuestion } from "@helpers/api/settings";
 import Button from "@ds/Button";
+import { useDirtySave } from "@src/hooks/useDirtySave";
 
 const getEnabledLogQidsFromData = (apiData: LogSettingsQuestion[]): number[] => {
 	return apiData.reduce((acc: number[], currField: LogSettingsQuestion) => {
@@ -14,6 +15,10 @@ const getEnabledLogQidsFromData = (apiData: LogSettingsQuestion[]): number[] => 
 		return acc;
 	}, []);
 };
+
+/** Same enabled-question set, order ignored. */
+const sameQids = (a: number[], b: number[]): boolean =>
+	a.length === b.length && a.every((id) => b.includes(id));
 
 interface DailyLogSettingsCardProps {
 	logFieldsData?: LogSettingsQuestion[];
@@ -27,15 +32,11 @@ export function DailyLogSettingsCard({
 }: DailyLogSettingsCardProps) {
 	const initialQids = getEnabledLogQidsFromData(logFieldsData);
 	const [enabledLogQids, setEnabledLogQids] = useState(initialQids);
-	// the last CONFIRMED-saved snapshot: dirty state is derived from it,
-	// so a failed save stays retryable and toggles made while a save was
-	// pending stay dirty without tracking the latest values in a ref
-	const [savedQids, setSavedQids] = useState(initialQids);
 	const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
-	const [isSaving, setIsSaving] = useState(false);
-	const hasChanged =
-		enabledLogQids.length !== savedQids.length ||
-		!enabledLogQids.every((id) => savedQids.includes(id));
+	// dirty is derived from the last confirmed-saved ids: toggles made
+	// while a save was pending stay dirty, a failed save stays retryable
+	const { isSaving, isDirty, save } = useDirtySave(initialQids, sameQids);
+	const hasChanged = isDirty(enabledLogQids);
 
 	const handleToggle = (toggledId: number): void => {
 		let updatedEnabledLogQids = [...enabledLogQids];
@@ -48,23 +49,12 @@ export function DailyLogSettingsCard({
 	};
 
 	const handleSaveClick = () => {
-		if (isSaving) return;
 		if (enabledLogQids.length === 0) {
 			setErrorMessage("Must have at least 1 question enabled");
 			return;
 		}
-		const submittedQids = enabledLogQids;
-		setIsSaving(true);
 		setErrorMessage(undefined);
-		void saveSettings(submittedQids)
-			.then((saved) => {
-				if (saved) {
-					// only the submitted ids become clean: toggles made
-					// while the save was pending stay dirty
-					setSavedQids(submittedQids);
-				}
-			})
-			.finally(() => setIsSaving(false));
+		void save(enabledLogQids, saveSettings);
 	};
 
 	return (

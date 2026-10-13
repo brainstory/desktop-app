@@ -18,15 +18,22 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
 		let settings = state.ai_settings();
+		// Snapshot the progress under the lock, then release it: the loop
+		// below stats every catalog file (and can scan hub-cache dirs), and
+		// holding the mutex across that would block every download-progress
+		// event that arrives mid-scan.
+		let progress: std::collections::HashMap<String, f64> = state
+			.download_progress
+			.lock()
+			.unwrap_or_else(|e| e.into_inner())
+			.iter()
+			.map(|(id, pct)| (id.clone(), *pct))
+			.collect();
 		let build = |kind: ModelKind| -> Vec<serde_json::Value> {
 			let list: &[crate::models::ModelSpec] = match kind {
 				ModelKind::Llm => &crate::models::LLM_MODELS,
 				ModelKind::Stt => &crate::models::STT_MODELS,
 			};
-			let progress = state
-				.download_progress
-				.lock()
-				.unwrap_or_else(|e| e.into_inner());
 			list.iter()
 				.map(|spec| {
 					let mut row = serde_json::to_value(ModelStatus {
@@ -236,7 +243,15 @@ pub async fn download_model(
 	};
 
 	let app_handle = app.clone();
-	let url = model_url(&spec, &crate::models::hf_endpoint(&state.ai_settings()));
+	let hf_endpoint = crate::models::hf_endpoint(&state.ai_settings());
+	// re-vet the resolved endpoint (setting, mirror or HF_ENDPOINT env)
+	// before a byte moves or the token is attached
+	crate::models::validate_endpoint_url(&hf_endpoint).map_err(|e| {
+		format!(
+			"invalid HuggingFace download endpoint (Settings, AI Models, mirror - or HF_ENDPOINT): {e}"
+		)
+	})?;
+	let url = model_url(&spec, &hf_endpoint);
 	let hf_token = state.ai_settings().hf_token;
 
 	tauri::async_runtime::spawn(async move {
@@ -275,9 +290,28 @@ pub async fn download_model(
 			match result {
 				Ok(()) => {
 					// publish the blob under snapshots/<sha>/<file> so
-					// discovery (ours and other HF tools) sees it
+					// discovery (ours and other HF tools) sees it. A publish
+					// failure means the model is NOT resolvable
+					// (resolve_model_file reads snapshots), so it must be
+					// reported as a failure instead of "done": the UI would
+					// otherwise show a downloaded model the app cannot load.
 					if let Err(e) = crate::models::materialize_snapshot(&cache, &spec) {
 						log::error!("could not create the cache snapshot for {}: {e}", spec.id);
+						let message = format!(
+							"the model file was downloaded but could not be published to the cache: {e}"
+						);
+						let _ =
+							on_event.send(json!({ "kind": "error", "message": message.clone() }));
+						let _ = app_handle.emit(
+							"model-download",
+							json!({
+								"modelId": model_id,
+								"label": spec_label,
+								"kind": "error",
+								"message": message
+							}),
+						);
+						return;
 					}
 					let _ = on_event.send(json!({ "kind": "done" }));
 					let _ = app_handle.emit(

@@ -10,12 +10,13 @@ import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
 import ErrorSection from "@components/error/ErrorSection";
+import ErrorBoundary from "@components/global/ErrorBoundary";
 
 import IdeaGrid from "./IdeaGrid";
 import FeedbackGrid from "./FeedbackGrid";
 import AiSetupNeeded from "./AiSetupNeeded";
 
-export default function DashboardSection() {
+function DashboardSectionInner() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
@@ -115,17 +116,17 @@ export default function DashboardSection() {
 			) : showGetStarted ? (
 				<div className="flex flex-col-reverse sm:flex-col gap-8 justify-between items-center my-6">
 					<div className="">
-						{/* CSS-driven art swap so it tracks window resizes */}
-						<img
-							src="/comic2-2.png"
-							className="pointer-events-none pb-1 sm:hidden"
-							alt="Comic: someone unsure how to start, encouraged to think out loud"
-						/>
-						<img
-							src="/comic1-4.png"
-							className="pointer-events-none pb-1 hidden sm:block"
-							alt="Comic: someone unsure how to start, encouraged to think out loud"
-						/>
+						{/* one asset per viewport: <picture> keeps the other
+						    file off the wire entirely (CSS alone downloaded
+						    both and hid one) */}
+						<picture>
+							<source media="(max-width: 639px)" srcSet="/comic2-2.png" />
+							<img
+								src="/comic1-4.png"
+								className="pointer-events-none pb-1"
+								alt="Comic: someone unsure how to start, encouraged to think out loud"
+							/>
+						</picture>
 
 						<div>
 							<p className="text-xs text-right text-stone-600 italic">
@@ -138,7 +139,12 @@ export default function DashboardSection() {
 						href="/get-started"
 					>
 						<div className="w-56 p-6 flex flex-col items-center gap-2">
-							<ion-icon class="hydrated w-16 h-16" name="mic-outline" role="img" />
+							{/* decorative: the button's text names the action */}
+							<ion-icon
+								class="hydrated w-16 h-16"
+								name="mic-outline"
+								aria-hidden="true"
+							></ion-icon>
 							<p>Find a quiet place</p>
 							<p className="text-xl font-bold">Start your first Brainstory!</p>
 						</div>
@@ -151,5 +157,14 @@ export default function DashboardSection() {
 				</div>
 			)}
 		</section>
+	);
+}
+
+/** The dashboard island: a crash shows a recoverable section, not a blank page. */
+export default function DashboardSection() {
+	return (
+		<ErrorBoundary title="The dashboard hit a snag">
+			<DashboardSectionInner />
+		</ErrorBoundary>
 	);
 }

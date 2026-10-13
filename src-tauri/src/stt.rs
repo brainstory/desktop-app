@@ -283,6 +283,25 @@ pub(crate) fn resample_to_16k(mono: Vec<f32>, sample_rate: u32) -> Result<Vec<f3
 	Ok(resampled)
 }
 
+/// One HTTP client for every external transcription call: a fresh client
+/// per recording threw away its connection pool (TCP + TLS handshakes)
+/// between recordings. reqwest::Client is a cheap Arc handle to the
+/// shared pool.
+fn shared_client() -> Result<reqwest::Client, String> {
+	static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+	if let Some(client) = CLIENT.get() {
+		return Ok(client.clone());
+	}
+	let client = reqwest::Client::builder()
+		.connect_timeout(std::time::Duration::from_secs(10))
+		// upload + transcription of a few minutes of audio can take a while,
+		// but not forever
+		.timeout(std::time::Duration::from_secs(180))
+		.build()
+		.map_err(|e| format!("failed to build HTTP client: {e}"))?;
+	Ok(CLIENT.get_or_init(|| client).clone())
+}
+
 /// OpenAI-compatible audio transcription endpoint
 /// (whisper.cpp server, faster-whisper-server, Groq, OpenAI, ...).
 pub async fn transcribe_external(
@@ -292,11 +311,9 @@ pub async fn transcribe_external(
 	wav: Vec<u8>,
 ) -> Result<String, String> {
 	let base = base_url.trim_end_matches('/');
-	if !crate::models::has_http_scheme(base) {
-		return Err(format!(
-			"invalid STT endpoint URL '{base}' (include http:// or https://)"
-		));
-	}
+	// re-vet at use time, not only at save time: older builds and
+	// hand-edited settings rows also reach this path
+	crate::models::validate_endpoint_url(base)?;
 	let url = if base.ends_with("/v1") {
 		format!("{}/audio/transcriptions", base)
 	} else {
@@ -317,13 +334,7 @@ pub async fn transcribe_external(
 		.text("response_format", "json")
 		.part("file", part);
 
-	let client = reqwest::Client::builder()
-		.connect_timeout(std::time::Duration::from_secs(10))
-		// upload + transcription of a few minutes of audio can take a while,
-		// but not forever
-		.timeout(std::time::Duration::from_secs(180))
-		.build()
-		.map_err(|e| e.to_string())?;
+	let client = shared_client()?;
 	let mut request = client
 		.post(url)
 		.header("User-Agent", crate::models::USER_AGENT)

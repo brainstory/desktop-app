@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
+import ErrorBoundary from "@components/global/ErrorBoundary";
 
 export type SludgemanState = "idle" | "jump" | "wave";
 
@@ -21,7 +22,11 @@ export function AppWrapper({ children }: { children: ReactNode }) {
 		setSludgeman
 	};
 
-	return <AppContext.Provider value={sharedState}>{children}</AppContext.Provider>;
+	return (
+		<AppContext.Provider value={sharedState}>
+			<ErrorBoundary title="This session hit a snag">{children}</ErrorBoundary>
+		</AppContext.Provider>
+	);
 }
 
 export function useAppContext(): AppContextValue {

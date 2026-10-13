@@ -27,6 +27,8 @@ export default function SectionCommenters({
 	onCommentClick,
 	isFocused
 }: SectionCommentersProps) {
+	// the seventh commenter, when the avatars above are capped at six
+	const overflowComment = comments.length > 6 ? comments[6] : undefined;
 	return (
 		<div
 			className={cn(
@@ -54,11 +56,12 @@ export default function SectionCommenters({
 						</Tooltip>
 					);
 				})}
-			{comments && comments.length > 6 && (
+			{overflowComment && (
 				<button
 					type="button"
+					aria-label={`Show more commenters (${comments.length - 6} more)`}
 					className="flex items-center"
-					onClick={() => onCommentClick(comments[6]!)}
+					onClick={() => onCommentClick(overflowComment)}
 				>
 					<span className="text-gray-600 w-max">+{comments.length - 6} more</span>
 				</button>

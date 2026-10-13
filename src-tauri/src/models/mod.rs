@@ -9,8 +9,8 @@ mod download;
 mod state;
 
 pub use ai_settings::{
-	default_stt_engine, has_http_scheme, hf_endpoint, resolve_hf_endpoint, AiSettings, LlmMode,
-	SpeechEngine, SttMode,
+	default_stt_engine, hf_endpoint, resolve_hf_endpoint, same_endpoint_host, secret_host_change,
+	validate_endpoint_url, AiSettings, LlmMode, SpeechEngine, SttMode,
 };
 pub use catalog::{find_model, kv_bytes_per_token, ModelKind, ModelSpec, LLM_MODELS, STT_MODELS};
 pub use download::{

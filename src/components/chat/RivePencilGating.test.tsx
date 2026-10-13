@@ -11,24 +11,25 @@ vi.mock("@components/global/RivePencil", () => ({
 }));
 
 describe("RivePencil gating", () => {
-	it("AssistantResponseText mounts the pencil only on wide windows", () => {
+	it("AssistantResponseText mounts the pencil only on wide windows", async () => {
 		const viewport = mockViewport(800);
 		render(<AssistantResponseText content="What is on your mind?" />);
 		expect(screen.queryByTestId("rive-pencil")).not.toBeInTheDocument();
 
 		act(() => viewport.setWidth(1200));
-		expect(screen.getByTestId("rive-pencil")).toBeInTheDocument();
+		// the pencil is lazy-loaded: it appears once its chunk resolves
+		expect(await screen.findByTestId("rive-pencil")).toBeInTheDocument();
 
 		act(() => viewport.setWidth(900));
 		expect(screen.queryByTestId("rive-pencil")).not.toBeInTheDocument();
 	});
 
-	it("GetStartedIntro mounts the pencil only on wide windows", () => {
+	it("GetStartedIntro mounts the pencil only on wide windows", async () => {
 		const viewport = mockViewport(800);
 		render(<GetStartedIntro />);
 		expect(screen.queryByTestId("rive-pencil")).not.toBeInTheDocument();
 
 		act(() => viewport.setWidth(1024));
-		expect(screen.getByTestId("rive-pencil")).toBeInTheDocument();
+		expect(await screen.findByTestId("rive-pencil")).toBeInTheDocument();
 	});
 });
