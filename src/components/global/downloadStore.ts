@@ -113,7 +113,8 @@ function applyEvent(event: ModelDownloadEvent): void {
 		case "progress":
 			active[modelId] = {
 				pct: typeof pct === "number" ? pct : -1,
-				label: label ?? active[modelId]?.label ?? modelId,
+				// after a resume, the paused entry still holds the label
+				label: label ?? active[modelId]?.label ?? paused[modelId]?.label ?? modelId,
 				...(typeof bytesPerSec === "number" ? { bytesPerSec } : {}),
 				...(typeof etaSecs === "number" ? { etaSecs } : {})
 			};
@@ -122,12 +123,13 @@ function applyEvent(event: ModelDownloadEvent): void {
 			delete failures[modelId];
 			break;
 		case "paused":
-			delete active[modelId];
 			delete failures[modelId];
 			paused[modelId] = {
 				pct: typeof pct === "number" ? pct : -1,
-				label: label ?? paused[modelId]?.label ?? modelId
+				// keep the label the transfer was showing before it paused
+				label: label ?? paused[modelId]?.label ?? active[modelId]?.label ?? modelId
 			};
+			delete active[modelId];
 			break;
 		case "done":
 		case "cancelled":
@@ -136,12 +138,18 @@ function applyEvent(event: ModelDownloadEvent): void {
 			delete failures[modelId];
 			break;
 		case "error":
-			delete active[modelId];
-			delete paused[modelId];
 			failures[modelId] = {
-				label: label ?? failures[modelId]?.label ?? modelId,
+				// keep the label the failed transfer was showing
+				label:
+					label ??
+					failures[modelId]?.label ??
+					active[modelId]?.label ??
+					paused[modelId]?.label ??
+					modelId,
 				message: formatDownloadError(message ?? "")
 			};
+			delete active[modelId];
+			delete paused[modelId];
 			break;
 		// "load-error" (the engine failed to start) and "activated" (the
 		// selection moved) change no transfer state here: the engine

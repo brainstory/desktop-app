@@ -32,8 +32,12 @@ export default defineConfig({
 				"src/components/chat/types.ts"
 			],
 			thresholds: {
-				// starting floor; raise as component coverage grows
-				lines: 50
+				// floors just under the current suite (88/86/83/79):
+				// a drop below one is a real regression worth failing on
+				lines: 85,
+				statements: 84,
+				functions: 80,
+				branches: 75
 			}
 		}
 	}

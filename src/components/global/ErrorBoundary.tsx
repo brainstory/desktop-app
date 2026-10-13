@@ -6,7 +6,12 @@ interface ErrorBoundaryProps {
 	children: ReactNode;
 	/** title of the fallback section */
 	title?: string;
+	/** the fallback's reload action; overridable so tests can observe the
+	 * click without navigating (the default reloads the window) */
+	onReload?: () => void;
 }
+
+const reloadWindow = () => window.location.reload();
 
 interface ErrorBoundaryState {
 	error: Error | null;
@@ -41,7 +46,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 					]}
 					showRestartHint
 					action={
-						<Button variant="pink" onClick={() => window.location.reload()}>
+						<Button variant="pink" onClick={this.props.onReload ?? reloadWindow}>
 							Reload
 						</Button>
 					}
