@@ -30,6 +30,18 @@ impl IdeaType {
 	}
 }
 
+/// A note the user attached to an idea. Stored structurally in the
+/// idea's metadata (`notes`), and rendered into the writeup's trailing
+/// "## Notes" section on every change - so the Summary tab and exports
+/// keep carrying them, while the note list stays editable.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct IdeaNote {
+	pub id: String,
+	pub text: String,
+	pub created_at: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct IdeaItem {
@@ -54,6 +66,10 @@ pub struct IdeaItem {
 	pub structured_result: Option<serde_json::Value>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub result_json: Option<serde_json::Value>,
+	/// the user's structured notes (see [`IdeaNote`]); absent when there
+	/// are none
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub notes: Option<Vec<IdeaNote>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub parent_idea: Option<Box<IdeaItem>>,
 	#[serde(skip_serializing_if = "Option::is_none")]

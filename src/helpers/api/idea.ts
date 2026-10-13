@@ -15,6 +15,7 @@ export interface RawIdea {
 	result?: string;
 	parent_idea?: RawIdea | null;
 	result_json?: unknown;
+	notes?: { id: string; text: string; created_at: string }[];
 }
 
 import { getQueryParam } from "@helpers/helpers";
@@ -47,7 +48,13 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 		transcript: response?.transcript,
 		summary: response?.result,
 		parentIdea: parentIdea,
-		resultJson: (response?.result_json ?? null) as IdeaDetail["resultJson"]
+		resultJson: (response?.result_json ?? null) as IdeaDetail["resultJson"],
+		notes:
+			response?.notes?.map((note) => ({
+				id: note.id,
+				text: note.text,
+				createdAt: note.created_at
+			})) ?? null
 	};
 }
 
@@ -214,6 +221,16 @@ export function addIdeaNoteApi(ideaId: string, note: string): Promise<unknown> {
 	return invokeCommand("addIdeaNote", { ideaId, note });
 }
 
+/** Replace one note's text. */
+export function updateIdeaNoteApi(ideaId: string, noteId: string, note: string): Promise<unknown> {
+	return invokeCommand("updateIdeaNote", { ideaId, noteId, note });
+}
+
+/** Delete one note. */
+export function deleteIdeaNoteApi(ideaId: string, noteId: string): Promise<unknown> {
+	return invokeCommand("deleteIdeaNote", { ideaId, noteId });
+}
+
 export default {
 	getIdeaApi,
 	getIdeaChildrenApi,
@@ -221,5 +238,7 @@ export default {
 	markIdeaReadApi,
 	updateIdeaTitleApi,
 	deleteIdeaApi,
-	addIdeaNoteApi
+	addIdeaNoteApi,
+	updateIdeaNoteApi,
+	deleteIdeaNoteApi
 };

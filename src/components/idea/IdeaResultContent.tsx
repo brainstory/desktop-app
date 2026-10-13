@@ -9,9 +9,10 @@ import IdeaSummary from "./IdeaSummary";
 import IdeaSection from "@components/idea/feedback-aggregation/IdeaSection";
 import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
+import IdeaNotes from "./IdeaNotes";
 import { getQueryParam } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
-import { finishedFeedback, isOwnIdea, parseHeadingIndex } from "@helpers/ideas";
+import { finishedFeedback, isOwnIdea, parseHeadingIndex, stripNotesSection } from "@helpers/ideas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
@@ -128,7 +129,8 @@ function IdeaResultContentInner() {
 					resultJson: res.resultJson,
 					isUnread: res.isUnread,
 					creatorEmail: res.creatorEmail,
-					creatorName: res.creatorName
+					creatorName: res.creatorName,
+					notes: res.notes
 				}));
 			})
 			.catch((err) => {
@@ -143,6 +145,21 @@ function IdeaResultContentInner() {
 	// each entry carries its own ?tab= param so the URL values always
 	// match the tabs that actually exist (a feedback idea has no feedback
 	// tab, and the reverse)
+	const notes = idea.notes ?? [];
+	// structured notes are shown as the editable list below; the rendered
+	// "## Notes" section would duplicate them. Without structured notes
+	// (legacy rows), the section stays so nothing is lost.
+	const documentSections =
+		notes.length > 0
+			? (idea.resultJson ?? []).filter(
+					(section) => (section.heading ?? "").trim() !== "## Notes"
+				)
+			: (idea.resultJson ?? []);
+	const summaryMarkdown = notes.length > 0 ? stripNotesSection(idea.summary ?? "") : idea.summary;
+	const notesBlock =
+		notes.length > 0 && ideaId ? (
+			<IdeaNotes ideaId={ideaId} notes={notes} onChanged={reloadIdea} />
+		) : null;
 	const tabData: {
 		label: string;
 		param: string;
@@ -155,7 +172,12 @@ function IdeaResultContentInner() {
 					{
 						label: "Summary",
 						param: "summary",
-						content: <IdeaSummary content={idea.summary} />
+						content: (
+							<>
+								<IdeaSummary content={summaryMarkdown} />
+								{notesBlock}
+							</>
+						)
 					},
 					{
 						label: "Transcript",
@@ -168,14 +190,17 @@ function IdeaResultContentInner() {
 						label: "Summary",
 						param: "summary",
 						content: (
-							<IdeaSection
-								resultSections={idea.resultJson ?? []}
-								headingIdxToComments={headingIdxToComments}
-								sectionReactions={sectionReactions}
-								onToggleSectionReaction={toggleSectionReaction}
-								commentReactions={commentReactions}
-								onToggleCommentReaction={toggleCommentReaction}
-							/>
+							<>
+								<IdeaSection
+									resultSections={documentSections}
+									headingIdxToComments={headingIdxToComments}
+									sectionReactions={sectionReactions}
+									onToggleSectionReaction={toggleSectionReaction}
+									commentReactions={commentReactions}
+									onToggleCommentReaction={toggleCommentReaction}
+								/>
+								{notesBlock}
+							</>
 						)
 					},
 					{

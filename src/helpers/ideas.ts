@@ -10,6 +10,26 @@ export function isOwnIdea(idea: Pick<CreatorInfo, "creatorName">): boolean {
 }
 
 /**
+ * Markdown with its trailing "## Notes" section removed. The idea page
+ * shows notes as an editable list instead of a rendered section; the
+ * last such heading wins, because notes are only ever built at the end
+ * of the document (mirrors the backend's strip).
+ */
+export function stripNotesSection(markdown: string): string {
+	const lines = markdown.split("\n");
+	let cut = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i]!.trim() === "## Notes") {
+			cut = i;
+		}
+	}
+	if (cut === -1) {
+		return markdown.trim();
+	}
+	return lines.slice(0, cut).join("\n").trimEnd();
+}
+
+/**
  * Section index (into the idea's result sections: [title slot, "# Title",
  * "## ...", ...]) of a feedback comment's `oid_heading_text`,
  * "<number>##<heading text>". Placed by heading text first - it names the

@@ -91,6 +91,8 @@ pub fn run() {
 			commands::data::mark_idea_read,
 			commands::data::delete_idea,
 			commands::data::add_idea_note,
+			commands::data::update_idea_note,
+			commands::data::delete_idea_note,
 			commands::data::get_log_questions,
 			commands::data::submit_log,
 			commands::data::get_survey_fields,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isOwnIdea, parseHeadingIndex, stripResultPreview } from "./ideas";
+import { isOwnIdea, parseHeadingIndex, stripNotesSection, stripResultPreview } from "./ideas";
 
 describe("stripResultPreview", () => {
 	it("returns an empty string for missing or non-string input", () => {
@@ -43,6 +43,26 @@ describe("isOwnIdea", () => {
 		expect(isOwnIdea({ creatorName: null })).toBe(true);
 		expect(isOwnIdea({ creatorName: "" })).toBe(true);
 		expect(isOwnIdea({ creatorName: "Ada" })).toBe(false);
+	});
+});
+
+describe("stripNotesSection", () => {
+	it("removes the trailing notes section and nothing else", () => {
+		expect(stripNotesSection("# T\n\nbody\n\n## Notes\n\nnote one\n\nnote two")).toBe(
+			"# T\n\nbody"
+		);
+	});
+
+	it("leaves markdown without notes untouched", () => {
+		expect(stripNotesSection("# T\n\nbody")).toBe("# T\n\nbody");
+	});
+
+	it("handles a document that is only notes", () => {
+		expect(stripNotesSection("## Notes\n\nonly a note")).toBe("");
+	});
+
+	it("uses the last notes heading, mirroring the backend's rebuild", () => {
+		expect(stripNotesSection("a\n\n## Notes\nold")).toBe("a");
 	});
 });
 

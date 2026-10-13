@@ -60,6 +60,16 @@ export interface IdeaDetail extends CreatorInfo {
 	summary?: string | null;
 	parentIdea?: (CreatorInfo & { id: string; title?: string | null }) | null;
 	resultJson?: ResultSection[] | null;
+	/** the user's own structured notes (editable); rendered into the
+	 * writeup's trailing "## Notes" section by the backend */
+	notes?: IdeaNote[] | null;
+}
+
+/** One user note on an idea. */
+export interface IdeaNote {
+	id: string;
+	text: string;
+	createdAt: string;
 }
 
 /** Feedback child item returned by getIdeaChildrenApi. */

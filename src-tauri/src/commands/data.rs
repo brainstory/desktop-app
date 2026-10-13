@@ -237,9 +237,10 @@ pub async fn delete_idea(
 	.await
 }
 
-/// Append a user note to an idea's writeup. Notes live in the same
-/// markdown result as the writeup (under a "## Notes" section), so the
-/// Summary tab and exports include them with no extra plumbing.
+/// Add a user note to an idea's writeup. Notes live in the same markdown
+/// result as the writeup (under a "## Notes" section) and, structured,
+/// in the idea's metadata - so the Summary tab and exports include them
+/// while the note list stays editable.
 #[tauri::command]
 pub async fn add_idea_note(
 	app: tauri::AppHandle,
@@ -253,8 +254,44 @@ pub async fn add_idea_note(
 			return Err("the note is empty".into());
 		}
 		ensure_within("note", trimmed, MAX_NOTE_BYTES)?;
-		state.db.append_idea_note(&idea_id, trimmed)?;
+		state.db.add_idea_note(&idea_id, trimmed)?;
 		Ok(serde_json::json!({ "id": idea_id }))
+	})
+	.await
+}
+
+/// Replace one note's text (the note list's Edit action).
+#[tauri::command]
+pub async fn update_idea_note(
+	app: tauri::AppHandle,
+	idea_id: String,
+	note_id: String,
+	note: String,
+) -> Result<serde_json::Value, String> {
+	run_blocking("update idea note", move || {
+		let state = app.state::<AppState>();
+		let trimmed = note.trim();
+		if trimmed.is_empty() {
+			return Err("the note is empty".into());
+		}
+		ensure_within("note", trimmed, MAX_NOTE_BYTES)?;
+		state.db.update_idea_note(&idea_id, &note_id, trimmed)?;
+		Ok(serde_json::json!({ "id": idea_id, "noteId": note_id }))
+	})
+	.await
+}
+
+/// Delete one note (the note list's Remove action).
+#[tauri::command]
+pub async fn delete_idea_note(
+	app: tauri::AppHandle,
+	idea_id: String,
+	note_id: String,
+) -> Result<serde_json::Value, String> {
+	run_blocking("delete idea note", move || {
+		let state = app.state::<AppState>();
+		state.db.delete_idea_note(&idea_id, &note_id)?;
+		Ok(serde_json::json!({ "id": idea_id, "noteId": note_id }))
 	})
 	.await
 }

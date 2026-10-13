@@ -94,7 +94,7 @@ fn invalid_json_rows_are_reported_not_fatal() {
 }
 
 #[test]
-fn notes_append_under_one_trailing_heading() {
+fn notes_are_structured_and_rebuild_one_trailing_section() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");
 	db.insert_idea(NewIdea {
@@ -107,15 +107,20 @@ fn notes_append_under_one_trailing_heading() {
 	})
 	.unwrap();
 
-	db.append_idea_note("n1", "first").unwrap();
-	let result = db.get_idea("n1").unwrap().unwrap().result.unwrap();
+	db.add_idea_note("n1", "first").unwrap();
+	let idea = db.get_idea("n1").unwrap().unwrap();
+	let result = idea.result.clone().unwrap();
 	assert!(result.starts_with("# Title\n\nbody"), "writeup untouched");
 	assert!(
 		result.ends_with("## Notes\n\nfirst"),
 		"note under a heading"
 	);
+	let notes = idea.notes.expect("structured notes");
+	assert_eq!(notes.len(), 1);
+	assert_eq!(notes[0].text, "first");
+	let first_id = notes[0].id.clone();
 
-	db.append_idea_note("n1", "second").unwrap();
+	db.add_idea_note("n1", "second").unwrap();
 	let result = db.get_idea("n1").unwrap().unwrap().result.unwrap();
 	assert!(result.ends_with("## Notes\n\nfirst\n\nsecond"));
 	assert_eq!(
@@ -123,6 +128,32 @@ fn notes_append_under_one_trailing_heading() {
 		1,
 		"one notes section, never one per note"
 	);
+
+	// edit the first note: the rendered section follows the structured
+	// list, and the other note is untouched
+	db.update_idea_note("n1", &first_id, "first fixed").unwrap();
+	let idea = db.get_idea("n1").unwrap().unwrap();
+	let result = idea.result.unwrap();
+	assert!(result.ends_with("## Notes\n\nfirst fixed\n\nsecond"));
+	let second_id = idea.notes.as_ref().unwrap()[1].id.clone();
+	assert_eq!(idea.notes.unwrap()[0].text, "first fixed");
+
+	// deleting the last note removes the section entirely
+	db.delete_idea_note("n1", &first_id).unwrap();
+	db.delete_idea_note("n1", &second_id).unwrap();
+	let idea = db.get_idea("n1").unwrap().unwrap();
+	assert_eq!(idea.result.as_deref(), Some("# Title\n\nbody"));
+	assert!(idea.notes.is_none(), "no notes left");
+
+	// unknown note ids are an error, not a silent no-op
+	let err = db
+		.update_idea_note("n1", "ghost", "x")
+		.expect_err("updating a missing note must fail");
+	assert!(err.contains("note not found"), "unexpected error: {err}");
+	let err = db
+		.delete_idea_note("n1", "ghost")
+		.expect_err("deleting a missing note must fail");
+	assert!(err.contains("note not found"), "unexpected error: {err}");
 
 	// an empty result still gets a well-formed notes section
 	db.insert_idea(NewIdea {
@@ -134,7 +165,7 @@ fn notes_append_under_one_trailing_heading() {
 		..Default::default()
 	})
 	.unwrap();
-	db.append_idea_note("n2", "only a note").unwrap();
+	db.add_idea_note("n2", "only a note").unwrap();
 	assert_eq!(
 		db.get_idea("n2").unwrap().unwrap().result.as_deref(),
 		Some("## Notes\n\nonly a note")
@@ -144,13 +175,52 @@ fn notes_append_under_one_trailing_heading() {
 	// not complete the day
 	db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
 		.unwrap();
-	db.append_idea_note("i1", "mid-day thought").unwrap();
+	db.add_idea_note("i1", "mid-day thought").unwrap();
 	assert!(!db.get_daily_status().is_completed);
 
 	let err = db
-		.append_idea_note("ghost", "x")
+		.add_idea_note("ghost", "x")
 		.expect_err("noting a missing idea must fail");
 	assert!(err.contains("not found"), "unexpected error: {err}");
+}
+
+#[test]
+fn the_first_note_adopts_the_append_only_notes_section() {
+	// an idea written by the old append-only writer: notes in markdown,
+	// no structured metadata yet
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	db.insert_idea(NewIdea {
+		id: "legacy",
+		title: "T",
+		idea_type: IdeaType::Original,
+		result: "# Title\n\nbody\n\n## Notes\n\nan old note\n\nanother old note",
+		metadata: &serde_json::json!({}),
+		..Default::default()
+	})
+	.unwrap();
+
+	// reading keeps them in the writeup: nothing is rewritten until a
+	// mutation happens
+	let idea = db.get_idea("legacy").unwrap().unwrap();
+	assert!(idea.notes.is_none(), "nothing structured yet");
+	assert!(idea.result.as_deref().unwrap().contains("an old note"));
+
+	// the first mutation adopts them (and then adds the new note)
+	db.add_idea_note("legacy", "new note").unwrap();
+	let idea = db.get_idea("legacy").unwrap().unwrap();
+	let notes = idea.notes.expect("adopted notes");
+	assert_eq!(notes.len(), 3);
+	assert_eq!(notes[0].text, "an old note");
+	assert_eq!(notes[1].text, "another old note");
+	assert_eq!(notes[2].text, "new note");
+	let result = idea.result.unwrap();
+	assert_eq!(
+		result.matches("## Notes").count(),
+		1,
+		"adoption rebuilds the one section"
+	);
+	assert!(result.ends_with("## Notes\n\nan old note\n\nanother old note\n\nnew note"));
 }
 
 #[test]

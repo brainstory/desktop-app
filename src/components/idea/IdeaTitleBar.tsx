@@ -5,7 +5,7 @@ import { exportIdeaApi } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
-import AddNoteModal from "./AddNoteModal";
+import NoteModal from "./NoteModal";
 
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
@@ -276,7 +276,7 @@ export default function IdeaTitleBar({
 				</div>
 			</div>
 			{isNoteOpen && (
-				<AddNoteModal
+				<NoteModal
 					ideaId={idea.id}
 					onClose={() => setIsNoteOpen(false)}
 					onSaved={() => {

@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{local_date_for, now_iso, Db, NewIdea};
 use crate::reactions::validate_reaction;
-use crate::types::{ChatMessage, IdeaItem, IdeaType};
+use crate::types::{ChatMessage, IdeaItem, IdeaNote, IdeaType};
 use chrono_tz::Tz;
 
 impl Db {
@@ -55,6 +55,7 @@ impl Db {
 	fn row_to_idea(row: &rusqlite::Row) -> rusqlite::Result<(Option<String>, IdeaItem)> {
 		let transcript: String = row.get("transcript")?;
 		let structured: Option<String> = row.get("structured_result")?;
+		let metadata: String = row.get("idea_metadata")?;
 		let result: String = row.get("result")?;
 		let result_json = if result.is_empty() {
 			None
@@ -76,6 +77,7 @@ impl Db {
 				shared_with_users: None,
 				structured_result: structured.and_then(|s| serde_json::from_str(&s).ok()),
 				result_json,
+				notes: Self::notes_from_metadata(&metadata),
 				parent_idea: None,
 				feedback: None,
 			},
@@ -105,6 +107,8 @@ impl Db {
 				shared_with_users: None,
 				structured_result: None,
 				result_json: None,
+				// the list never needs notes: only the idea page reads them
+				notes: None,
 				parent_idea: None,
 				feedback: None,
 			},
@@ -329,46 +333,179 @@ impl Db {
 		Ok(())
 	}
 
-	/// Append a user note to an idea's writeup as a "## Notes" section
-	/// (created on first use), reading and writing under one transaction
-	/// so a concurrent save can't overwrite the note with a stale result.
-	/// Notes live in the same markdown result as the writeup: they show
-	/// in the idea's Summary tab and travel with exports, exactly like a
-	/// section the model wrote.
-	pub fn append_idea_note(&self, id: &str, note: &str) -> Result<(), String> {
+	/// The structured notes stored in `idea_metadata.notes`; None when
+	/// there are none (or the metadata is unusable - the write paths
+	/// never produce that, so it means a hand-edited row).
+	fn notes_from_metadata(metadata: &str) -> Option<Vec<IdeaNote>> {
+		let value: serde_json::Value = serde_json::from_str(metadata).ok()?;
+		let notes: Vec<IdeaNote> = serde_json::from_value(value.get("notes")?.clone()).ok()?;
+		if notes.is_empty() {
+			None
+		} else {
+			Some(notes)
+		}
+	}
+
+	/// Byte offset where the trailing "## Notes" section starts, if the
+	/// writeup has one. The LAST such heading wins: notes are only ever
+	/// (re)built at the end of the document.
+	fn notes_section_start(result: &str) -> Option<usize> {
+		let mut cut = None;
+		let mut offset = 0;
+		for line in result.split_inclusive('\n') {
+			if line.trim() == Self::NOTES_HEADING {
+				cut = Some(offset);
+			}
+			offset += line.len();
+		}
+		cut
+	}
+
+	/// `result` with its "## Notes" section rebuilt from `notes` (the
+	/// section is removed when there are none). One blank-line-separated
+	/// paragraph per note, in stored order - the same shape the previous
+	/// append-only writer produced, so existing documents keep reading
+	/// identically.
+	fn render_notes_section(result: &str, notes: &[IdeaNote]) -> String {
+		let base = match Self::notes_section_start(result) {
+			Some(cut) => result[..cut].trim_end(),
+			None => result.trim_end(),
+		};
+		if notes.is_empty() {
+			return base.to_string();
+		}
+		let body = notes
+			.iter()
+			.map(|note| note.text.as_str())
+			.collect::<Vec<_>>()
+			.join("\n\n");
+		if base.is_empty() {
+			format!("{}\n\n{body}", Self::NOTES_HEADING)
+		} else {
+			format!("{base}\n\n{}\n\n{body}", Self::NOTES_HEADING)
+		}
+	}
+
+	/// `metadata` with its `notes` key set (removed when empty); every
+	/// other key is preserved. Unparseable metadata is replaced by a
+	/// fresh object carrying the notes: a hand-edited row must not block
+	/// noting.
+	fn metadata_with_notes(metadata: &str, notes: &[IdeaNote]) -> String {
+		let mut value = serde_json::from_str::<serde_json::Value>(metadata)
+			.ok()
+			.filter(serde_json::Value::is_object)
+			.unwrap_or_else(|| serde_json::json!({}));
+		if notes.is_empty() {
+			if let Some(object) = value.as_object_mut() {
+				object.remove("notes");
+			}
+		} else {
+			value["notes"] = serde_json::to_value(notes).unwrap_or_else(|_| serde_json::json!([]));
+		}
+		value.to_string()
+	}
+
+	/// The notes a mutation starts from: the stored ones, or - on the
+	/// first mutation of an idea written by the append-only writer - the
+	/// paragraphs of its existing "## Notes" section, adopted with fresh
+	/// ids (storing them happens with the mutation itself).
+	fn notes_for_mutation(result: &str, metadata: &str) -> Vec<IdeaNote> {
+		if let Some(notes) = Self::notes_from_metadata(metadata) {
+			return notes;
+		}
+		let Some(cut) = Self::notes_section_start(result) else {
+			return Vec::new();
+		};
+		let section = &result[cut..];
+		let body = section.split_once('\n').map(|(_, rest)| rest).unwrap_or("");
+		body.split("\n\n")
+			.map(str::trim)
+			.filter(|paragraph| !paragraph.is_empty())
+			.map(|paragraph| IdeaNote {
+				id: uuid::Uuid::new_v4().to_string(),
+				text: paragraph.to_string(),
+				created_at: now_iso(),
+			})
+			.collect()
+	}
+
+	/// Change an idea's notes under one transaction: read result +
+	/// metadata, apply `change`, and write back the metadata and the
+	/// rebuilt "## Notes" section together, so the two can never disagree.
+	/// Notes deliberately do NOT ride `update_idea`: they are not the
+	/// finish gesture, so a note on an unfinished daily intent must not
+	/// complete the day.
+	fn mutate_notes(
+		&self,
+		id: &str,
+		change: impl FnOnce(&mut Vec<IdeaNote>) -> Result<(), String>,
+	) -> Result<(), String> {
 		self.with_tx(|conn| {
-			let result: String = conn
+			let (result, metadata): (String, String) = conn
 				.query_row(
-					"SELECT result FROM ideas WHERE id = ?1",
+					"SELECT result, idea_metadata FROM ideas WHERE id = ?1",
 					params![id],
-					|row| row.get(0),
+					|row| Ok((row.get(0)?, row.get(1)?)),
 				)
 				.optional()
 				.map_err(|e| format!("failed to read idea {id}: {e}"))?
 				.ok_or_else(|| format!("idea {id} not found"))?;
-			let updated = Self::append_note_to_result(&result, note);
+			let mut notes = Self::notes_for_mutation(&result, &metadata);
+			change(&mut notes)?;
+			let updated_result = Self::render_notes_section(&result, &notes);
 			conn.execute(
-				"UPDATE ideas SET result = ?1 WHERE id = ?2",
-				params![updated, id],
+				"UPDATE ideas SET result = ?1, idea_metadata = ?2 WHERE id = ?3",
+				params![
+					updated_result,
+					Self::metadata_with_notes(&metadata, &notes),
+					id
+				],
 			)
 			.map_err(|e| format!("failed to save the note: {e}"))?;
 			Ok(())
 		})
 	}
 
-	/// `result` with `note` appended to its trailing "## Notes" section,
-	/// creating the heading when absent. Appending at the end of the
-	/// document is what keeps every note inside the one section: notes
-	/// are only ever added there.
-	fn append_note_to_result(result: &str, note: &str) -> String {
-		let base = result.trim_end();
-		if base.is_empty() {
-			return format!("## Notes\n\n{note}");
-		}
-		if base.lines().any(|line| line.trim() == "## Notes") {
-			return format!("{base}\n\n{note}");
-		}
-		format!("{base}\n\n## Notes\n\n{note}")
+	const NOTES_HEADING: &'static str = "## Notes";
+
+	/// Add a note. Notes live in the writeup's "## Notes" section (so the
+	/// Summary tab and exports include them) and, structured, in the
+	/// idea's metadata (so the note list can edit and delete them).
+	pub fn add_idea_note(&self, id: &str, note: &str) -> Result<(), String> {
+		self.mutate_notes(id, |notes| {
+			notes.push(IdeaNote {
+				id: uuid::Uuid::new_v4().to_string(),
+				text: note.to_string(),
+				created_at: now_iso(),
+			});
+			Ok(())
+		})
+	}
+
+	/// Replace one note's text. Unknown ids are an error (the note was
+	/// deleted elsewhere), so the UI can stop offering the edit.
+	pub fn update_idea_note(&self, id: &str, note_id: &str, text: &str) -> Result<(), String> {
+		self.mutate_notes(id, |notes| {
+			let note = notes
+				.iter_mut()
+				.find(|note| note.id == note_id)
+				.ok_or_else(|| "note not found".to_string())?;
+			note.text = text.to_string();
+			Ok(())
+		})
+	}
+
+	/// Delete one note; the "## Notes" section disappears when it was the
+	/// last one.
+	pub fn delete_idea_note(&self, id: &str, note_id: &str) -> Result<(), String> {
+		self.mutate_notes(id, |notes| {
+			let before = notes.len();
+			notes.retain(|note| note.id != note_id);
+			if notes.len() == before {
+				return Err("note not found".to_string());
+			}
+			Ok(())
+		})
 	}
 
 	/// Delete an idea and its whole feedback subtree in one transaction
