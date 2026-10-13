@@ -72,7 +72,7 @@ describe("frontend <-> rust IPC contract", () => {
 	});
 
 	it("the Rust moderation error is recognised by isModerationError", () => {
-		const llm = readFileSync(resolve(repoRoot, "src-tauri/src/llm.rs"), "utf8");
+		const llm = readFileSync(resolve(repoRoot, "src-tauri/src/llm/external.rs"), "utf8");
 		const rustMessage = llm.match(/pub const MODERATION_ERROR: &str = "([^"]*)";/)?.[1];
 		expect(rustMessage, "llm.rs no longer defines MODERATION_ERROR").toBeDefined();
 		expect(rustMessage!.startsWith(MODERATION_ERROR_PREFIX)).toBe(true);
