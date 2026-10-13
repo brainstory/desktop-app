@@ -629,8 +629,11 @@ mod cache_storage_tests {
 	use super::LLM_MODELS;
 	use super::{
 		hf_blob_path, hf_cache_model_path, materialize_snapshot, migrate_one, remove_cached_model,
-		verified_snapshot_files,
 	};
+	// the pre-scan tests are unix-only (symlinks); the import must be too,
+	// or Windows sees an unused import
+	#[cfg(target_family = "unix")]
+	use super::verified_snapshot_files;
 	use sha2::{Digest, Sha256};
 
 	fn sha256_hex(bytes: &[u8]) -> String {
