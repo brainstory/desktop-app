@@ -162,6 +162,23 @@ pub async fn delete_idea(
 	Ok(serde_json::json!({ "id": idea_id, "deleted": deleted }))
 }
 
+/// Append a user note to an idea's writeup. Notes live in the same
+/// markdown result as the writeup (under a "## Notes" section), so the
+/// Summary tab and exports include them with no extra plumbing.
+#[tauri::command]
+pub async fn add_idea_note(
+	state: State<'_, AppState>,
+	idea_id: String,
+	note: String,
+) -> Result<serde_json::Value, String> {
+	let trimmed = note.trim();
+	if trimmed.is_empty() {
+		return Err("the note is empty".into());
+	}
+	state.db.append_idea_note(&idea_id, trimmed)?;
+	Ok(serde_json::json!({ "id": idea_id }))
+}
+
 #[tauri::command]
 pub async fn get_log_questions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
 	let enabled_ids = enabled_log_ids(&state);

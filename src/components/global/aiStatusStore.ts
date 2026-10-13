@@ -187,6 +187,24 @@ export function llmAvailability(status: AiStatus): LlmAvailability {
 	}
 }
 
+/** What the chat may do with speech-to-text right now, in the same
+ * states as the LLM. External STT and Apple Speech both report "ready":
+ * there is nothing left to download or wait for. */
+export function sttAvailability(status: AiStatus): LlmAvailability {
+	if (status.loaded === false) return "unknown";
+	switch (status.stt.state) {
+		case "ready":
+		case "external":
+			return "ready";
+		case "loading":
+			return "loading";
+		case "missing":
+			return "missing";
+		case "error":
+			return "error";
+	}
+}
+
 /** True only while the local LLM engine is loading (not when it is
  * missing, failed or not yet reported). */
 export function llmBusy(status: AiStatus): boolean {

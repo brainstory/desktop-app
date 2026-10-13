@@ -6,6 +6,9 @@ import { LlmSection } from "./ai-models/LlmSection";
 import { SttEngineSection } from "./ai-models/SttEngineSection";
 import { ModelDownloadsSection } from "./ai-models/ModelDownloadsSection";
 
+import Button from "@ds/Button";
+import ErrorSection from "@components/error/ErrorSection";
+
 interface AiModelsCardProps {
 	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
@@ -17,9 +20,13 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		savedSettings,
 		runtime,
 		downloadProgress,
+		downloadFailures,
 		appleStt,
 		freeBytes,
+		settingsError,
+		modelsError,
 		refreshModels,
+		retrySettings,
 		download,
 		save,
 		saveSecret,
@@ -34,7 +41,22 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 	if (!maybeSettings) {
 		return (
 			<Card title="AI Models">
-				<p className="text-sm text-stone-500">Loading...</p>
+				{settingsError !== null ? (
+					// a failed read shows the error + a retry instead of a
+					// card that spins on "Loading..." forever
+					<ErrorSection
+						title="Couldn't load your AI settings"
+						paragraphs={[settingsError]}
+						action={
+							<Button variant="pink" onClick={retrySettings}>
+								Try again
+							</Button>
+						}
+						hideDashboardLink
+					/>
+				) : (
+					<p className="text-sm text-stone-500">Loading...</p>
+				)}
 			</Card>
 		);
 	}
@@ -42,6 +64,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 
 	const modelList: ModelListContext = {
 		downloadProgress,
+		failures: downloadFailures,
 		freeBytes,
 		actions: {
 			onDownload: download,
@@ -120,6 +143,20 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 						speech-to-text section) to talk out loud. Until then you can still use
 						Brainstory by typing your responses with the text button in a session.
 					</p>
+				</div>
+			)}
+
+			{modelsError && (
+				<div
+					role="alert"
+					className="mb-4 flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm"
+				>
+					<span>
+						Couldn&rsquo;t load the model list — the sections below may be incomplete.
+					</span>
+					<Button variant="bordered" onClick={refreshModels}>
+						Try again
+					</Button>
 				</div>
 			)}
 

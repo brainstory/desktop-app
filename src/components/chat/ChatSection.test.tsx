@@ -23,6 +23,16 @@ function setUrl(search: string) {
 	window.history.replaceState(null, "", `/chat${search}`);
 }
 
+/** Type + send a message in the text composer (voice is not exercisable here). */
+async function sendTyped(text: string) {
+	const user = userEvent.setup();
+	await user.click(screen.getByText("Not in a place to talk out-loud?"));
+	const box = screen.getByLabelText("Type your response");
+	await user.type(box, text);
+	await user.keyboard("{Enter}");
+	return box;
+}
+
 describe("ChatSection", () => {
 	beforeEach(() => {
 		setUrl("");
@@ -90,15 +100,6 @@ describe("ChatSection", () => {
 	});
 
 	describe("text composer", () => {
-		async function sendTyped(text: string) {
-			const user = userEvent.setup();
-			await user.click(screen.getByText("Not in a place to talk out-loud?"));
-			const box = screen.getByLabelText("Type your response");
-			await user.type(box, text);
-			await user.keyboard("{Enter}");
-			return box;
-		}
-
 		it("clears the composer once the coach answered", async () => {
 			mockChat({
 				generate_response: () => ({ response: "tell me more" })
@@ -352,6 +353,43 @@ describe("ChatSection", () => {
 			});
 			expect(args.reactToAuthor).toBeNull();
 			expect(args.reactToIsCurrentUser).toBe(true);
+		});
+	});
+
+	describe("early wrap-up", () => {
+		it("creates the session and generates the summary before the usual minimum", async () => {
+			mockChat({
+				create_idea: () => ({ id: "idea-early" }),
+				update_idea: () => ({ id: "idea-early" }),
+				generate_response: () => ({ response: "tell me more" }),
+				generate_streaming_response: () => ({
+					response: "# Early Summary",
+					structured_result: null
+				})
+			});
+			render(<ChatSection conversationEndCallbacks={() => {}} />);
+			// one answered exchange: below the 4-message minimum
+			await sendTyped("a quick thought");
+			expect(await screen.findByText("tell me more")).toBeInTheDocument();
+			expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")).toHaveLength(
+				0
+			);
+
+			const user = userEvent.setup();
+			await user.click(await screen.findByRole("button", { name: /enough — summarize/ }));
+
+			// the create ran first, then the summary was generated and saved
+			await waitFor(() =>
+				expect(
+					vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")
+				).toHaveLength(1)
+			);
+			expect(await screen.findByText("Finished! Saved your summary")).toBeInTheDocument();
+			const update = vi
+				.mocked(invoke)
+				.mock.calls.filter(([c]) => c === "update_idea")
+				.at(-1)!;
+			expect((update[1] as { result?: string }).result).toBe("# Early Summary");
 		});
 	});
 });

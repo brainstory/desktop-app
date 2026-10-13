@@ -60,6 +60,39 @@ describe("useIdeaPersistence", () => {
 		expect(creates).toBe(2);
 	});
 
+	it("requestCreate creates below the minimum and a later request retries", async () => {
+		let creates = 0;
+		mockInvoke({
+			create_idea: () => {
+				creates++;
+				if (creates === 1) throw new Error("db locked");
+				return { id: "idea-1" };
+			},
+			update_idea: () => ({ id: "idea-1" })
+		});
+		const onError = vi.fn();
+		// one answered exchange, below a minimum of 4: nothing is created yet
+		const { result } = renderHook(() =>
+			useIdeaPersistence(
+				[q1, a1],
+				"",
+				options({ minLength: 4, chatType: "original", onError })
+			)
+		);
+		expect(result.current.readyToCreateIdea).toBe(false);
+		expect(callsTo("create_idea")).toHaveLength(0);
+
+		// the early wrap-up asks for the idea anyway
+		act(() => result.current.requestCreate());
+		await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+		expect(result.current.ideaId).toBeUndefined();
+
+		// asking again retries the failed create
+		act(() => result.current.requestCreate());
+		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
+		expect(creates).toBe(2);
+	});
+
 	it("creates the idea exactly once under StrictMode, even if the conversation moves on", async () => {
 		let resolveCreate!: (v: { id: string }) => void;
 		mockInvoke({

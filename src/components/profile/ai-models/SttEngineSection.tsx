@@ -256,9 +256,9 @@ export function SttEngineSection({
 			>
 				<summary className="font-semibold cursor-pointer">External STT endpoint</summary>
 				<p className="text-stone-500 mt-2 mb-4">
-					Any OpenAI-compatible transcription server (e.g. a whisper.cpp server). Save the
-					URL, then turn on the switch above to use it instead of transcribing on this
-					computer.
+					Any server that speaks the OpenAI transcription API (for example a whisper.cpp
+					server). Save its URL, then turn on the switch above to transcribe there instead
+					of on this computer.
 				</p>
 				<ExternalEndpointFields
 					kind="stt"

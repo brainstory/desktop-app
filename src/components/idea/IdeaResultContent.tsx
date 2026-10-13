@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { getIdeaApi, getIdeaChildrenApi, markIdeaReadApi } from "@helpers/api/idea";
 import type { IdeaDetail, IdeaFeedbackItem, FeedbackComment } from "@src/types";
 
@@ -112,6 +112,33 @@ export default function IdeaResultContent() {
 		};
 	}, [ideaId]);
 
+	/** Refresh the document after an out-of-band edit (an added note).
+	 * Silent: the current view stays until the fresh copy arrives. */
+	const reloadIdea = useCallback(() => {
+		const id = ideaId ?? "";
+		if (!id) return;
+		getIdeaApi(id)
+			.then((res) => {
+				setIdea((prev) => ({
+					...prev,
+					title: res.title,
+					summary: res.summary,
+					transcript: res.transcript,
+					resultJson: res.resultJson,
+					isUnread: res.isUnread,
+					creatorEmail: res.creatorEmail,
+					creatorName: res.creatorName
+				}));
+			})
+			.catch((err) => {
+				console.error("failed to refresh the idea after a note was added", err);
+				openSnackbar(
+					false,
+					"The note was saved, but refreshing the page failed - reopen the idea to see it."
+				);
+			});
+	}, [ideaId, openSnackbar]);
+
 	// each entry carries its own ?tab= param so the URL values always
 	// match the tabs that actually exist (a feedback idea has no feedback
 	// tab, and the reverse)
@@ -209,7 +236,12 @@ export default function IdeaResultContent() {
 		return (
 			<div className="h-full">
 				{snackbars}
-				<IdeaTitleBar idea={idea} isOwnIdea={isOwn} parentId={parentIdea?.id} />
+				<IdeaTitleBar
+					idea={idea}
+					isOwnIdea={isOwn}
+					parentId={parentIdea?.id}
+					onNoteAdded={reloadIdea}
+				/>
 				<TailwindComposedTabs
 					data={tabData}
 					activeTab={activeTab}

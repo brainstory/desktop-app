@@ -20,6 +20,10 @@ interface ChatRecorderProps {
 	handleGetResponse: () => Promise<CoachResponseOutcome>;
 	/** the language model is still loading: no recording or sending yet */
 	modelLoading?: boolean;
+	/** non-undefined: the mic is unusable, with this reason shown */
+	micBlockedReason?: string;
+	/** non-undefined: typed sends are locked, with this reason shown */
+	sendBlockedReason?: string;
 	isCompressed?: boolean | string | null;
 }
 
@@ -31,6 +35,8 @@ export default function ChatRecorder({
 	setSaveState,
 	handleGetResponse,
 	modelLoading = false,
+	micBlockedReason,
+	sendBlockedReason,
 	isCompressed
 }: ChatRecorderProps) {
 	/** if the max content is met, disable further addition to conversation */
@@ -94,6 +100,8 @@ export default function ChatRecorder({
 				isCompressed={isCompressed}
 				isDisabled={forceFinish}
 				modelLoading={modelLoading}
+				micBlockedReason={micBlockedReason}
+				sendBlockedReason={sendBlockedReason}
 				conversationState={conversationState}
 				setIsTranscribing={handleIsTranscribing}
 				onTranscript={handleTranscript}

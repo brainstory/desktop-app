@@ -3,6 +3,7 @@ import { useStore } from "@nanostores/react";
 import { listModelsApi } from "@helpers/api/models";
 import Button from "@ds/Button";
 import { $aiStatus, initAiStatus } from "@components/global/aiStatusStore";
+import { $downloads } from "@components/global/downloadStore";
 
 /** Catalog lookup state: not fetched yet, or whether any local LLM is
  * downloaded plus the smallest model's size in GB (null when unknown). */
@@ -22,6 +23,7 @@ type Catalog =
  */
 export default function AiSetupNeeded() {
 	const aiStatus = useStore($aiStatus);
+	const downloads = Object.values(useStore($downloads).active);
 	const isMissing = aiStatus.llm.state === "missing";
 	const [catalog, setCatalog] = useState<Catalog>({ loaded: false });
 
@@ -61,19 +63,33 @@ export default function AiSetupNeeded() {
 		return null;
 	}
 	const { smallestGb } = catalog;
+	const inFlight = downloads[0];
+	const pct = inFlight && inFlight.pct >= 0 ? Math.min(100, Math.floor(inFlight.pct)) : null;
 
 	return (
 		<div className="mb-6 border-2 border-pink-200 bg-pink-50 rounded-lg p-6 text-center">
 			<p className="font-semibold text-lg text-stone-900 mb-1">
-				Welcome! One quick step before your first Brainstory
+				{inFlight
+					? `Downloading ${inFlight.label}${pct === null ? "…" : ` · ${pct}%`}`
+					: "Welcome! One quick step before your first Brainstory"}
 			</p>
 			<p className="text-sm text-stone-600 mb-4 max-w-xl mx-auto">
-				Everything runs on your machine, so Brainstory needs an AI brain to brainstorm with:
-				download a local model{smallestGb ? ` (~${smallestGb} GB, once)` : ""}, or point it
-				at an external AI server if you have one. You can change this any time.
+				{inFlight ? (
+					<>
+						A one-time download — it keeps running while you explore, and chatting
+						unlocks as soon as it&rsquo;s ready.
+					</>
+				) : (
+					<>
+						Everything runs on your machine, so Brainstory needs an AI brain to
+						brainstorm with: download a local model
+						{smallestGb ? ` (~${smallestGb} GB, once)` : ""}, or point it at an external
+						AI server if you have one. You can change this any time.
+					</>
+				)}
 			</p>
 			<Button variant="pink" href="/profile?tab=aiModels">
-				Set up AI Models
+				{inFlight ? "View download" : "Set up AI Models"}
 			</Button>
 		</div>
 	);

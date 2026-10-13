@@ -30,6 +30,10 @@ interface AudioRecorderProps {
 	isDisabled?: boolean;
 	/** the language model is still loading: mic and Send wait for it */
 	modelLoading?: boolean;
+	/** non-undefined: the mic is unusable, with this reason shown */
+	micBlockedReason?: string;
+	/** non-undefined: typed sends are locked, with this reason shown */
+	sendBlockedReason?: string;
 	conversationState: ConversationState;
 	getCoachResponse: () => Promise<CoachResponseOutcome>;
 	onTranscript: (transcript: string) => void;
@@ -41,6 +45,8 @@ interface AudioRecorderProps {
 const AudioRecorder = ({
 	isDisabled,
 	modelLoading = false,
+	micBlockedReason,
+	sendBlockedReason,
 	conversationState,
 	getCoachResponse,
 	onTranscript,
@@ -86,6 +92,8 @@ const AudioRecorder = ({
 						conversationState === CONVERSATION_STATE.TranscribingUser
 					}
 					modelLoading={modelLoading}
+					micBlockedReason={micBlockedReason}
+					sendBlockedReason={sendBlockedReason}
 					conversationState={conversationState}
 					setIsRecording={setIsRunning}
 					setIsTranscribing={setIsTranscribing}

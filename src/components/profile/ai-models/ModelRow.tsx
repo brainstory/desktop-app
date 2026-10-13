@@ -2,6 +2,7 @@ import { memo } from "react";
 import Button from "@ds/Button";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 import type { ModelStatus } from "@helpers/api/models";
+import type { DownloadFailure } from "@components/global/downloadStore";
 import { formatSize } from "./format";
 
 /** Headroom required on top of the model file before we warn about space */
@@ -26,6 +27,8 @@ interface ModelRowProps extends ModelRowActions {
 	model: ModelStatus;
 	/** download percentage while downloading (negative = size unknown) */
 	progress: number | undefined;
+	/** the last download failure for this model, if any */
+	error?: string;
 	freeBytes: number | null;
 }
 
@@ -36,6 +39,7 @@ interface ModelRowProps extends ModelRowActions {
 export const ModelRow = memo(function ModelRow({
 	model,
 	progress,
+	error,
 	freeBytes,
 	onDownload,
 	onCancel,
@@ -57,6 +61,11 @@ export const ModelRow = memo(function ModelRow({
 						)}
 					</p>
 					<p className="text-sm text-stone-500">{model.description}</p>
+					{error && (
+						<p role="alert" className="text-sm text-red-600 mt-1">
+							{error}
+						</p>
+					)}
 				</div>
 				<div className="flex gap-2 items-center shrink-0">
 					{model.downloaded && !model.active && (
@@ -73,7 +82,7 @@ export const ModelRow = memo(function ModelRow({
 					{!model.downloaded && !isDownloading && (
 						<>
 							<Button variant="pink" onClick={() => onDownload(model.id)}>
-								Download ({formatSize(model.sizeBytes)})
+								{error ? "Retry" : `Download (${formatSize(model.sizeBytes)})`}
 							</Button>
 							{freeBytes !== null && (
 								<FreeSpaceNote freeBytes={freeBytes} needBytes={model.sizeBytes} />
@@ -119,6 +128,8 @@ export const ModelRow = memo(function ModelRow({
 /** What every model list needs besides the models themselves. */
 export interface ModelListContext {
 	downloadProgress: Record<string, number>;
+	/** last download failures by model id (see the $downloads store) */
+	failures: Record<string, DownloadFailure>;
 	freeBytes: number | null;
 	actions: ModelRowActions;
 }
@@ -127,6 +138,7 @@ export interface ModelListContext {
 export function ModelList({
 	models,
 	downloadProgress,
+	failures,
 	freeBytes,
 	actions
 }: ModelListContext & { models: ModelStatus[] }) {
@@ -135,6 +147,7 @@ export function ModelList({
 			key={model.id}
 			model={model}
 			progress={downloadProgress[model.id]}
+			error={failures[model.id]?.message}
 			freeBytes={freeBytes}
 			{...actions}
 		/>

@@ -3,6 +3,7 @@ import UpdaterBanner from "@ds/UpdaterBanner";
 import Button from "@ds/Button";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import { cn } from "@helpers/cn";
+import DownloadProgressPill from "@components/global/DownloadProgressPill";
 
 const buttons = [
 	{ icon: "add", text: "New", href: "/chat", id: "new-idea" },
@@ -161,6 +162,7 @@ function NavigationInner() {
 						);
 					})}
 				</ul>
+				<DownloadProgressPill />
 			</aside>
 		</div>
 	);

@@ -36,6 +36,7 @@ export const COMMANDS = {
 	updateIdea: "update_idea",
 	markIdeaRead: "mark_idea_read",
 	deleteIdea: "delete_idea",
+	addIdeaNote: "add_idea_note",
 	getLogQuestions: "get_log_questions",
 	submitLog: "submit_log",
 	getSurveyFields: "get_survey_fields",
@@ -120,6 +121,7 @@ interface CommandSignatures {
 	};
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
 	deleteIdea: { args: IdeaIdArgs; result: unknown };
+	addIdeaNote: { args: { ideaId: string; note: string }; result: { id: string } };
 	getLogQuestions: { args: undefined; result: { log: DailyLogQuestion[] } };
 	submitLog: { args: { log: LogAnswerItem[] }; result: { id: string } };
 	// registered on the Rust side but not called by the frontend

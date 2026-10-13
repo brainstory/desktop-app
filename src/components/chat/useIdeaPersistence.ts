@@ -48,6 +48,10 @@ export function useIdeaPersistence(
 
 	const [ideaId, setIdeaId] = useState<string | undefined>(initialIdeaId);
 	const [saveState, setSaveState] = useState<ChatSaveState>(CHAT_SAVE_STATE.WAITING);
+	/** create the idea even below the usual minimum (an early wrap-up
+	 * asked for it); a later request retries a failed create */
+	const [forceCreate, setForceCreate] = useState(false);
+	const [createAttempt, setCreateAttempt] = useState(0);
 
 	// refs so the effects see live values without re-running
 	const creatingIdeaRef = useRef(false);
@@ -163,8 +167,9 @@ export function useIdeaPersistence(
 	}, [conversation]);
 
 	// derived: an idea must be created as soon as the conversation is long
-	// enough and no idea row exists yet
-	const readyToCreateIdea = !ideaId && conversation.length >= minLength;
+	// enough and no idea row exists yet - or right away when an early
+	// wrap-up requested it
+	const readyToCreateIdea = !ideaId && (conversation.length >= minLength || forceCreate);
 
 	// create-once effect: the guard prevents a second create while one is
 	// in flight (StrictMode double-invoke, conversation updates). The
@@ -211,14 +216,22 @@ export function useIdeaPersistence(
 				});
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [readyToCreateIdea, dailyLogId, conversation]);
+	}, [readyToCreateIdea, dailyLogId, conversation, createAttempt]);
 
 	// Autosave: debounced; the write itself is serialized by flushAutosave
 	useEffect(() => {
-		if (!ideaId || conversation.length < minLength) {
+		if (!ideaId) {
 			return;
 		}
 		if (conversation === persistedRef.current) {
+			return;
+		}
+		// Below the creation minimum with nothing persisted in this session
+		// yet: a draft that has not loaded (its stored transcript must not
+		// be overwritten by the greeting-only view). Once anything is
+		// persisted in this session - a loaded draft, a created idea, an
+		// undone answer - shorter conversations persist normally.
+		if (conversation.length < minLength && persistedRef.current === null) {
 			return;
 		}
 		pendingSaveRef.current = { ideaId, conversation };
@@ -239,12 +252,20 @@ export function useIdeaPersistence(
 		};
 	}, [flushAutosave]);
 
+	/** Ask for the idea to be created now, below the usual minimum (the
+	 * early wrap-up path). Repeated calls retry a failed create. */
+	const requestCreate = useCallback(() => {
+		setForceCreate(true);
+		setCreateAttempt((attempt) => attempt + 1);
+	}, []);
+
 	return {
 		ideaId,
 		setIdeaId,
 		saveState,
 		setSaveState,
 		readyToCreateIdea,
+		requestCreate,
 		conversationLengthRef,
 		markPersisted,
 		saveResult,

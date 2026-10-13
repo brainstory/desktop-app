@@ -214,11 +214,35 @@ describe("IdeaTitleBar actions", () => {
 	it("keeps the export note out of the button row so the buttons share one height", () => {
 		renderBar();
 		const row = screen.getByRole("group");
-		for (const name of ["Give Feedback", "Export", "Delete"]) {
+		for (const name of ["Add Note", "Export", "Delete"]) {
 			// each action is a direct child of the row: wrapping one in a
 			// column with the note made the stretched row double height
 			expect(screen.getByRole("button", { name }).parentElement).toBe(row);
 		}
 		expect(row).not.toContainElement(screen.getByText(/Exports the summary only/));
+	});
+
+	it("offers Give Feedback on someone else's idea instead of Add Note", () => {
+		render(<IdeaTitleBar idea={{ ...idea, creatorName: "Ada" }} isOwnIdea={false} />);
+		expect(screen.getByRole("button", { name: "Give Feedback" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Add Note" })).not.toBeInTheDocument();
+	});
+
+	it("adds a note through add_idea_note", async () => {
+		const user = userEvent.setup();
+		mockInvoke({ add_idea_note: () => ({ id: "i1" }) });
+		renderBar();
+		await user.click(screen.getByRole("button", { name: "Add Note" }));
+		expect(screen.getByRole("dialog", { name: "Add a note" })).toBeInTheDocument();
+		const textarea = screen.getByLabelText("Note");
+		await user.type(textarea, "Follow up with the design team");
+		await user.click(screen.getByRole("button", { name: "Save note" }));
+		await waitFor(() => {
+			const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "add_idea_note");
+			expect(call?.[1]).toEqual({
+				ideaId: "i1",
+				note: "Follow up with the design team"
+			});
+		});
 	});
 });

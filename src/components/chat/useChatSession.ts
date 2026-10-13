@@ -92,6 +92,7 @@ export type ChatSessionEvent =
 	| { type: "coachAnswered" }
 	| { type: "coachFlagged"; transcript: string }
 	| { type: "coachFailed" }
+	| { type: "userTurnRemoved" }
 	| { type: "resultRequested" }
 	| { type: "resultStreamed" }
 	| { type: "resultSaved" }
@@ -145,6 +146,15 @@ export function chatSessionReducer(
 				isUserResendRequired: true,
 				inappropriateUserTranscript: event.transcript
 			};
+		case "userTurnRemoved":
+			// the undone answer is gone (with the coach's reply to it):
+			// nothing is pending, the previous question is on screen again
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.Idle,
+				isUserResendRequired: false,
+				inappropriateUserTranscript: null
+			};
 		case "resultRequested":
 			return {
 				...state,
@@ -189,57 +199,122 @@ export function useChatSession(
 	// leaving the chat cancels a pending coach retry
 	const unmountSignal = useUnmountSignal();
 
-	/** Generate assistant response. NOT for the final outline result.
-	 * Resolves with what happened to the user's message, so the composer
-	 * only clears once the message was actually answered. */
+	/** Generate the assistant's next response for `conversation`. NOT for
+	 * the final outline result. Resolves with what happened to the user's
+	 * message, so the composer only clears once the message was actually
+	 * answered. The conversation is a parameter (not read from the
+	 * closure) so a freshly edited answer can be responded to in the same
+	 * tick that set it. */
 	// stable per conversation: ChatRecorder/RecordButton keep it in memo
 	// and effect dependencies
-	const handleGetResponse = useCallback(async (): Promise<CoachResponseOutcome> => {
-		dispatch({ type: "coachRequested" });
-		const apiCall = () =>
-			generateResponseApi({
-				messages: currConversation,
-				chatType,
-				...reactionOptions(parentIdea)
-			});
-		const signal = unmountSignal();
-		try {
-			// a cancel must stay cancelled: retrying would start a fresh
-			// generation with a new cancel token 500 ms later
-			const message = await callApiWithRetry(
-				apiCall,
-				1,
-				(err) => !isGenerationCancelled(err),
-				signal
-			);
-			const isUser = false;
-			addConversationMessage(message, isUser, currConversation, setCurrConversation);
-			dispatch({ type: "coachAnswered" });
-			return "sent";
-		} catch (err) {
-			if (signal.aborted) {
-				// the chat is gone: nobody to show an error to
-				return "cancelled";
-			}
-			if (isGenerationCancelled(err)) {
-				// user-initiated: the message stays and the chat returns
-				// to idle, no error banner
-				dispatch({ type: "coachFailed" });
-				return "cancelled";
-			}
-			if (isModerationError(err)) {
-				const removedMessage = removeLastConversationMessage(
-					currConversation,
-					setCurrConversation
+	const respondTo = useCallback(
+		async (conversation: ChatMessage[]): Promise<CoachResponseOutcome> => {
+			dispatch({ type: "coachRequested" });
+			const apiCall = () =>
+				generateResponseApi({
+					messages: conversation,
+					chatType,
+					...reactionOptions(parentIdea)
+				});
+			const signal = unmountSignal();
+			try {
+				// a cancel must stay cancelled: retrying would start a fresh
+				// generation with a new cancel token 500 ms later
+				const message = await callApiWithRetry(
+					apiCall,
+					1,
+					(err) => !isGenerationCancelled(err),
+					signal
 				);
-				dispatch({ type: "coachFlagged", transcript: removedMessage });
-				return "flagged";
+				const isUser = false;
+				addConversationMessage(message, isUser, conversation, setCurrConversation);
+				dispatch({ type: "coachAnswered" });
+				return "sent";
+			} catch (err) {
+				if (signal.aborted) {
+					// the chat is gone: nobody to show an error to
+					return "cancelled";
+				}
+				if (isGenerationCancelled(err)) {
+					// user-initiated: the message stays and the chat returns
+					// to idle, no error banner
+					dispatch({ type: "coachFailed" });
+					return "cancelled";
+				}
+				if (isModerationError(err)) {
+					const removedMessage = removeLastConversationMessage(
+						conversation,
+						setCurrConversation
+					);
+					dispatch({ type: "coachFlagged", transcript: removedMessage });
+					return "flagged";
+				}
+				onError(normalizeApiError(err));
+				dispatch({ type: "coachFailed" });
+				return "failed";
 			}
-			onError(normalizeApiError(err));
-			dispatch({ type: "coachFailed" });
-			return "failed";
+		},
+		[setCurrConversation, parentIdea, chatType, onError, unmountSignal]
+	);
+
+	const handleGetResponse = useCallback(
+		() => respondTo(currConversation),
+		[respondTo, currConversation]
+	);
+
+	/** Index of the last user message, or -1. */
+	const lastUserIndex = (conversation: ChatMessage[]): number => {
+		for (let i = conversation.length - 1; i >= 0; i--) {
+			if (conversation[i]!.role === "user") return i;
 		}
-	}, [currConversation, setCurrConversation, parentIdea, chatType, onError, unmountSignal]);
+		return -1;
+	};
+
+	/** True when the user's last answer can still be corrected: the
+	 * exchange is settled (coach replied, nothing generating) and the
+	 * last user message is a real answer (not "ask a different
+	 * question"). */
+	const canReviseLastAnswer = (() => {
+		if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
+			return false;
+		}
+		const idx = lastUserIndex(currConversation);
+		return (
+			idx >= 0 &&
+			idx === currConversation.length - 2 &&
+			currConversation[idx]!.content !== ASK_A_DIFFERENT_QUESTION
+		);
+	})();
+
+	/** Replace the last answer and ask the coach again from there. A
+	 * mis-transcribed answer poisons the conversation, so it must be
+	 * fixable (and the reply based on it retired, not kept). */
+	const editLastUserMessage = async (newText: string): Promise<void> => {
+		if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
+			return;
+		}
+		const idx = lastUserIndex(currConversation);
+		if (idx < 0) return;
+		const next = [
+			...currConversation.slice(0, idx),
+			{ role: "user" as const, content: newText }
+		];
+		setCurrConversation(next);
+		await respondTo(next);
+	};
+
+	/** Undo the last answer and the coach's reply to it: the previous
+	 * question is on screen again, ready to be answered (this time
+	 * differently). */
+	const removeLastUserTurn = (): void => {
+		if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
+			return;
+		}
+		const idx = lastUserIndex(currConversation);
+		if (idx < 0) return;
+		setCurrConversation(currConversation.slice(0, idx));
+		dispatch({ type: "userTurnRemoved" });
+	};
 
 	/** the generated summary whose save failed, kept for a retry */
 	const unsavedResultRef = useRef<{
@@ -335,6 +410,9 @@ export function useChatSession(
 		handleGetResponse,
 		handleGetResult,
 		retrySaveResult,
-		askADifferentQuestion
+		askADifferentQuestion,
+		canReviseLastAnswer,
+		editLastUserMessage,
+		removeLastUserTurn
 	};
 }

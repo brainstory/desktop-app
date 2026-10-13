@@ -6,6 +6,7 @@ import ConversationTranscript from "@components/chat/ConversationTranscript";
 import ParentIdeaText from "@components/global/ParentIdeaText";
 import Button from "@ds/Button";
 import EndChatButton from "./reusable/EndChatButton";
+import EarlyFinishButton from "./reusable/EarlyFinishButton";
 
 interface ChatFeedbackMainSectionProps {
 	showTranscript: boolean;
@@ -14,6 +15,10 @@ interface ChatFeedbackMainSectionProps {
 	currConversation: ChatMessage[];
 	conversationState: ConversationState;
 	handleGetResult: () => void;
+	/** wrap up before the usual minimum (creates the idea on the way) */
+	handleEarlyFinish: () => void;
+	/** the early wrap-up is creating/saving the session */
+	isWrappingUp: boolean;
 	minConversationLenForEnd: number;
 	children?: ReactNode;
 }
@@ -25,6 +30,8 @@ export default function ChatFeedbackMainSection({
 	currConversation,
 	conversationState,
 	handleGetResult,
+	handleEarlyFinish,
+	isWrappingUp,
 	minConversationLenForEnd,
 	children
 }: ChatFeedbackMainSectionProps) {
@@ -39,13 +46,20 @@ export default function ChatFeedbackMainSection({
 			>
 				<div className={`flex justify-center flex-col gap-2`}>{children}</div>
 				<div className="flex flex-col items-center">
-					{currConversation.length >= minConversationLenForEnd && (
+					{currConversation.length >= minConversationLenForEnd ? (
 						<EndChatButton
 							conversationState={conversationState}
 							handleGetResult={handleGetResult}
 							classes="flex flex-col items-center"
 						/>
-					)}
+					) : currConversation.length > 1 ? (
+						<EarlyFinishButton
+							conversationState={conversationState}
+							handleEarlyFinish={handleEarlyFinish}
+							isWrappingUp={isWrappingUp}
+							classes="flex flex-col items-center"
+						/>
+					) : null}
 					{currConversation.length > 1 && (
 						<Button
 							variant="transparent"

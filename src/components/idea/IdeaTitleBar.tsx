@@ -5,16 +5,25 @@ import { exportIdeaApi } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
+import AddNoteModal from "./AddNoteModal";
 
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
 	isOwnIdea: boolean;
 	parentId?: string | null;
+	/** refresh the document after a note was appended */
+	onNoteAdded?: () => void;
 }
 
-export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBarProps) {
+export default function IdeaTitleBar({
+	idea,
+	isOwnIdea,
+	parentId,
+	onNoteAdded
+}: IdeaTitleBarProps) {
 	const { openSnackbar, snackbars } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
+	const [isNoteOpen, setIsNoteOpen] = useState(false);
 	const {
 		isConfirming: confirmingDelete,
 		secondsLeft,
@@ -128,7 +137,10 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 
 	const renderActionButtons = () => {
 		const buttons = [];
-		if (!parentId) {
+		if (!parentId && !isOwnIdea) {
+			// giving feedback is for ideas someone shared with you; your
+			// own ideas get notes instead (the feedback interview asks a
+			// stranger's questions about your own text)
 			buttons.push(
 				<Button
 					variant="pink"
@@ -138,6 +150,13 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 					}}
 				>
 					Give Feedback
+				</Button>
+			);
+		}
+		if (isOwnIdea && !parentId) {
+			buttons.push(
+				<Button variant="pink" key="add-note" onClick={() => setIsNoteOpen(true)}>
+					Add Note
 				</Button>
 			);
 		}
@@ -256,6 +275,16 @@ export default function IdeaTitleBar({ idea, isOwnIdea, parentId }: IdeaTitleBar
 					)}
 				</div>
 			</div>
+			{isNoteOpen && (
+				<AddNoteModal
+					ideaId={idea.id}
+					onClose={() => setIsNoteOpen(false)}
+					onSaved={() => {
+						openSnackbar(true, "Note added");
+						onNoteAdded?.();
+					}}
+				/>
+			)}
 		</div>
 	);
 }

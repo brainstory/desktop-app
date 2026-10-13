@@ -209,11 +209,17 @@ export function deleteIdeaApi(idea_id: string): Promise<unknown> {
 	return invokeCommand("deleteIdea", { ideaId: idea_id });
 }
 
+/** Append a note to an idea's writeup ("## Notes" section). */
+export function addIdeaNoteApi(ideaId: string, note: string): Promise<unknown> {
+	return invokeCommand("addIdeaNote", { ideaId, note });
+}
+
 export default {
 	getIdeaApi,
 	getIdeaChildrenApi,
 	createIdeaApi,
 	markIdeaReadApi,
 	updateIdeaTitleApi,
-	deleteIdeaApi
+	deleteIdeaApi,
+	addIdeaNoteApi
 };

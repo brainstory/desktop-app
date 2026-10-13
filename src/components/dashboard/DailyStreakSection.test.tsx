@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import DailyStreakSection from "./DailyStreakSection";
@@ -51,13 +51,48 @@ describe("DailyStreakSection", () => {
 		expect(link).toHaveAttribute("href", "/chat?dailyIntent=true");
 	});
 
-	it("renders the streak even when the status request fails", async () => {
+	it("a failed status request says so instead of faking a zero streak", async () => {
 		mockInvoke({
 			get_daily_status: () => {
 				throw new Error("db gone");
 			}
 		});
 		render(<DailyStreakSection />);
-		await waitFor(() => expect(screen.getByText("0 days")).toBeInTheDocument());
+		expect(await screen.findByText("Couldn’t load your streak.")).toBeInTheDocument();
+		expect(screen.queryByText("0 days")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+	});
+
+	it("an untouched day with a live streak names what keeps it", async () => {
+		mockInvoke({
+			get_daily_status: () => ({
+				streak: 4,
+				log_id: null,
+				intent_idea_id: null,
+				survey_id: null,
+				is_completed: false
+			})
+		});
+		render(<DailyStreakSection />);
+		expect(
+			await screen.findByText(/Do today’s daily intent to keep your 4-day streak/)
+		).toBeInTheDocument();
+	});
+
+	it("a submitted log counts for today even before the intent starts", async () => {
+		mockInvoke({
+			get_daily_status: () => ({
+				streak: 2,
+				log_id: "log-1",
+				intent_idea_id: null,
+				survey_id: null,
+				is_completed: false
+			})
+		});
+		render(<DailyStreakSection />);
+		expect(await screen.findByText("Today counts!")).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "Think out loud about your day too" })
+		).toHaveAttribute("href", "/chat?dailyIntent=true");
 	});
 });

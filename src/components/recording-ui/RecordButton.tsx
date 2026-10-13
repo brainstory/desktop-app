@@ -20,6 +20,10 @@ interface RecordButtonProps {
 	/** the language model is still loading: recording and sending would
 	 * only fail, typing is fine */
 	modelLoading?: boolean;
+	/** non-undefined: the mic is unusable (e.g. no speech model), reason shown */
+	micBlockedReason?: string;
+	/** non-undefined: typed sends would only fail, reason shown */
+	sendBlockedReason?: string;
 	conversationState: ConversationState;
 	setIsRecording: (recording: boolean) => void;
 	setIsTranscribing: (transcribing: boolean) => void;
@@ -34,6 +38,8 @@ function RecordButton({
 	isRecording,
 	isDisabledOverride,
 	modelLoading = false,
+	micBlockedReason,
+	sendBlockedReason,
 	conversationState,
 	setIsRecording,
 	setIsTranscribing,
@@ -154,7 +160,7 @@ function RecordButton({
 	function handleTextSend() {
 		const trimmed = userTextInput.trim();
 		// never overlap generations: one message at a time
-		if (!trimmed || isDisabledOverride || modelLoading) return;
+		if (!trimmed || isDisabledOverride || modelLoading || sendBlockedReason) return;
 		onTranscript(trimmed);
 	}
 
@@ -169,7 +175,9 @@ function RecordButton({
 					onChange={setUserTextInput}
 					onSend={handleTextSend}
 					disabled={Boolean(isDisabledOverride)}
-					sendLockedReason={modelLoading ? "Loading model…" : undefined}
+					sendLockedReason={
+						sendBlockedReason ?? (modelLoading ? "Loading model…" : undefined)
+					}
 				/>
 			) : voice.micPermissionDenied ? (
 				<MicPermissionDenied
@@ -180,11 +188,21 @@ function RecordButton({
 			) : (
 				<MicButton
 					isRecording={isRecording}
-					isDisabled={Boolean(isDisabledOverride) || (modelLoading && !isRecording)}
+					isDisabled={
+						Boolean(isDisabledOverride) ||
+						(modelLoading && !isRecording) ||
+						(Boolean(micBlockedReason) && !isRecording)
+					}
 					micStarting={voice.micStarting}
 					conversationState={conversationState}
 					elapsedSeconds={time}
-					status={modelLoading && !isRecording ? "Loading model…" : voice.status}
+					status={
+						micBlockedReason && !isRecording
+							? micBlockedReason
+							: modelLoading && !isRecording
+								? "Loading model…"
+								: voice.status
+					}
 					onToggle={() => void voice.toggleRecording()}
 					onAnimationTrigger={context.setSludgeman}
 					isCompressed={isCompressed}

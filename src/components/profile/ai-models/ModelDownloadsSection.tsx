@@ -31,9 +31,9 @@ export function ModelDownloadsSection({
 					labelClassName="font-semibold mb-1 block"
 					description={
 						<>
-							Authenticated downloads are faster and never hit HuggingFace&rsquo;s
-							anonymous rate limits. Create a free read token at
-							huggingface.co/settings/tokens.
+							Optional but recommended: with a free read token from
+							huggingface.co/settings/tokens, downloads are faster and skip
+							HuggingFace&rsquo;s anonymous rate limits.
 						</>
 					}
 					placeholder="hf_..."
@@ -46,9 +46,9 @@ export function ModelDownloadsSection({
 					HuggingFace download endpoint (mirror, optional)
 				</label>
 				<p className="text-stone-500 mb-2">
-					Leave empty to download from huggingface.co directly, or point at a mirror (e.g.
-					https://hf-mirror.com). Also picks up the HF_ENDPOINT environment variable when
-					launched from a terminal. Your access token is sent to the mirror too.
+					Leave empty to download from huggingface.co. Set a mirror (e.g.
+					https://hf-mirror.com) if huggingface.co is slow or blocked where you are. Your
+					access token is sent to the mirror too.
 				</p>
 				<EndpointField
 					inputId="hf-endpoint-input"

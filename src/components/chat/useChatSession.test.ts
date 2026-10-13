@@ -4,7 +4,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
-import { CONVERSATION_STATE } from "@src/const";
+import { CONVERSATION_STATE, ASK_A_DIFFERENT_QUESTION } from "@src/const";
 import type { ChatMessage } from "@src/types";
 import {
 	chatSessionReducer,
@@ -258,6 +258,72 @@ describe("useChatSession", () => {
 		const first = result.current.handleGetResponse;
 		rerender();
 		expect(result.current.handleGetResponse).toBe(first);
+	});
+
+	describe("revising the last answer", () => {
+		const q2: ChatMessage = { role: "assistant", content: "q2" };
+		const a2: ChatMessage = { role: "user", content: "a2" };
+		const q3: ChatMessage = { role: "assistant", content: "q3" };
+		/** The real session reaches Idle through its events (or a draft
+		 * restore); the hook test starts from a directly-provided
+		 * conversation, so it takes the same door. */
+		const settle = (result: { current: { dispatch: (e: ChatSessionEvent) => void } }) =>
+			act(() => result.current.dispatch({ type: "draftRestored", lastRole: "assistant" }));
+
+		it("edits the answer, retires the reply to it, and asks again", async () => {
+			mockInvoke({ generate_response: () => ({ response: "q4" }) });
+			// a settled exchange: q3 is the coach's reply to a2
+			const { result } = renderSession([q1, a1, q2, a2, q3]);
+			settle(result);
+			expect(result.current.canReviseLastAnswer).toBe(true);
+			await act(async () => {
+				await result.current.editLastUserMessage("a2 fixed");
+			});
+			expect(result.current.conversation).toEqual([
+				q1,
+				a1,
+				q2,
+				{ role: "user", content: "a2 fixed" },
+				{ role: "assistant", content: "q4" }
+			]);
+			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
+		});
+
+		it("does not offer revision while the coach is generating", async () => {
+			mockInvoke({ generate_response: () => new Promise(() => {}) });
+			const { result } = renderSession([q1, a1]);
+			act(() => {
+				void result.current.handleGetResponse();
+			});
+			expect(result.current.conversationState).toBe(CONVERSATION_STATE.WaitingForCoach);
+			expect(result.current.canReviseLastAnswer).toBe(false);
+			// and a direct call is a no-op, not a second generation
+			await act(async () => {
+				await result.current.editLastUserMessage("too late");
+			});
+			expect(callsTo("generate_response")).toHaveLength(1);
+		});
+
+		it("removes the last answer and its reply, leaving the question open", () => {
+			const { result } = renderSession([q1, a1, q2, a2, q3]);
+			settle(result);
+			act(() => result.current.removeLastUserTurn());
+			expect(result.current.conversation).toEqual([q1, a1, q2]);
+			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
+			// the previous exchange is now the last one: it becomes the
+			// revisable one (the question is on screen again)
+			expect(result.current.canReviseLastAnswer).toBe(true);
+		});
+
+		it("never offers revision of the meta 'ask a different question' turn", () => {
+			const { result } = renderSession([
+				q1,
+				{ role: "user", content: ASK_A_DIFFERENT_QUESTION },
+				q2
+			]);
+			settle(result);
+			expect(result.current.canReviseLastAnswer).toBe(false);
+		});
 	});
 
 	describe("chatSessionReducer", () => {

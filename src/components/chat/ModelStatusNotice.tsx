@@ -1,4 +1,6 @@
+import { useStore } from "@nanostores/react";
 import type { LlmAvailability } from "@components/global/aiStatusStore";
+import { $downloads } from "@components/global/downloadStore";
 
 const SETTINGS_HREF = "/profile?tab=aiModels";
 
@@ -11,6 +13,9 @@ export function ModelStatusNotice({
 	/** the backend's load error, for the "error" state */
 	error?: string;
 }) {
+	// live download progress: "no model" is not the whole story while a
+	// model is on its way in
+	const downloads = Object.values(useStore($downloads).active);
 	const boxStyle = "mx-4 mt-2 text-sm rounded-lg px-4 py-2";
 	if (availability === "loading") {
 		return (
@@ -20,6 +25,21 @@ export function ModelStatusNotice({
 		);
 	}
 	if (availability === "missing") {
+		if (downloads.length > 0) {
+			const first = downloads[0]!;
+			const what = downloads.length === 1 ? first.label : `${downloads.length} models`;
+			const pct = first.pct < 0 ? null : Math.min(100, Math.floor(first.pct));
+			return (
+				<p role="status" className={`${boxStyle} text-stone-600 bg-stone-100`}>
+					Downloading {what}
+					{pct === null ? "…" : ` · ${pct}%`} — chatting unlocks as soon as it&rsquo;s
+					ready.{" "}
+					<a className="underline font-semibold" href={SETTINGS_HREF}>
+						AI Models
+					</a>
+				</p>
+			);
+		}
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
 				No AI model is downloaded yet.{" "}

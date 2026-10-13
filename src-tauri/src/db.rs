@@ -826,6 +826,48 @@ impl Db {
 		Ok(())
 	}
 
+	/// Append a user note to an idea's writeup as a "## Notes" section
+	/// (created on first use), reading and writing under one transaction
+	/// so a concurrent save can't overwrite the note with a stale result.
+	/// Notes live in the same markdown result as the writeup: they show
+	/// in the idea's Summary tab and travel with exports, exactly like a
+	/// section the model wrote.
+	pub fn append_idea_note(&self, id: &str, note: &str) -> Result<(), String> {
+		self.with_tx(|conn| {
+			let result: String = conn
+				.query_row(
+					"SELECT result FROM ideas WHERE id = ?1",
+					params![id],
+					|row| row.get(0),
+				)
+				.optional()
+				.map_err(|e| format!("failed to read idea {id}: {e}"))?
+				.ok_or_else(|| format!("idea {id} not found"))?;
+			let updated = Self::append_note_to_result(&result, note);
+			conn.execute(
+				"UPDATE ideas SET result = ?1 WHERE id = ?2",
+				params![updated, id],
+			)
+			.map_err(|e| format!("failed to save the note: {e}"))?;
+			Ok(())
+		})
+	}
+
+	/// `result` with `note` appended to its trailing "## Notes" section,
+	/// creating the heading when absent. Appending at the end of the
+	/// document is what keeps every note inside the one section: notes
+	/// are only ever added there.
+	fn append_note_to_result(result: &str, note: &str) -> String {
+		let base = result.trim_end();
+		if base.is_empty() {
+			return format!("## Notes\n\n{note}");
+		}
+		if base.lines().any(|line| line.trim() == "## Notes") {
+			return format!("{base}\n\n{note}");
+		}
+		format!("{base}\n\n## Notes\n\n{note}")
+	}
+
 	/// Delete an idea and its whole feedback subtree in one transaction
 	/// (recursive, so a child-of-child can never survive as an orphan).
 	/// `surveys.idea_id` and `daily.intent_idea_id` are nullable idea
@@ -1344,33 +1386,31 @@ impl Db {
 		let (log_id, intent_idea_id, survey_id, is_completed) =
 			row.unwrap_or((None, None, None, false));
 
-		// Streak = consecutive days with any activity (an idea created, a log
-		// or survey submitted, or a completed daily intent). Each activity's
+		// Streak = consecutive days the daily intent loop was worked on: a
+		// day counts when a daily log was submitted (logs only come from
+		// the daily intent flow), a daily intent was started, or one was
+		// completed. Ordinary ideas and the retired survey flow don't feed
+		// it, so the dashboard card's copy ("Do today's daily intent")
+		// states exactly what keeps the streak alive. Each activity's
 		// local calendar day was frozen at write time (local_date), so the
 		// history is stable across timezone changes.
 		// Collect the raw date strings under the lock, then drop it before
-		// parsing so the four scans don't block writers for longer than
+		// parsing so the scans don't block writers for longer than
 		// necessary.
 		let mut raw_days: Vec<String> = Vec::new();
-		for table in ["ideas", "log_entries", "surveys"] {
-			let sql = format!(
-				"SELECT DISTINCT local_date FROM {table} WHERE local_date != ''{}",
-				own_activity_filter(table)
-			);
-			let mut stmt = match conn.prepare(&sql) {
-				Ok(s) => s,
-				Err(e) => {
-					log::error!("streak query on {table} failed: {e}");
-					continue;
-				}
-			};
-			let dates: Vec<String> = stmt
-				.query_map([], |row| row.get(0))
-				.map(|rows| rows.filter_map(|r| r.ok()).collect())
-				.unwrap_or_default();
-			raw_days.extend(dates);
+		match conn.prepare("SELECT DISTINCT local_date FROM log_entries WHERE local_date != ''") {
+			Ok(mut stmt) => {
+				let days: Vec<String> = stmt
+					.query_map([], |row| row.get(0))
+					.map(|rows| rows.filter_map(|r| r.ok()).collect())
+					.unwrap_or_default();
+				raw_days.extend(days);
+			}
+			Err(e) => log::error!("streak query on log_entries failed: {e}"),
 		}
-		match conn.prepare("SELECT date FROM daily WHERE is_completed = 1") {
+		match conn
+			.prepare("SELECT date FROM daily WHERE intent_idea_id IS NOT NULL OR is_completed = 1")
+		{
 			Ok(mut stmt) => {
 				let days: Vec<String> = stmt
 					.query_map([], |row| row.get(0))
@@ -1435,7 +1475,10 @@ mod tests {
 			"a survey alone must not complete the daily intent"
 		);
 		assert_eq!(status.survey_id.as_deref(), Some("s1"));
-		assert_eq!(status.streak, 1, "the survey still counts as activity");
+		assert_eq!(
+			status.streak, 0,
+			"the retired survey flow does not feed the daily intent streak"
+		);
 	}
 
 	#[test]
@@ -1445,6 +1488,66 @@ mod tests {
 		let err = db
 			.update_idea("ghost", Some("t"), None, None, None)
 			.expect_err("updating a missing idea must fail");
+		assert!(err.contains("not found"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn notes_append_under_one_trailing_heading() {
+		let (path, _dir) = temp_db_path();
+		let db = Db::open(&path).expect("open");
+		db.insert_idea(NewIdea {
+			id: "n1",
+			title: "T",
+			idea_type: IdeaType::Original,
+			result: "# Title\n\nbody",
+			metadata: &serde_json::json!({}),
+			..Default::default()
+		})
+		.unwrap();
+
+		db.append_idea_note("n1", "first").unwrap();
+		let result = db.get_idea("n1").unwrap().unwrap().result.unwrap();
+		assert!(result.starts_with("# Title\n\nbody"), "writeup untouched");
+		assert!(
+			result.ends_with("## Notes\n\nfirst"),
+			"note under a heading"
+		);
+
+		db.append_idea_note("n1", "second").unwrap();
+		let result = db.get_idea("n1").unwrap().unwrap().result.unwrap();
+		assert!(result.ends_with("## Notes\n\nfirst\n\nsecond"));
+		assert_eq!(
+			result.matches("## Notes").count(),
+			1,
+			"one notes section, never one per note"
+		);
+
+		// an empty result still gets a well-formed notes section
+		db.insert_idea(NewIdea {
+			id: "n2",
+			title: "T",
+			idea_type: IdeaType::Original,
+			result: "",
+			metadata: &serde_json::json!({}),
+			..Default::default()
+		})
+		.unwrap();
+		db.append_idea_note("n2", "only a note").unwrap();
+		assert_eq!(
+			db.get_idea("n2").unwrap().unwrap().result.as_deref(),
+			Some("## Notes\n\nonly a note")
+		);
+
+		// notes are not the finish gesture: a note on a daily intent does
+		// not complete the day
+		db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
+			.unwrap();
+		db.append_idea_note("i1", "mid-day thought").unwrap();
+		assert!(!db.get_daily_status().is_completed);
+
+		let err = db
+			.append_idea_note("ghost", "x")
+			.expect_err("noting a missing idea must fail");
 		assert!(err.contains("not found"), "unexpected error: {err}");
 	}
 
@@ -1837,7 +1940,8 @@ mod tests {
 				.unwrap();
 			}
 			conn.execute_batch(
-				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
+				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));
+				 INSERT INTO log_entries (id, answers, created_at) VALUES ('old-log', '[]', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
 			)
 			.unwrap();
 			conn.pragma_update(None, "user_version", 2).unwrap();
@@ -1860,8 +1964,8 @@ mod tests {
 				"backfilled as YYYY-MM-DD: {local_date}"
 			);
 		}
-		// the row counts toward the streak again, not just after the
-		// healing open but on every later open too
+		// the backfilled log row counts toward the daily intent streak
+		// again, not just after the healing open but on every later open too
 		assert!(db.get_daily_status().streak >= 1);
 		drop(db);
 		let db = Db::open(&path).expect("reopen");
@@ -1879,7 +1983,8 @@ mod tests {
 			conn.execute_batch("ALTER TABLE daily ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
 				.unwrap();
 			conn.execute_batch(
-				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
+				"INSERT INTO ideas (id, created_at) VALUES ('old', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));
+				 INSERT INTO log_entries (id, answers, created_at) VALUES ('old-log', '[]', strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day'));",
 			)
 			.unwrap();
 			conn.pragma_update(None, "user_version", 2).unwrap();
@@ -1903,8 +2008,8 @@ mod tests {
 			);
 			assert_ne!(local_date, "", "backfill is not empty");
 		}
-		// yesterday's idea counts via its frozen local date; today without
-		// activity doesn't break the streak
+		// yesterday's log counts via its frozen local date; today without
+		// daily intent activity doesn't break the streak
 		assert!(db.get_daily_status().streak >= 1);
 	}
 
@@ -2068,12 +2173,33 @@ mod coverage_tests {
 				.format("%Y-%m-%dT%H:%M:%S")
 				.to_string()
 		};
+		// the streak counts daily intent activity: submit a daily log on
+		// the given day offset
+		let log_on = |offset: i64| {
+			let date = (db.today_local() - chrono::Duration::days(offset))
+				.format("%Y-%m-%d")
+				.to_string();
+			db.lock()
+				.execute(
+					"INSERT INTO log_entries (id, answers, created_at, local_date) VALUES (?1, '[]', ?2, ?3)",
+					rusqlite::params![format!("l{offset}"), ts(offset), date],
+				)
+				.unwrap();
+		};
 		// today, yesterday, 2 days ago; a hole on day 3; activity on day 4
-		idea(&db, "t", &ts(0));
-		idea(&db, "y", &ts(1));
-		idea(&db, "d2", &ts(2));
-		idea(&db, "d4", &ts(4));
+		log_on(0);
+		log_on(1);
+		log_on(2);
+		log_on(4);
 		assert_eq!(db.get_daily_status().streak, 3, "stops at the gap");
+
+		// an ordinary idea fills no gap: it is not daily intent activity
+		idea(&db, "bridge", &ts(3));
+		assert_eq!(
+			db.get_daily_status().streak,
+			3,
+			"an ordinary idea must not bridge the gap"
+		);
 	}
 
 	#[test]
@@ -2649,8 +2775,8 @@ mod v4_tests {
 			assert!(db.has_activity_today(), "v{version}: today's log counts");
 			assert_eq!(
 				db.get_daily_status().streak,
-				2,
-				"v{version}: yesterday's idea + today's log"
+				1,
+				"v{version}: the backfilled log feeds the daily intent streak"
 			);
 		}
 	}

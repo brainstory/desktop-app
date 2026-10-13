@@ -1,9 +1,12 @@
 /**
- * Data hook for the AI Models card: all state (catalog, settings,
- * download progress, Apple STT availability, free disk space), the
- * download event listener, and the action callbacks. Engine status comes
- * from the shared $aiStatus store, so a status event re-renders the card
- * without refetching anything; each action reloads only what it changed.
+ * Data hook for the AI Models card: the catalog, settings, Apple STT
+ * availability, free disk space, the download event listener, and the
+ * action callbacks. Download *display* state (progress, failures) lives
+ * in the shared $downloads store instead of local state, so it survives
+ * navigation and is visible outside this page (the sidebar progress
+ * pill, the chat setup notice). Engine status comes from the shared
+ * $aiStatus store, so a status event re-renders the card without
+ * refetching anything; each action reloads only what it changed.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -25,6 +28,13 @@ import {
 } from "@helpers/api/models";
 import { normalizeApiError } from "@helpers/helpers";
 import { $aiStatus } from "@components/global/aiStatusStore";
+import {
+	$downloads,
+	clearDownloadFailure,
+	formatDownloadError,
+	seedDownloads,
+	subscribeDownloads
+} from "@components/global/downloadStore";
 import { EVENTS } from "@src/tauri/commands";
 
 /**
@@ -56,10 +66,15 @@ const mergeSecretPresence = (
 export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
 	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
+	/** the settings read failed: the card shows the error + a retry
+	 * instead of spinning on "Loading..." forever */
+	const [settingsError, setSettingsError] = useState<string | null>(null);
+	/** the model catalog read failed (the list would render empty) */
+	const [modelsError, setModelsError] = useState(false);
 	/** last persisted snapshot of the endpoint fields, for dirty tracking */
 	const [savedSettings, setSavedSettings] = useState<AiSettingsResponse | null>(null);
 	const runtime = useStore($aiStatus);
-	const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+	const { active: activeDownloads, failures: downloadFailures } = useStore($downloads);
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
 
@@ -68,18 +83,28 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		listModelsApi()
 			.then((data) => {
 				setModels(data);
-				// rehydrate in-flight downloads (e.g. after navigating away and back)
-				const next: Record<string, number> = {};
+				setModelsError(false);
+				// Rehydrate in-flight downloads (e.g. after navigating away
+				// and back). The listing is a snapshot; the live event
+				// stream is fresher, so it only fills ids the store does
+				// not track yet.
+				const entries: Record<string, { pct: number; label: string }> = {};
 				for (const list of [data.llm, data.stt]) {
 					for (const model of list) {
 						if (model.downloading) {
-							next[model.id] = model.progress ?? 0;
+							entries[model.id] = {
+								pct: model.progress ?? -1,
+								label: model.label
+							};
 						}
 					}
 				}
-				setDownloadProgress(next);
+				seedDownloads(entries);
 			})
-			.catch((e) => console.error("list models failed", e));
+			.catch((e) => {
+				console.error("list models failed", e);
+				setModelsError(true);
+			});
 	}, []);
 
 	/** Free space on the models volume (downloads and deletions change it). */
@@ -88,6 +113,26 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 			.then(setFreeBytes)
 			.catch((e) => console.error("free disk space failed", e));
 	}, []);
+
+	/** Read the settings into the form. Also the retry path, so a failed
+	 * initial read is recoverable without reloading the page. */
+	const loadSettings = useCallback(() => {
+		getAiSettingsApi()
+			.then((data) => {
+				setSettings(data);
+				setSavedSettings(data);
+				setSettingsError(null);
+			})
+			.catch((e) => {
+				console.error("ai settings failed", e);
+				setSettingsError(normalizeApiError(e));
+			});
+	}, []);
+
+	const retrySettings = useCallback(() => {
+		setSettingsError(null);
+		loadSettings();
+	}, [loadSettings]);
 
 	/** Re-sync only the saved snapshot (the dirty flag's reference);
 	 * `settings` keeps the live form state. */
@@ -98,12 +143,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	};
 
 	useEffect(() => {
-		getAiSettingsApi()
-			.then((data) => {
-				setSettings(data);
-				setSavedSettings(data);
-			})
-			.catch((e) => console.error("ai settings failed", e));
+		loadSettings();
 		refreshModels();
 		refreshDiskSpace();
 		// a system capability: it doesn't change while the page is open
@@ -111,43 +151,39 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 			.then(setAppleStt)
 			.catch((e) => console.error("apple stt status failed", e));
 
-		// downloads continue in the backend across page navigation
+		// The shared feed owns display state (progress, failures,
+		// cancels); this page adds its side effects on top. The feed is
+		// refcounted and lives exactly as long as something needs it.
+		const unsubscribe = subscribeDownloads();
 		const unlisten = listen<{
 			modelId: string;
-			kind: "progress" | "done" | "error" | "load-error";
+			label?: string;
+			kind: "progress" | "done" | "cancelled" | "error" | "load-error" | "activated";
 			pct?: number;
 			message?: string;
 		}>(EVENTS.modelDownload, (event) => {
-			const { modelId, kind, pct, message } = event.payload ?? {};
-			if (kind === "progress") {
-				setDownloadProgress((prev: Record<string, number>) => ({
-					...prev,
-					[modelId]: pct ?? 0
-				}));
-			} else if (kind === "done") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
+			const { kind, message } = event.payload ?? {};
+			if (kind === "done") {
 				openSnackbar(true, "Model downloaded");
 				refreshModels();
 				refreshDiskSpace();
+			} else if (kind === "activated") {
+				// the selection moved to the finished download: the
+				// "Active" badge must follow
+				refreshModels();
 			} else if (kind === "error") {
-				setDownloadProgress((prev) => {
-					const next = { ...prev };
-					delete next[modelId];
-					return next;
-				});
-				openSnackbar(false, `Download failed: ${message}`);
+				openSnackbar(false, formatDownloadError(message ?? ""));
 			} else if (kind === "load-error") {
 				// the download itself succeeded; activating the model failed
-				openSnackbar(false, `Model downloaded, but activating it failed: ${message}`);
+				openSnackbar(false, `Model downloaded, but turning it on failed: ${message}`);
 				refreshModels();
 				refreshDiskSpace();
 			}
+			// "progress" and "cancelled" change no catalog data: nothing to
+			// refresh, and a cancel is deliberately not toasted.
 		});
 		return () => {
+			unsubscribe();
 			void unlisten.then((fn) => fn());
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,6 +192,8 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	// the per-row actions keep stable identities for the memoised ModelRow
 	const download = useCallback(
 		(modelId: string): void => {
+			// a retry supersedes the recorded failure
+			clearDownloadFailure(modelId);
 			downloadModelApi(modelId).invokePromise.catch((e) => {
 				// starting a download that's already running is harmless - the
 				// progress bar is already driven by backend events
@@ -279,6 +317,12 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		[openSnackbar, refreshModels]
 	);
 
+	// Row-shaped projection of the store (ModelRow reads a plain pct)
+	const downloadProgress: Record<string, number> = {};
+	for (const [modelId, entry] of Object.entries(activeDownloads)) {
+		downloadProgress[modelId] = entry.pct;
+	}
+
 	return {
 		// state
 		models,
@@ -288,10 +332,14 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		setSavedSettings,
 		runtime,
 		downloadProgress,
+		downloadFailures,
 		appleStt,
 		freeBytes,
+		settingsError,
+		modelsError,
 		// actions
 		refreshModels,
+		retrySettings,
 		download,
 		save,
 		saveSecret,

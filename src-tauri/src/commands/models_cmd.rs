@@ -203,6 +203,10 @@ pub async fn download_model(
 		.or_else(|| find_model(&model_id, ModelKind::Stt))
 		.ok_or_else(|| format!("unknown model {model_id}"))?
 		.clone();
+	// Every download event carries the label, so UI surfaces outside the
+	// settings page (the sidebar progress pill, the chat setup notice)
+	// can name the model without fetching the catalog.
+	let spec_label = spec.label;
 
 	// Already present (app copy or hub cache)? Nothing to download -
 	// the UI hides the button, this covers races and stale cards.
@@ -249,7 +253,12 @@ pub async fn download_model(
 				let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
 				let _ = app_handle.emit(
 					"model-download",
-					json!({ "modelId": model_id, "kind": "progress", "pct": pct }),
+					json!({
+						"modelId": model_id,
+						"label": spec_label,
+						"kind": "progress",
+						"pct": pct
+					}),
 				);
 			};
 			let result = download_model_file(
@@ -273,7 +282,7 @@ pub async fn download_model(
 					let _ = on_event.send(json!({ "kind": "done" }));
 					let _ = app_handle.emit(
 						"model-download",
-						json!({ "modelId": model_id, "kind": "done" }),
+						json!({ "modelId": model_id, "label": spec_label, "kind": "done" }),
 					);
 					// The download itself is finished: the model stops
 					// reporting "downloading" while its engine spins up,
@@ -281,11 +290,43 @@ pub async fn download_model(
 					// auto-load below is done, so delete_model can't slip
 					// in and remove the file the load is about to open.
 					finish_download_progress(&app_handle.state::<AppState>(), &model_id);
-					// If this model is the active one, load it right away.
+					// Load the model now when the loader's plan calls for
+					// it - or, when nothing local is set up for this kind
+					// yet, after activating it first (see DownloadPlan).
 					let state = app_handle.state::<AppState>();
-					if let Some(generation) =
-						download_auto_load_plan(&state, &spec, crate::apple::speech_available())
-					{
+					let load_generation =
+						match download_plan(&state, &spec, crate::apple::speech_available()) {
+							DownloadPlan::LoadSelected(generation) => Some(generation),
+							DownloadPlan::ActivateThenLoad => {
+								match state.mutate_ai_settings(|s| {
+									apply_activation(s, &spec);
+									Ok(())
+								}) {
+									Ok((_settings, generation)) => {
+										// the models list's "Active" badge must
+										// move without waiting for another event
+										let _ = app_handle.emit(
+											"model-download",
+											json!({
+												"modelId": model_id,
+												"label": spec_label,
+												"kind": "activated"
+											}),
+										);
+										Some(generation)
+									}
+									Err(e) => {
+										log::error!(
+											"could not activate the downloaded model {}: {e}",
+											spec.id
+										);
+										None
+									}
+								}
+							}
+							DownloadPlan::Nothing => None,
+						};
+					if let Some(generation) = load_generation {
 						// A load failure must not read as a successful
 						// activation (the runtime-status event fires from
 						// inside the loader too); report it on the same
@@ -309,6 +350,7 @@ pub async fn download_model(
 								"model-download",
 								json!({
 									"modelId": model_id,
+									"label": spec_label,
 									"kind": "load-error",
 									"message": e
 								}),
@@ -317,11 +359,25 @@ pub async fn download_model(
 					}
 				}
 				Err(e) => {
-					let _ = on_event.send(json!({ "kind": "error", "message": e }));
-					let _ = app_handle.emit(
-						"model-download",
-						json!({ "modelId": model_id, "kind": "error", "message": e }),
-					);
+					// A user cancel is not a failure: it gets its own kind
+					// (no red "download failed" for a button the user
+					// pressed), and the message is left off entirely.
+					let is_cancelled = e == crate::models::DOWNLOAD_CANCELLED;
+					let kind = if is_cancelled { "cancelled" } else { "error" };
+					if is_cancelled {
+						let _ = on_event.send(json!({ "kind": "cancelled" }));
+					} else {
+						let _ = on_event.send(json!({ "kind": "error", "message": e }));
+					}
+					let mut payload = json!({
+						"modelId": model_id,
+						"label": spec_label,
+						"kind": kind
+					});
+					if !is_cancelled {
+						payload["message"] = json!(e);
+					}
+					let _ = app_handle.emit("model-download", payload);
 				}
 			}
 		}
@@ -435,20 +491,33 @@ pub fn cancel_download(state: State<'_, AppState>, model_id: String) -> Result<(
 	}
 }
 
-/// Whether a finished download of `spec` should load right now, and
-/// the settings generation the decision was made at (None: no load).
-/// Routed through the same plan the model loader uses instead of
-/// comparing model ids, so the auto-load can never contradict the
-/// selected routing: external STT or an explicit Apple Speech selection
-/// loads no whisper even when it is the recorded stt model, and
-/// external LLM mode loads no local engine. Explicit Apple on an
-/// unsupported system keeps the whisper fallback (the plan stands
+/// What to do with a finished download. Routed through the same plan the
+/// model loader uses instead of comparing model ids, so the auto-load can
+/// never contradict the selected routing: external STT or an explicit
+/// Apple Speech selection loads no whisper even when it is the recorded
+/// stt model, and external LLM mode loads no local engine. Explicit Apple
+/// on an unsupported system keeps the whisper fallback (the plan stands
 /// whisper in), and auto keeps a downloaded whisper hot behind Apple.
-fn download_auto_load_plan(
+enum DownloadPlan {
+	/// The model the loader's plan wants: load it now, at this settings
+	/// generation.
+	LoadSelected(u64),
+	/// Nothing local is set up for this kind yet, so the finished
+	/// download is the first usable model: make it the selected one and
+	/// load it. Without this, following the "recommended model" hint
+	/// (smallest, not the catalog default) ended with a downloaded model
+	/// that was never used until the user found the "Use" button.
+	ActivateThenLoad,
+	/// Another model already handles this kind: leave the selection
+	/// alone (the new model stays available behind "Use").
+	Nothing,
+}
+
+fn download_plan(
 	state: &AppState,
 	spec: &crate::models::ModelSpec,
 	apple_available: bool,
-) -> Option<u64> {
+) -> DownloadPlan {
 	let generation = state.ai_settings_generation.load(Ordering::SeqCst);
 	let settings = state.ai_settings();
 	let plan = crate::plan_model_load(&settings, apple_available, |candidate| {
@@ -459,9 +528,18 @@ fn download_auto_load_plan(
 		ModelKind::Stt => plan.whisper == crate::WhisperPlan::Load(spec.id),
 	};
 	if wanted {
-		Some(generation)
+		return DownloadPlan::LoadSelected(generation);
+	}
+	// Missing is only ever reached with local routing (externals plan
+	// External/Unload), so no extra external check is needed here.
+	let nothing_local = match spec.kind {
+		ModelKind::Llm => plan.llm == crate::LlmPlan::Missing,
+		ModelKind::Stt => plan.whisper == crate::WhisperPlan::Missing,
+	};
+	if nothing_local {
+		DownloadPlan::ActivateThenLoad
 	} else {
-		None
+		DownloadPlan::Nothing
 	}
 }
 
@@ -667,6 +745,7 @@ mod tests {
 
 	#[test]
 	fn a_finished_stt_download_auto_loads_only_when_the_plan_loads_whisper() {
+		use super::DownloadPlan;
 		use crate::models::{SpeechEngine, SttMode};
 		let (state, _dir) = temp_state("auto-stt");
 		let spec = crate::models::find_model("whisper-small-en", crate::models::ModelKind::Stt)
@@ -683,7 +762,10 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_some(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::LoadSelected(_)
+			),
 			"whisper routing loads the downloaded whisper model"
 		);
 
@@ -697,7 +779,10 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_none(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::Nothing
+			),
 			"external STT routing must not load whisper"
 		);
 
@@ -711,13 +796,19 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_none(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::Nothing
+			),
 			"explicit Apple speech must not load whisper"
 		);
 
 		// explicit Apple on an unsupported system: whisper stands in
 		assert!(
-			super::download_auto_load_plan(&state, spec, false).is_some(),
+			matches!(
+				super::download_plan(&state, spec, false),
+				DownloadPlan::LoadSelected(_)
+			),
 			"the Apple-unsupported fallback loads whisper"
 		);
 
@@ -729,22 +820,30 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_some(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::LoadSelected(_)
+			),
 			"auto keeps whisper loaded as the fallback"
 		);
 
-		// a download of a model the plan would not pick loads nothing
+		// a second downloaded whisper while one is already selected and
+		// downloaded: the selection stays put
 		let other = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
 			.expect("catalog model");
 		std::fs::write(state.model_path(other), b"stub").expect("downloaded file");
 		assert!(
-			super::download_auto_load_plan(&state, other, true).is_none(),
+			matches!(
+				super::download_plan(&state, other, true),
+				DownloadPlan::Nothing
+			),
 			"only the plan's model auto-loads"
 		);
 	}
 
 	#[test]
 	fn a_finished_llm_download_respects_the_current_llm_mode() {
+		use super::DownloadPlan;
 		use crate::models::LlmMode;
 		let (state, _dir) = temp_state("auto-llm");
 		let spec = crate::models::find_model("gemma-4-E4B", crate::models::ModelKind::Llm)
@@ -759,7 +858,10 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_some(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::LoadSelected(_)
+			),
 			"local mode loads the downloaded llm"
 		);
 
@@ -771,8 +873,105 @@ mod tests {
 			})
 			.expect("commit");
 		assert!(
-			super::download_auto_load_plan(&state, spec, true).is_none(),
+			matches!(
+				super::download_plan(&state, spec, true),
+				DownloadPlan::Nothing
+			),
 			"external llm routing must not load the local engine"
+		);
+	}
+
+	/// The first-run trap this plan fixes: the setup card recommends the
+	/// smallest model, but only the catalog default was ever auto-loaded,
+	/// so following the recommendation left a downloaded model unused.
+	#[test]
+	fn a_download_activates_when_nothing_local_is_set_up() {
+		use super::DownloadPlan;
+		use crate::models::{LlmMode, SpeechEngine, SttMode};
+		let (state, _dir) = temp_state("auto-first");
+
+		// fresh install, local routing, the selected default not downloaded
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_mode = LlmMode::Local;
+				s.llm_model = "gemma-4-E2B-qat".into();
+				s.stt_engine = SpeechEngine::Whisper;
+				s.stt_mode = SttMode::Local;
+				s.stt_model = "whisper-base-en".into();
+				Ok(())
+			})
+			.expect("commit");
+
+		let llm = crate::models::find_model("minicpm5-2b", crate::models::ModelKind::Llm)
+			.expect("catalog model");
+		assert!(
+			matches!(
+				super::download_plan(&state, llm, true),
+				DownloadPlan::ActivateThenLoad
+			),
+			"the first downloaded llm must become the active one"
+		);
+
+		let stt = crate::models::find_model("whisper-tiny-en", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		assert!(
+			matches!(
+				super::download_plan(&state, stt, true),
+				DownloadPlan::ActivateThenLoad
+			),
+			"the first downloaded whisper model must become the active one"
+		);
+
+		// auto engine with Apple available also wants a fallback whisper:
+		// nothing is downloaded yet, so the first whisper still activates
+		state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Auto;
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			matches!(
+				super::download_plan(&state, stt, true),
+				DownloadPlan::ActivateThenLoad
+			),
+			"Apple-auto still activates the first downloaded whisper fallback"
+		);
+
+		// an external LLM is not "nothing set up": a local download must
+		// never steal the selection from the endpoint
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_mode = LlmMode::External;
+				s.ext_llm_base_url = "http://localhost:9001".into();
+				Ok(())
+			})
+			.expect("commit");
+		assert!(
+			matches!(
+				super::download_plan(&state, llm, true),
+				DownloadPlan::Nothing
+			),
+			"external LLM routing keeps the local download passive"
+		);
+
+		// once a local llm is usable, later downloads stay passive
+		state
+			.mutate_ai_settings(|s| {
+				s.llm_mode = LlmMode::Local;
+				s.llm_model = llm.id.to_string();
+				Ok(())
+			})
+			.expect("commit");
+		std::fs::write(state.model_path(llm), b"stub").expect("downloaded file");
+		let gemma = crate::models::find_model("gemma-4-E2B-qat", crate::models::ModelKind::Llm)
+			.expect("catalog model");
+		assert!(
+			matches!(
+				super::download_plan(&state, gemma, true),
+				DownloadPlan::Nothing
+			),
+			"a usable selection must survive another download"
 		);
 	}
 

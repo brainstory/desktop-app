@@ -632,6 +632,11 @@ enum StreamFailure {
 	Discard(String),
 }
 
+/// The exact error a user-initiated cancel produces. Callers that want to
+/// distinguish "the user cancelled" from a real failure compare against
+/// this (the UI shows no error for a cancel).
+pub const DOWNLOAD_CANCELLED: &str = "download cancelled";
+
 /// The running total after one more chunk arrives, or None when the
 /// counter would wrap (checked arithmetic: a server lying with huge
 /// chunked sizes cannot overflow the byte count into a bogus small
@@ -767,7 +772,7 @@ async fn download_with_timeouts(
 	let response = loop {
 		if cancel.load(Ordering::Relaxed) {
 			let _ = tokio::fs::remove_file(&tmp).await;
-			return Err("download cancelled".into());
+			return Err(DOWNLOAD_CANCELLED.into());
 		}
 		let now = tokio::time::Instant::now();
 		if now >= header_deadline {
@@ -858,7 +863,7 @@ async fn download_with_timeouts(
 				if cancel.load(Ordering::Relaxed) {
 					drop(file);
 					let _ = tokio::fs::remove_file(&tmp).await;
-					return Err("download cancelled".into());
+					return Err(DOWNLOAD_CANCELLED.into());
 				}
 				let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
 				if n == 0 {
@@ -935,7 +940,7 @@ async fn download_with_timeouts(
 		tokio::pin!(stall);
 		loop {
 			if cancel.load(Ordering::Relaxed) {
-				return Err(Discard("download cancelled".into()));
+				return Err(Discard(DOWNLOAD_CANCELLED.into()));
 			}
 			let chunk = tokio::select! {
 				_ = &mut stall => {

@@ -1,6 +1,6 @@
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 import { useStore } from "@nanostores/react";
-import { $aiStatus, llmAvailability } from "@components/global/aiStatusStore";
+import { $aiStatus, llmAvailability, sttAvailability } from "@components/global/aiStatusStore";
 import {
 	CONVERSATION_STATE,
 	MIN_CONVERSATION_LENGTH_BEFORE_SAVE,
@@ -29,6 +29,7 @@ import {
 } from "@components/chat/useIdeaPersistence";
 
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
+import LastAnswerActions from "@components/chat/reusable/LastAnswerActions";
 import ChatTopBar from "./reusable/ChatTopBar";
 
 interface ChatSectionProps {
@@ -55,6 +56,11 @@ export function ChatSection({
 	const [result, setResult] = useState("");
 	const [parentIdea, setParentIdea] = useState<ParentIdea | undefined>();
 	const [showTranscript, setShowTranscript] = useState(false);
+	/** an early wrap-up is creating/saving the session before summarizing */
+	const [isWrappingUp, setIsWrappingUp] = useState(false);
+	/** the early wrap-up waits for the create: one-shot, cleared when the
+	 * create fails (a later unrelated create must not finish the session) */
+	const finishAfterCreateRef = useRef(false);
 	/** fatal load failure: an error section replaces the mic ui */
 	const [fatalError, setFatalError] = useState<ChatFatalError | null>(null);
 	/** an AI error (other than the moderation resend case) or a save error */
@@ -66,13 +72,28 @@ export function ChatSection({
 		(message: string, source: ChatErrorSource = "ai") => setChatError({ message, source }),
 		[]
 	);
-	const onSaveError = useCallback(
-		(message: string) => setChatError({ message, source: "save" }),
-		[]
-	);
+	const onSaveError = useCallback((message: string) => {
+		setChatError({ message, source: "save" });
+		// a failed create must release the early wrap-up button instead of
+		// leaving it stuck on "Wrapping up…" - and must not arm a summary
+		// that fires after some later, unrelated create lands
+		finishAfterCreateRef.current = false;
+		setIsWrappingUp(false);
+	}, []);
 
 	const aiStatus = useStore($aiStatus);
 	const modelAvailability = llmAvailability(aiStatus);
+	const speechAvailability = sttAvailability(aiStatus);
+	// "Missing" and "error" block the input that would only fail; "unknown"
+	// (no status yet) never blocks. "Loading" keeps its dedicated copy.
+	const llmBlocked = modelAvailability === "missing" || modelAvailability === "error";
+	const sttBlocked = speechAvailability === "missing" || speechAvailability === "error";
+	const micBlockedReason = llmBlocked
+		? "Set up AI to begin"
+		: sttBlocked
+			? "Speech model needed"
+			: undefined;
+	const sendBlockedReason = llmBlocked ? "Set up AI to reply" : undefined;
 	const firstPrompt = getFirstPrompt(chatType);
 	const [currConversation, setCurrConversation] = useState<ChatMessage[]>([
 		{ role: "assistant", content: firstPrompt }
@@ -140,6 +161,26 @@ export function ChatSection({
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
+	/** Wrap up before the minimum length. The summary needs the idea to
+	 * exist, so a session without one is created first; the effect below
+	 * finishes the job when the create lands (the later unrelated-create
+	 * guard lives in the ref, see finishAfterCreateRef). */
+	const handleEarlyFinish = () => {
+		if (persistence.ideaId) {
+			session.handleGetResult();
+			return;
+		}
+		finishAfterCreateRef.current = true;
+		setIsWrappingUp(true);
+		persistence.requestCreate();
+	};
+
+	useEffect(() => {
+		if (!finishAfterCreateRef.current || !persistence.ideaId) return;
+		finishAfterCreateRef.current = false;
+		session.handleGetResult();
+	}, [persistence.ideaId, session]);
+
 	if (result) {
 		return (
 			<FinishedResultSection
@@ -176,6 +217,11 @@ export function ChatSection({
 			: findMostRecentAssistantContent(currConversation);
 		const enableSkip =
 			currConversation.length > 1 && session.conversationState === CONVERSATION_STATE.Idle;
+		// canReviseLastAnswer guarantees the answer sits right before the
+		// final assistant reply
+		const lastUserContent = session.canReviseLastAnswer
+			? currConversation[currConversation.length - 2]!.content
+			: null;
 		const mainSectionChildren = [
 			<AssistantResponseText
 				key="assistant-response"
@@ -185,6 +231,14 @@ export function ChatSection({
 				handleSkipQuestion={session.askADifferentQuestion}
 				didFailToSend={session.isUserResendRequired}
 			/>,
+			lastUserContent !== null ? (
+				<LastAnswerActions
+					key="last-answer-actions"
+					lastAnswer={lastUserContent}
+					onEdit={(text) => void session.editLastUserMessage(text)}
+					onRemove={session.removeLastUserTurn}
+				/>
+			) : null,
 			<ChatRecorder
 				key="chat-recorder"
 				isCompressed={Boolean(parentIdea)}
@@ -195,6 +249,8 @@ export function ChatSection({
 				setSaveState={persistence.setSaveState}
 				handleGetResponse={session.handleGetResponse}
 				modelLoading={modelAvailability === "loading"}
+				micBlockedReason={micBlockedReason}
+				sendBlockedReason={sendBlockedReason}
 			/>
 		];
 
@@ -228,6 +284,8 @@ export function ChatSection({
 						currConversation={currConversation}
 						conversationState={session.conversationState}
 						handleGetResult={session.handleGetResult}
+						handleEarlyFinish={handleEarlyFinish}
+						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
 						{mainSectionChildren}
@@ -239,6 +297,8 @@ export function ChatSection({
 						currConversation={currConversation}
 						conversationState={session.conversationState}
 						handleGetResult={session.handleGetResult}
+						handleEarlyFinish={handleEarlyFinish}
+						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
 						{mainSectionChildren}

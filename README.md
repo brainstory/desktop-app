@@ -67,6 +67,14 @@ menu). The app keeps running in the system tray when the window is closed and se
 a system notification once per day at the configured time. Quit fully from the tray
 menu.
 
+## Quick capture
+
+Start an idea without hunting for the window: press **Cmd+Shift+Space**
+(**Ctrl+Shift+Space** on Windows and Linux), or pick **New Idea** from the tray menu.
+The app comes to the front on a fresh session; a draft you left behind is already
+saved and stays in the library. If another app owns the shortcut, the tray item
+still works.
+
 ## Install
 
 Grab the latest build for your OS from the [Releases page](https://github.com/brainstory/desktop-app/releases):

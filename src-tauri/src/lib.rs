@@ -68,6 +68,18 @@ pub fn run() {
 		.plugin(tauri_plugin_dialog::init())
 		.plugin(tauri_plugin_updater::Builder::new().build())
 		.plugin(tauri_plugin_process::init())
+		.plugin(
+			// Quick capture: the shortcut handler fires even while the
+			// window is hidden in the tray, so an idea can be started
+			// without hunting for the app first.
+			tauri_plugin_global_shortcut::Builder::new()
+				.with_handler(|app, _shortcut, event| {
+					if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+						open_new_idea(app);
+					}
+				})
+				.build(),
+		)
 		.invoke_handler(tauri::generate_handler![
 			commands::data::get_user,
 			commands::data::get_daily_status,
@@ -78,6 +90,7 @@ pub fn run() {
 			commands::data::update_idea,
 			commands::data::mark_idea_read,
 			commands::data::delete_idea,
+			commands::data::add_idea_note,
 			commands::data::get_log_questions,
 			commands::data::submit_log,
 			commands::data::get_survey_fields,
@@ -211,6 +224,7 @@ pub fn run() {
 			app.manage(AppState::new(db, data_dir));
 
 			setup_tray(app)?;
+			register_quick_capture_shortcut(app.handle());
 
 			// Apply the dock/tray visibility preferences from settings.
 			{
@@ -376,6 +390,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 		.map(|v| v == "true")
 		.unwrap_or(false);
 
+	let new_idea = MenuItem::with_id(app, "new_idea", "New Idea", true, None::<&str>)?;
 	let open = MenuItem::with_id(app, "open", "Open Brainstory", true, None::<&str>)?;
 	let reminder = CheckMenuItem::with_id(
 		app,
@@ -386,7 +401,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 		None::<&str>,
 	)?;
 	let quit = MenuItem::with_id(app, "quit", "Quit Brainstory", true, None::<&str>)?;
-	let menu = Menu::with_items(app, &[&open, &reminder, &quit])?;
+	let menu = Menu::with_items(app, &[&new_idea, &open, &reminder, &quit])?;
 
 	*TRAY_REMINDER_ITEM.lock().unwrap_or_else(|e| e.into_inner()) = Some(reminder);
 
@@ -395,6 +410,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 		.show_menu_on_left_click(false)
 		.tooltip("Brainstory")
 		.on_menu_event(|app, event| match event.id().as_ref() {
+			"new_idea" => open_new_idea(app),
 			"open" => show_main_window(app),
 			"reminder" => {
 				let state = app.state::<AppState>();
@@ -490,6 +506,34 @@ fn show_main_window(app: &AppHandle) {
 		window.show().ok();
 		window.unminimize().ok();
 		window.set_focus().ok();
+	}
+}
+
+/// Where quick capture lands: a brand-new idea session.
+const QUICK_CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
+
+/// Open the window on a fresh idea page. Wired to the tray's "New Idea"
+/// item and the global quick capture shortcut.
+fn open_new_idea(app: &AppHandle) {
+	show_main_window(app);
+	let Some(window) = app.get_webview_window("main") else {
+		return;
+	};
+	// A full navigation, like every other page change in the app (Astro
+	// pages are separate documents); an in-progress draft is flushed to
+	// the database by the page's own pagehide hook.
+	if let Err(e) = window.eval("window.location.href = '/chat';") {
+		log::warn!("failed to open the new idea page: {e}");
+	}
+}
+
+/// Register the global quick capture shortcut. Failure is not fatal: the
+/// combination may be owned by another app, and the tray's "New Idea"
+/// item keeps working, so only a warning is logged.
+fn register_quick_capture_shortcut(app: &AppHandle) {
+	use tauri_plugin_global_shortcut::GlobalShortcutExt;
+	if let Err(e) = app.global_shortcut().register(QUICK_CAPTURE_SHORTCUT) {
+		log::warn!("could not register the quick capture shortcut {QUICK_CAPTURE_SHORTCUT}: {e}");
 	}
 }
 

@@ -32,11 +32,18 @@ export default function ChatApp() {
 	const [logId, setLogId] = useState<string | null | undefined>(null);
 	const [draftId, setDraftId] = useState(getQueryParam(QUERY_PARAMS.id));
 	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+	/** the daily-status read failed: warn + offer a retry instead of
+	 * silently leaving the session unlinked from today's log */
+	const [dailyStatusError, setDailyStatusError] = useState(false);
+	const [statusAttempt, setStatusAttempt] = useState(0);
 
 	useEffect(() => {
 		if (isDailyIntent) {
+			let isCurrent = true;
 			getUserDailyStatusApi()
 				.then((resp) => {
+					if (!isCurrent) return;
+					setDailyStatusError(false);
 					if (!resp.logId) {
 						setIsLogModalOpen(true);
 					}
@@ -50,13 +57,39 @@ export default function ChatApp() {
 						setDraftId(resp.intentIdeaId);
 					}
 				})
-				.catch((err) => console.error("error getting daily status", err));
+				.catch((err) => {
+					console.error("error getting daily status", err);
+					if (isCurrent) setDailyStatusError(true);
+				});
+			return () => {
+				isCurrent = false;
+			};
 		}
-	}, [isDailyIntent]);
+	}, [isDailyIntent, statusAttempt]);
 
 	return (
 		<AppWrapper>
 			<AiSetupNeeded />
+			{dailyStatusError && (
+				<div
+					role="alert"
+					className="flex items-center justify-between gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 m-4 text-sm"
+				>
+					<span>
+						Couldn&rsquo;t load today&rsquo;s daily intent status — a new log may not be
+						linked to this session. You can keep talking, or try again.
+					</span>
+					<button
+						className="underline font-semibold whitespace-nowrap"
+						onClick={() => {
+							setDailyStatusError(false);
+							setStatusAttempt((attempt) => attempt + 1);
+						}}
+					>
+						Try again
+					</button>
+				</div>
+			)}
 			{isLogModalOpen && (
 				<DailyIntentModal setLogId={setLogId} onClose={() => setIsLogModalOpen(false)} />
 			)}

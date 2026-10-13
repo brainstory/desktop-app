@@ -60,8 +60,8 @@ export function LlmSection({
 	const kvPerToken = localModel?.kvBytesPerToken;
 	const ctxHelp =
 		kvPerToken !== undefined
-			? "Approximate extra memory for the model's context (KV cache)."
-			: "A bigger window needs more memory; the exact amount depends on the selected model.";
+			? "How much of the conversation the model keeps in mind at once. Bigger windows hold longer chats, but need more memory while the model runs."
+			: "How much of the conversation the model keeps in mind at once. A bigger window needs more memory; the exact amount depends on the selected model.";
 
 	const toggleExternal = () => {
 		const nextMode = usingExternal ? "local" : "external";
@@ -105,9 +105,9 @@ export function LlmSection({
 			>
 				<summary className="font-semibold cursor-pointer">External LLM endpoint</summary>
 				<p className="text-stone-500 mt-2 mb-4">
-					Any OpenAI-compatible server (Ollama, llama.cpp server, LM Studio, ...). Save
-					the URL, then turn on the switch above to use it instead of a model on this
-					computer.
+					Any server that speaks the OpenAI API &mdash; Ollama, LM Studio,
+					llama.cpp&rsquo;s server and many others. Save its URL, then turn on the switch
+					above to chat through it instead of a model on this computer.
 				</p>
 				<ExternalEndpointFields
 					kind="llm"

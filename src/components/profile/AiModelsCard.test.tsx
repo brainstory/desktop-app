@@ -79,18 +79,20 @@ function renderCard() {
 }
 
 /** Capture the backend event handlers the card subscribes to. */
-function captureListeners(): Record<string, EventCallback<unknown>> {
-	const handlers: Record<string, EventCallback<unknown>> = {};
+function captureListeners(): Record<string, EventCallback<unknown>[]> {
+	const handlers: Record<string, EventCallback<unknown>[]> = {};
 	vi.mocked(listen).mockImplementation(async (event, handler) => {
-		handlers[event] = handler;
+		(handlers[event] ??= []).push(handler);
 		return () => {};
 	});
 	return handlers;
 }
 
-function emit(handlers: Record<string, EventCallback<unknown>>, event: string, payload: unknown) {
+function emit(handlers: Record<string, EventCallback<unknown>[]>, event: string, payload: unknown) {
 	act(() => {
-		handlers[event]!({ event, id: 0, payload });
+		for (const handler of handlers[event] ?? []) {
+			handler({ event, id: 0, payload });
+		}
 	});
 }
 
@@ -456,7 +458,7 @@ describe("AiModelsCard", () => {
 			"~1.6 GB"
 		);
 		expect(within(select).getByRole("option", { name: /^64k/ })).toHaveTextContent("~6.6 GB");
-		expect(screen.getByText(/Approximate extra memory/)).toBeInTheDocument();
+		expect(screen.getByText(/Bigger windows hold longer chats/)).toBeInTheDocument();
 		expect(screen.getByText(/Changing this reloads the model\./)).toBeInTheDocument();
 	});
 
@@ -635,7 +637,11 @@ describe("AiModelsCard", () => {
 		mockCard();
 		renderCard();
 		await screen.findByText("Whisper tiny (English)");
-		await waitFor(() => expect(handlers["model-download"]).toBeDefined());
+		// two listeners share the event: the card's own (toasts/refreshes)
+		// and the shared $downloads store (the display state)
+		await waitFor(() =>
+			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
+		);
 
 		emit(handlers, "model-download", {
 			modelId: "whisper-tiny-en",
@@ -660,6 +666,46 @@ describe("AiModelsCard", () => {
 		expect(indeterminate).not.toHaveAttribute("aria-valuenow");
 		expect(screen.queryByText("-1%")).not.toBeInTheDocument();
 		expect(screen.getByText("…")).toBeInTheDocument();
+
+		// a cancel is not an error: the bar goes, nothing red is shown
+		emit(handlers, "model-download", {
+			modelId: "whisper-tiny-en",
+			kind: "cancelled"
+		});
+		expect(
+			screen.queryByRole("progressbar", {
+				name: "Whisper tiny (English) download progress"
+			})
+		).not.toBeInTheDocument();
+		expect(screen.queryByText(/download cancelled/i)).not.toBeInTheDocument();
+	});
+
+	it("a failed download reads in plain language and offers a retry on the row", async () => {
+		const handlers = captureListeners();
+		const notDownloaded = {
+			...models.llm[0]!,
+			id: "minicpm5-2b",
+			label: "MiniCPM5 2B",
+			downloaded: false,
+			active: false
+		};
+		mockCard({ list_models: () => ({ ...models, llm: [models.llm[0]!, notDownloaded] }) });
+		renderCard();
+		await screen.findByText("MiniCPM5 2B");
+		await waitFor(() =>
+			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
+		);
+
+		emit(handlers, "model-download", {
+			modelId: "minicpm5-2b",
+			kind: "error",
+			message: "download stalled (no data for 60s) - please retry"
+		});
+		// the row carries the plain-language failure…
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent(/The download stalled/);
+		// …and the retry affordance sits where the download button was
+		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 	});
 
 	it.each(SECRET_CONTROLS)(

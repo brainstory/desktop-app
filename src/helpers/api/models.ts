@@ -86,16 +86,18 @@ export function getFreeDiskSpaceApi(): Promise<number> {
 }
 
 export interface DownloadEvent {
-	kind: "progress" | "done" | "error" | "load-error";
+	kind: "progress" | "done" | "cancelled" | "error" | "load-error";
 	pct?: number;
 	message?: string;
 }
 
 /**
  * Download a model. Progress events arrive on the returned channel:
- * {kind: "progress", pct} | {kind: "done"} | {kind: "error", message} |
- * {kind: "load-error", message} (download succeeded but activating the
- * model failed)
+ * {kind: "progress", pct} | {kind: "done"} | {kind: "cancelled"} |
+ * {kind: "error", message} | {kind: "load-error", message} (download
+ * succeeded but activating the model failed). A user cancel is not an
+ * error. The same events are also broadcast app-wide (see the
+ * $downloads store), which drives the UI.
  */
 export function downloadModelApi(modelId: string): {
 	channel: Channel<DownloadEvent>;
