@@ -85,6 +85,8 @@ export function useIdeaPersistence(
 	const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 	const drainQueuedRef = useRef(false);
 	const debounceRef = useRef<number | null>(null);
+	/** saves started but not finished (queued steps count once started) */
+	const savesInFlightRef = useRef(0);
 	/** the conversation already in the database (created, loaded or saved):
 	 * autosaving it again would be a redundant write */
 	const persistedRef = useRef<ChatMessage[] | null>(null);
@@ -111,6 +113,7 @@ export function useIdeaPersistence(
 			const job = pendingSaveRef.current;
 			pendingSaveRef.current = null;
 			if (!job) return;
+			savesInFlightRef.current += 1;
 			// the same snapshot reached the database while this job waited
 			// in the pending slot (e.g. the create-completion handoff):
 			// writing it again would be redundant
@@ -130,6 +133,8 @@ export function useIdeaPersistence(
 				if (pendingSaveRef.current) return;
 				setSaveState(CHAT_SAVE_STATE.FAILED);
 				onErrorRef.current(`Autosave failed: ${normalizeApiError(e)}`);
+			} finally {
+				savesInFlightRef.current -= 1;
 			}
 		});
 	}, []);
@@ -249,7 +254,14 @@ export function useIdeaPersistence(
 		if (debounceRef.current !== null) {
 			window.clearTimeout(debounceRef.current);
 		}
-		debounceRef.current = window.setTimeout(flushAutosave, 400);
+		// An exchange that settled on an assistant reply is complete:
+		// save it at once instead of behind the debounce, so navigating
+		// away right after reading the answer cannot drop it.
+		if (conversation[conversation.length - 1]?.role === "assistant") {
+			flushAutosave();
+		} else {
+			debounceRef.current = window.setTimeout(flushAutosave, 400);
+		}
 	}, [conversation, ideaId, minLength, flushAutosave]);
 
 	// Never drop the last change: flush the pending save when the chat
@@ -261,6 +273,22 @@ export function useIdeaPersistence(
 			window.removeEventListener("pagehide", flushAutosave);
 			flushAutosave();
 		};
+	}, [flushAutosave]);
+
+	/** True while a save is queued, debounced or in flight: navigating
+	 * away now would drop it (the pagehide flush is fire-and-forget). */
+	const hasUnsavedChanges = useCallback(
+		() =>
+			pendingSaveRef.current !== null ||
+			debounceRef.current !== null ||
+			savesInFlightRef.current > 0,
+		[]
+	);
+
+	/** Flush anything queued and resolve once every save has landed. */
+	const whenIdle = useCallback(async (): Promise<void> => {
+		flushAutosave();
+		await saveQueueRef.current;
 	}, [flushAutosave]);
 
 	/** Ask for the idea to be created now, below the usual minimum (the
@@ -277,6 +305,8 @@ export function useIdeaPersistence(
 		setSaveState,
 		readyToCreateIdea,
 		requestCreate,
+		hasUnsavedChanges,
+		whenIdle,
 		conversationLengthRef,
 		markPersisted,
 		saveResult,

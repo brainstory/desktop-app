@@ -34,6 +34,9 @@ export default function ChatTopBar({
 				: saveState === CHAT_SAVE_STATE.FAILED
 					? "close-outline"
 					: undefined;
+	// nothing stored yet (a fresh session): still show the indicator,
+	// in grey, so the save state is visible in every phase
+	const isWaiting = saveState === CHAT_SAVE_STATE.WAITING;
 
 	const renderLeftComponent = () => {
 		// The guide-flow back button must survive while a save is in
@@ -59,7 +62,8 @@ export default function ChatTopBar({
 						<p className="text-stone-500">{saveState}</p>
 					</div>
 				)}
-				{!isLeftButton && !saveIconName && <div />}
+				{isWaiting && <p className="text-sm text-stone-400">Not saved yet</p>}
+				{!isLeftButton && !saveIconName && !isWaiting && <div />}
 			</div>
 		);
 	};

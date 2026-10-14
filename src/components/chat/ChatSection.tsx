@@ -157,6 +157,41 @@ export function ChatSection({
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
+	// Sidebar links are full-document navigations: a pending autosave
+	// would be dropped (the pagehide flush is fire-and-forget). Intercept
+	// plain left-clicks on in-page anchors while anything is unsaved,
+	// wait for the writes to land, then continue the navigation.
+	useEffect(() => {
+		const onClick = (event: MouseEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.button !== 0 ||
+				event.metaKey ||
+				event.ctrlKey ||
+				event.shiftKey ||
+				event.altKey
+			) {
+				return;
+			}
+			const anchor = (event.target as HTMLElement | null)?.closest?.("a[href]");
+			if (!anchor) return;
+			const href = anchor.getAttribute("href");
+			// same-document links only; external URLs keep their default
+			if (!href || !href.startsWith("/") || href.startsWith("//")) return;
+			if (!persistence.hasUnsavedChanges()) return;
+			event.preventDefault();
+			void (async () => {
+				try {
+					await persistence.whenIdle();
+				} finally {
+					window.location.href = href;
+				}
+			})();
+		};
+		document.addEventListener("click", onClick, true);
+		return () => document.removeEventListener("click", onClick, true);
+	}, [persistence]);
+
 	// after the draft loader: its status decides whether input waits
 	const restoringDraft = draftStatus === "loading";
 	const micBlockedReason = restoringDraft

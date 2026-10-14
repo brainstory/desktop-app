@@ -341,6 +341,55 @@ describe("ChatSection", () => {
 		expect(alert).not.toHaveTextContent(/AI couldn/);
 	});
 
+	it("waits for an in-flight save before following an in-page link", async () => {
+		let landSave!: () => void;
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			// a slow write: the navigation must wait for it
+			update_idea: () => new Promise<void>((res) => (landSave = res)),
+			generate_response: () => ({ response: "and then?" })
+		});
+		// jsdom blocks real navigation: swap in an observable location
+		const originalLocation = window.location;
+		Object.defineProperty(window, "location", {
+			configurable: true,
+			value: { ...originalLocation, href: "http://localhost/chat" }
+		});
+		try {
+			render(
+				<>
+					<a href="/dashboard">Library</a>
+					<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />
+				</>
+			);
+			await sendTyped("a calm day");
+			expect(await screen.findByText("and then?")).toBeInTheDocument();
+			// the exchange ended on an assistant reply: the save fired
+			// without waiting out the debounce
+			await waitFor(() =>
+				expect(
+					vi.mocked(invoke).mock.calls.filter(([c]) => c === "update_idea")
+				).toHaveLength(1)
+			);
+
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("link", { name: "Library" }));
+			// the click was intercepted while the write is in flight
+			expect(window.location.href).toBe("http://localhost/chat");
+
+			await act(async () => {
+				landSave();
+				await Promise.resolve();
+			});
+			expect(window.location.href).toBe("/dashboard");
+		} finally {
+			Object.defineProperty(window, "location", {
+				configurable: true,
+				value: originalLocation
+			});
+		}
+	});
+
 	describe("feedback on an idea", () => {
 		async function sendFeedback(parent: Record<string, unknown>) {
 			mockChat({
