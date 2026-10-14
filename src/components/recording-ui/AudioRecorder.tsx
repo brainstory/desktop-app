@@ -55,13 +55,26 @@ const AudioRecorder = ({
 	startRecordingCallback
 }: AudioRecorderProps) => {
 	const [time, setTime] = useState(0);
-	const [isRunning, setIsRunning] = useState(false);
-
-	// Timer
-	useTimer(isRunning, setTime);
+	const [isRunning, setIsRunningState] = useState(false);
 
 	// stable identity: RecordButton keeps this in effect dependencies
 	const resetTimer = useCallback(() => setTime(0), []);
+
+	/** Every recording starts from zero. Reset here, in the start
+	 * handler, rather than in an effect: after a failed, empty or
+	 * cancelled transcription nobody else resets the readout, and the
+	 * 4-minute warning would fire early (or go negative) on the next
+	 * attempt. */
+	const setIsRunning = useCallback(
+		(running: boolean) => {
+			if (running) setTime(0);
+			setIsRunningState(running);
+		},
+		[]
+	);
+
+	// Timer
+	useTimer(isRunning, setTime);
 
 	useEffect(() => {
 		if (isRunning) {

@@ -150,6 +150,38 @@ describe("RecordButton", () => {
 			expect(props.setIsTranscribing).toHaveBeenLastCalledWith(false);
 		});
 
+		it("restarts the recording timer at 0:00 after a failed transcription", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			let calls = 0;
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav,
+				transcribe: () => {
+					calls += 1;
+					if (calls === 1) throw "no audio received";
+					return { transcript: "hello" };
+				}
+			});
+			renderRecorder();
+			// first recording runs long enough that a stale timer would
+			// trigger the "almost reached" warning on the next one
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("button", { name: "Start recording" }));
+			await act(() => vi.advanceTimersByTimeAsync(215_000));
+			expect(screen.getByText("recording · 3:35")).toBeInTheDocument();
+			await user.click(screen.getByRole("button", { name: "Stop recording" }));
+			expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+			// second recording: the readout starts at zero again...
+			await user.click(screen.getByRole("button", { name: "Start recording" }));
+			expect(screen.getByText("recording · 0:00")).toBeInTheDocument();
+			// ...and the 4-minute warning is not carried over from the
+			// failed attempt
+			expect(screen.queryByText(/almost reached/)).not.toBeInTheDocument();
+			vi.mocked(console.error).mockRestore();
+		});
+
 		it("ignores a transcript that arrives after the recorder unmounted", async () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
