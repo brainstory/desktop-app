@@ -271,7 +271,7 @@ where
 	// (the turns are fitted to its context first); chat generations take
 	// the turns as-is.
 	let render = request.summary_renderer();
-	let (output, prompt_tokens, dropped_turns) = run_generation(
+	let (mut output, prompt_tokens, dropped_turns) = run_generation(
 		state,
 		&settings,
 		system,
@@ -283,6 +283,16 @@ where
 		&on_status,
 	)
 	.await?;
+
+	// A chat reply is one or two sentences plus ONE question; a runaway
+	// model writing several questions buries the conversation point.
+	if !request.summarize {
+		let trimmed = trim_after_first_question(&output);
+		if trimmed != output {
+			log::warn!("chat reply carried multiple question lines; trimmed to the first");
+			output = trimmed;
+		}
+	}
 
 	on_event(EmitKind::Cumulative, &output);
 
@@ -615,6 +625,24 @@ async fn run_generation(
 	}
 }
 
+/// Keep a chat reply up to and including the first line that ends in a
+/// question mark, but only when it asked more than one question: the
+/// interview prompt wants a sentence or two plus one question, and
+/// several stacked questions degrade the following turns.
+fn trim_after_first_question(reply: &str) -> String {
+	let lines: Vec<&str> = reply.lines().collect();
+	let question_lines: Vec<usize> = lines
+		.iter()
+		.enumerate()
+		.filter(|(_, line)| line.trim_end().ends_with('?'))
+		.map(|(idx, _)| idx)
+		.collect();
+	match question_lines.first() {
+		Some(&first) if question_lines.len() > 1 => lines[..=first].join("\n"),
+		_ => reply.to_string(),
+	}
+}
+
 /// Pull the first JSON object or array out of an LLM response.
 fn extract_json(text: &str) -> Option<serde_json::Value> {
 	let trimmed = text.trim();
@@ -721,6 +749,35 @@ mod tests {
 		// first '{' to last '}' spans two objects: the slice is not valid
 		// JSON, so the contract is a clean None, never a panic
 		assert!(extract_json("a {\"x\": 1} b {\"y\": 2}").is_none());
+	}
+}
+
+#[cfg(test)]
+mod reply_trim_tests {
+	use super::trim_after_first_question;
+
+	#[test]
+	fn a_single_question_reply_passes_through_unchanged() {
+		let one = "That sounds fun.\nWhat is the first step you would take?";
+		assert_eq!(trim_after_first_question(one), one);
+		// trailing non-question lines after ONE question stay too
+		let with_tail = "Great.\nWhat is the goal?\nTake your time.";
+		assert_eq!(trim_after_first_question(with_tail), with_tail);
+		// a reply with no questions at all is untouched
+		let none = "Okay, noted. I will remember that.";
+		assert_eq!(trim_after_first_question(none), none);
+	}
+
+	#[test]
+	fn multiple_questions_are_trimmed_to_the_first() {
+		let stacked = "Interesting!\nWhat happened next?\nWhy did that matter?\nAnd then?";
+		assert_eq!(
+			trim_after_first_question(stacked),
+			"Interesting!\nWhat happened next?"
+		);
+		// the question mark must END its line; mid-line ones do not count
+		let inline = "What? really.\nAre you sure about that plan?";
+		assert_eq!(trim_after_first_question(inline), inline);
 	}
 }
 

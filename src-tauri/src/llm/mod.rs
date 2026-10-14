@@ -3,7 +3,10 @@
 //! shared context/budget helpers both sides and the loader agree on.
 
 pub const DEFAULT_N_CTX: u32 = 16384;
-pub const MAX_NEW_TOKENS_RESPONSE: u32 = 1024;
+/// Chat replies are one or two sentences plus a question (the
+/// interview prompt): 256 keeps a runaway small model from writing a
+/// wall of text that then poisons the next prompt.
+pub const MAX_NEW_TOKENS_RESPONSE: u32 = 256;
 pub const MAX_NEW_TOKENS_RESULT: u32 = 4096;
 
 /// The context window a load actually uses: the app default when the
