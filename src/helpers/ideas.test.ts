@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import { isOwnIdea, parseHeadingIndex, stripNotesSection, stripResultPreview } from "./ideas";
+import {
+	isOwnIdea,
+	parseHeadingIndex,
+	stripNotesSection,
+	stripResultPreview,
+	cardSummaryPreview
+} from "./ideas";
+
+describe("cardSummaryPreview", () => {
+	it("returns an empty string for missing or non-string input", () => {
+		expect(cardSummaryPreview(undefined)).toBe("");
+		expect(cardSummaryPreview(42)).toBe("");
+		expect(cardSummaryPreview("")).toBe("");
+	});
+
+	it("drops the title and strips markdown markers", () => {
+		const doc = "# My Idea\n\n## The plan\n\n- **first** step\n- second *step*\n\nsome `code`";
+		expect(cardSummaryPreview(doc)).toBe("The plan first step second step some code");
+	});
+
+	it("caps the preview with an ellipsis", () => {
+		const long = "# T\n\n" + "word ".repeat(100);
+		const out = cardSummaryPreview(long);
+		expect(out.length).toBeLessThanOrEqual(221); // 220 chars + ellipsis
+		expect(out.endsWith("…")).toBe(true);
+	});
+});
 
 describe("stripResultPreview", () => {
 	it("returns an empty string for missing or non-string input", () => {

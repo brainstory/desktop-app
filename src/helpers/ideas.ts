@@ -82,6 +82,35 @@ function normalizeHeading(heading: string): string {
  * Total (never crashes on missing/empty results) and pure, so it can be
  * unit-tested.
  */
+/** Body text for the library card: the document without its `#` title
+ * line or markdown markers, capped so the 300-character SQL preview
+ * window always suffices (the card clamps to two lines regardless). */
+export function cardSummaryPreview(str: unknown): string {
+	if (typeof str !== "string" || str === "") return "";
+	const lines = str
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line !== "" && line !== "---");
+	// the leading `#` title is shown on the card already; section
+	// headings keep their text, only the markers go
+	const bodyStart = lines[0]?.startsWith("#") ? 1 : 0;
+	const text = lines
+		.slice(bodyStart)
+		.map((line) =>
+			line
+				.replace(/^#{1,6}\s*/, "")
+				.replace(/^[-*+]\s+/, "")
+				.replace(/^>\s*/, "")
+				.replace(/\*\*(.+?)\*\*/g, "$1")
+				.replace(/\*(.+?)\*/g, "$1")
+				.replace(/`([^`]*)`/g, "$1")
+		)
+		.join(" ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return text.length > 220 ? `${text.slice(0, 220).trimEnd()}…` : text;
+}
+
 export function stripResultPreview(str: unknown): string {
 	// remove the first line before the first \n\n,
 	// and if the next line starts with ##, remove the ##

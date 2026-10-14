@@ -121,7 +121,7 @@ impl Db {
 	/// transcript only for drafts (the grid previews a draft's last user
 	/// message), and no structured or sectioned result - nothing in the
 	/// list reads them.
-	const IDEA_SUMMARY_COLS: &'static str = "id, title, idea_type, substr(result, 1, 600) AS result, CASE WHEN result = '' THEN transcript END AS transcript, parent_idea_id, is_unread, creator_name, creator_email, created_at";
+	const IDEA_SUMMARY_COLS: &'static str = "id, title, idea_type, substr(result, 1, 300) AS result, CASE WHEN result = '' THEN transcript END AS transcript, parent_idea_id, is_unread, creator_name, creator_email, created_at";
 
 	const IDEA_COLS: &'static str =
 		"id, title, idea_type, result, structured_result, transcript, idea_metadata, parent_idea_id, log_id, is_unread, creator_name, creator_email, share_id, created_at";

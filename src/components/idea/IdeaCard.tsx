@@ -1,6 +1,6 @@
 import { useStore } from "@nanostores/react";
 import { formatISO8601ToHumanReadable } from "@helpers/helpers";
-import { finishedFeedback } from "@helpers/ideas";
+import { cardSummaryPreview, finishedFeedback } from "@helpers/ideas";
 import { $userState } from "@components/global/userStore";
 import type { IdeaListItem } from "@src/types";
 
@@ -20,6 +20,7 @@ interface IdeaCardProps {
 
 export default function IdeaCard({
 	id,
+	summaryPreview,
 	title,
 	createdAt,
 	creatorName,
@@ -28,6 +29,7 @@ export default function IdeaCard({
 	feedback,
 	isFeedback = false
 }: IdeaCardProps) {
+	const preview = cardSummaryPreview(summaryPreview);
 	// an unfinished feedback draft is not feedback yet: it is resumed from
 	// its own draft card, never counted or stacked here
 	const feedbackList = finishedFeedback(feedback);
@@ -79,6 +81,10 @@ export default function IdeaCard({
 						</h3>
 
 						<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
+
+						{preview && (
+							<p className="mb-3 text-sm text-stone-600 line-clamp-2">{preview}</p>
+						)}
 
 						<div className="group mb-4 flex items-center">
 							<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">
