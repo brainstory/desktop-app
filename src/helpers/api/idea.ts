@@ -1,6 +1,8 @@
+import { Channel } from "@tauri-apps/api/core";
 import { invokeCommand } from "@src/tauri/invoke";
 import { CHAT_TYPE, TOPICS, type ChatType } from "@src/const";
 import type { ChatMessage, IdeaDetail, IdeaFeedbackItem } from "@src/types";
+import type { GenerationResult } from "@helpers/chat";
 
 /** Raw idea as serialized by the backend (snake_case). */
 export interface RawIdea {
@@ -205,6 +207,23 @@ export function linkIdeaLogApi(ideaId: string, logId: string): Promise<null> {
 	return invokeCommand("linkIdeaLog", { ideaId, logId });
 }
 
+/** Regenerate an idea's summary from its stored transcript; events
+ * (status/chunk/cumulative) arrive on the returned channel, the invoke
+ * resolves with the generation result once the new summary is saved. */
+export function regenerateResultApi(ideaId: string): {
+	channel: Channel;
+	invokePromise: Promise<GenerationResult>;
+} {
+	const channel = new Channel();
+	const invokePromise = invokeCommand("regenerateResult", { ideaId, onEvent: channel });
+	return { channel, invokePromise };
+}
+
+/** Replace an idea's summary with a manually edited one. */
+export function setIdeaResultApi(ideaId: string, result: string): Promise<null> {
+	return invokeCommand("setIdeaResult", { ideaId, result });
+}
+
 /** Update an idea title saved in the database.
  * Called after user edits idea title
  * @returns created idea's uuid
@@ -249,6 +268,7 @@ export default {
 	createIdeaApi,
 	markIdeaReadApi,
 	updateIdeaTitleApi,
+	setIdeaResultApi,
 	linkIdeaLogApi,
 	deleteIdeaApi,
 	addIdeaNoteApi,

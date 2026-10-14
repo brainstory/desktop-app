@@ -41,6 +41,63 @@ fn toggle_setting_bool_flips_from_stored_or_default() {
 }
 
 #[test]
+fn set_idea_result_replaces_text_and_clears_structured() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	db.create_daily_intent_idea(
+		"i1",
+		"",
+		"## Old",
+		&[ChatMessage {
+			role: "user".into(),
+			content: "talked".into(),
+		}],
+		&serde_json::json!({ "previous_result": "stale" }),
+	)
+	.unwrap();
+	// a stored structured document would no longer match edited prose
+	db.set_idea_result("i1", "## Edited").unwrap();
+	let idea = db.get_idea("i1").unwrap().unwrap();
+	assert_eq!(idea.result.as_deref(), Some("## Edited"));
+	assert!(idea.structured_result.is_none(), "stale cards are dropped");
+	// unknown ideas report
+	let err = db.set_idea_result("ghost", "x").expect_err("missing idea");
+	assert!(err.contains("not found"), "{err}");
+}
+
+#[test]
+fn stash_previous_result_keeps_one_undo_level() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	db.create_daily_intent_idea("i1", "", "## First", &[], &serde_json::json!({}))
+		.unwrap();
+	let read_metadata = || {
+		db.lock()
+			.query_row(
+				"SELECT idea_metadata FROM ideas WHERE id = 'i1'",
+				[],
+				|row| row.get::<_, String>(0),
+			)
+			.unwrap()
+	};
+	// a second stash overwrites the first: exactly one undo level
+	db.set_idea_result("i1", "## Second").unwrap();
+	db.stash_previous_result("i1").unwrap();
+	assert!(read_metadata().contains("## Second"));
+	db.set_idea_result("i1", "## Third").unwrap();
+	db.stash_previous_result("i1").unwrap();
+	let metadata = read_metadata();
+	assert!(metadata.contains("## Third"));
+	assert!(
+		!metadata.contains("## Second"),
+		"only one undo level is kept"
+	);
+	// stashing an idea with no result is a no-op, not an error
+	db.set_idea_result("i1", "").unwrap();
+	db.stash_previous_result("i1").unwrap();
+}
+
+#[test]
 fn link_idea_log_attaches_and_relinks_a_daily_intent() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");

@@ -46,6 +46,81 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+describe("IdeaResultContent summary editing", () => {
+	beforeEach(() => {
+		mockViewport(1200);
+	});
+	afterEach(() => {
+		mockViewport(1200);
+	});
+
+	it("edits the summary, saves it, and renders the new text", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_idea_children: () => ({ ideas: [] }),
+			mark_idea_read: () => null,
+			get_reactions: () => noReactions,
+			set_idea_result: () => null
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByText("alpha body")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Edit summary" }));
+		const editor = screen.getByLabelText("Edit summary");
+		expect(editor).toHaveValue("# Title\n\n## Alpha\nalpha body\n\n## Beta\nbeta body");
+
+		// Cmd+Enter saves; Escape-discarded edits leave the text alone
+		await userEvent.clear(editor);
+		await userEvent.type(editor, "# Rewritten\n\nNew body words.");
+		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+		expect(await screen.findByText("Summary updated")).toBeInTheDocument();
+		expect(invoke).toHaveBeenCalledWith("set_idea_result", {
+			ideaId: "i1",
+			result: "# Rewritten\n\nNew body words."
+		});
+		// the editor closed (the sectioned view refetches separately)
+		expect(screen.queryByLabelText("Edit summary")).not.toBeInTheDocument();
+	});
+
+	it("Escape discards the edit", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_idea_children: () => ({ ideas: [] }),
+			mark_idea_read: () => null,
+			get_reactions: () => noReactions,
+			set_idea_result: () => null
+		});
+		render(<IdeaResultContent />);
+		await userEvent.click(await screen.findByRole("button", { name: "Edit summary" }));
+		const editor = screen.getByLabelText("Edit summary");
+		await userEvent.type(editor, " scratch");
+		await userEvent.keyboard("{Escape}");
+		expect(screen.queryByLabelText("Edit summary")).not.toBeInTheDocument();
+		expect(
+			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_idea_result")
+		).toHaveLength(0);
+		// the untouched text still shows
+		expect(screen.getByText("alpha body")).toBeInTheDocument();
+	});
+
+	it("regenerate asks for confirmation before running", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_idea_children: () => ({ ideas: [] }),
+			mark_idea_read: () => null,
+			get_reactions: () => noReactions
+		});
+		render(<IdeaResultContent />);
+		const button = await screen.findByRole("button", { name: "Regenerate" });
+		// first click arms, second runs
+		await userEvent.click(button);
+		expect(
+			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "regenerate_result")
+		).toHaveLength(0);
+		expect(screen.getByRole("button", { name: /Really regenerate/ })).toBeInTheDocument();
+	});
+});
+
 describe("IdeaResultContent feedback heading references", () => {
 	it("files comments only under positive ordinals that map to a real heading", async () => {
 		mockInvoke({

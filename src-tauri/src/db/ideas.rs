@@ -326,6 +326,69 @@ impl Db {
 		})
 	}
 
+	/// Replace an idea's result outright (a manual edit). The structured
+	/// feedback document no longer matches edited prose, so it is
+	/// cleared. Title and transcript stay.
+	pub fn set_idea_result(&self, id: &str, result: &str) -> Result<(), String> {
+		self.with_tx(|conn| {
+			let exists: i64 = conn
+				.query_row(
+					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+					params![id],
+					|row| row.get(0),
+				)
+				.map_err(|e| format!("failed to read idea {id}: {e}"))?;
+			if exists == 0 {
+				return Err(format!("idea {id} not found"));
+			}
+			conn.execute(
+				"UPDATE ideas SET result = ?1, structured_result = NULL WHERE id = ?2",
+				params![result, id],
+			)
+			.map_err(|e| format!("failed to save the summary: {e}"))?;
+			Ok(())
+		})
+	}
+
+	/// Keep the current result as `idea_metadata.previous_result` (one
+	/// level of undo for a regeneration).
+	pub fn stash_previous_result(&self, id: &str) -> Result<(), String> {
+		self.with_tx(|conn| {
+			let (result, metadata): (Option<String>, String) = conn
+				.query_row(
+					"SELECT result, idea_metadata FROM ideas WHERE id = ?1",
+					params![id],
+					|row| Ok((row.get(0)?, row.get(1)?)),
+				)
+				.map_err(|e| format!("failed to read idea {id}: {e}"))?;
+			let Some(result) = result.filter(|r| !r.is_empty()) else {
+				return Ok(());
+			};
+			let mut value = serde_json::from_str::<serde_json::Value>(&metadata)
+				.ok()
+				.filter(serde_json::Value::is_object)
+				.unwrap_or_else(|| serde_json::json!({}));
+			value["previous_result"] = serde_json::json!(result);
+			conn.execute(
+				"UPDATE ideas SET idea_metadata = ?1 WHERE id = ?2",
+				params![value.to_string(), id],
+			)
+			.map_err(|e| format!("failed to record the previous summary: {e}"))?;
+			Ok(())
+		})
+	}
+
+	/// The `parent_idea_id` column, when set.
+	pub fn idea_parent_id(&self, id: &str) -> Result<Option<String>, String> {
+		let conn = self.lock();
+		conn.query_row(
+			"SELECT parent_idea_id FROM ideas WHERE id = ?1",
+			params![id],
+			|row| row.get(0),
+		)
+		.map_err(|e| format!("failed to read idea {id}: {e}"))
+	}
+
 	/// Link (or relink) an idea to a daily log: used when today's log was
 	/// submitted after the idea already existed (the session created it
 	/// before the log existed, or the log modal was dismissed first).

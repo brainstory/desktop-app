@@ -15,6 +15,12 @@ interface IdeaTitleBarProps {
 	onNoteAdded?: () => void;
 	/** the saved title after a successful rename */
 	onTitleSaved?: (savedTitle: string) => void;
+	/** switch the summary to the editor */
+	onEditSummary?: () => void;
+	/** rerun the generation from the stored transcript */
+	onRegenerateSummary?: () => void;
+	/** a regeneration is running */
+	isRegenerating?: boolean;
 }
 
 export default function IdeaTitleBar({
@@ -22,7 +28,10 @@ export default function IdeaTitleBar({
 	isOwnIdea,
 	parentId,
 	onNoteAdded,
-	onTitleSaved
+	onTitleSaved,
+	onEditSummary,
+	onRegenerateSummary,
+	isRegenerating = false
 }: IdeaTitleBarProps) {
 	const { openSnackbar, snackbars } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
@@ -31,6 +40,11 @@ export default function IdeaTitleBar({
 		isConfirming: confirmingDelete,
 		secondsLeft,
 		confirm: confirmDelete
+	} = useConfirmClick();
+	const {
+		isConfirming: confirmingRegenerate,
+		secondsLeft: regenSeconds,
+		confirm: confirmRegenerate
 	} = useConfirmClick();
 	const [scheduleExportReset] = useTimeout();
 	const [isEditing, setIsEditing] = useState(false);
@@ -205,6 +219,28 @@ export default function IdeaTitleBar({
 			buttons.push(
 				<Button variant="bordered" key="copy-markdown" onClick={handleCopy}>
 					Copy as Markdown
+				</Button>
+			);
+			buttons.push(
+				<Button variant="bordered" key="edit-summary" onClick={() => onEditSummary?.()}>
+					Edit summary
+				</Button>
+			);
+			buttons.push(
+				<Button
+					variant="bordered"
+					key="regenerate"
+					onClick={() => {
+						if (confirmRegenerate()) onRegenerateSummary?.();
+					}}
+					classes={confirmingRegenerate ? "ring-red-400 text-red-600" : ""}
+					disabled={isRegenerating}
+				>
+					{isRegenerating
+						? "Regenerating..."
+						: confirmingRegenerate
+							? `Really regenerate? (${regenSeconds ?? 0}s)`
+							: "Regenerate"}
 				</Button>
 			);
 		}

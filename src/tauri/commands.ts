@@ -35,6 +35,8 @@ export const COMMANDS = {
 	createIdea: "create_idea",
 	updateIdea: "update_idea",
 	linkIdeaLog: "link_idea_log",
+	setIdeaResult: "set_idea_result",
+	regenerateResult: "regenerate_result",
 	openDataFolder: "open_data_folder",
 	openLogFolder: "open_log_folder",
 	copyDiagnostics: "copy_diagnostics",
@@ -132,6 +134,11 @@ interface CommandSignatures {
 	};
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
 	linkIdeaLog: { args: { ideaId: string; logId: string }; result: null };
+	setIdeaResult: { args: { ideaId: string; result: string }; result: null };
+	regenerateResult: {
+		args: { ideaId: string; onEvent: Channel };
+		result: GenerationResult;
+	};
 	openDataFolder: { args: undefined; result: null };
 	openLogFolder: { args: undefined; result: null };
 	copyDiagnostics: { args: undefined; result: string };

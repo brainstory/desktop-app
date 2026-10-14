@@ -461,6 +461,109 @@ pub async fn generate_streaming_response(
 	.await
 }
 
+/// Regenerate an idea's summary from its stored transcript: one undo
+/// level is kept (`idea_metadata.previous_result`), then the same
+/// generation path as the live session runs, streaming to `on_event`.
+#[tauri::command]
+pub async fn regenerate_result(
+	app: tauri::AppHandle,
+	idea_id: String,
+	on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<serde_json::Value, String> {
+	app.state::<AppState>().refuse_if_shutting_down()?;
+	let (request, previous_result) = {
+		let app = app.clone();
+		let idea_id = idea_id.clone();
+		tauri::async_runtime::spawn_blocking(move || {
+			let app_state = app.state::<AppState>();
+			let idea = app_state
+				.db
+				.get_idea(&idea_id)?
+				.ok_or_else(|| format!("idea {idea_id} not found"))?;
+			let transcript = idea.transcript.clone().unwrap_or_default();
+			if transcript.is_empty() {
+				return Err("this idea has no transcript to regenerate from".to_string());
+			}
+			let mut request = PromptRequest {
+				chat_type: ChatType::parse(idea.r#type.as_deref()),
+				messages: transcript,
+				summarize: true,
+				react_to: None,
+				react_to_author: None,
+				react_to_is_current_user: false,
+				structured_feedback: false,
+			};
+			// a feedback idea regenerates against its parent document
+			if request.chat_type == ChatType::Feedback {
+				if let Some(parent_id) = app_state.db.idea_parent_id(&idea_id)? {
+					if let Some(parent) = app_state.db.get_idea(&parent_id)? {
+						request.react_to = parent.result;
+						request.react_to_is_current_user = parent.creator_name.is_none();
+						request.react_to_author = parent.creator_name;
+					}
+				}
+			}
+			let previous = idea.result.filter(|r| !r.is_empty());
+			Ok((request, previous))
+		})
+		.await
+		.map_err(|e| format!("load idea task failed: {e}"))?
+	}?;
+
+	// keep one level of undo before overwriting
+	if previous_result.is_some() {
+		let app = app.clone();
+		let id = idea_id.clone();
+		tauri::async_runtime::spawn_blocking(move || {
+			app.state::<AppState>().db.stash_previous_result(&id)
+		})
+		.await
+		.map_err(|e| e.to_string())??;
+	}
+
+	let sender = on_event;
+	let outcome = generate_and_respond(
+		&app.state::<AppState>(),
+		&request,
+		true,
+		move |kind, content| {
+			sender
+				.send(StreamEvent::new(kind.as_str(), content))
+				.is_ok()
+		},
+	)
+	.await?;
+
+	let new_result = outcome["response"]
+		.as_str()
+		.ok_or("regeneration returned no text")?
+		.to_string();
+	let structured = outcome["structured_result"].clone();
+	{
+		let app = app.clone();
+		let id = idea_id.clone();
+		let new_result = new_result.clone();
+		let structured = structured.clone();
+		tauri::async_runtime::spawn_blocking(move || {
+			let structured_arg = if structured.is_null() {
+				None
+			} else {
+				Some(&structured)
+			};
+			app.state::<AppState>().db.update_idea(
+				&id,
+				None,
+				Some(&new_result),
+				None,
+				structured_arg,
+			)
+		})
+		.await
+		.map_err(|e| e.to_string())??;
+	}
+	Ok(outcome)
+}
+
 #[tauri::command]
 pub fn cancel_generation(state: State<'_, AppState>) {
 	state

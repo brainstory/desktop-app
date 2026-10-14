@@ -187,6 +187,27 @@ pub fn copy_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
 	Ok(report)
 }
 
+/// Replace an idea's summary with a manually edited one. The structured
+/// feedback document is cleared (it no longer matches the text).
+#[tauri::command]
+pub async fn set_idea_result(
+	app: tauri::AppHandle,
+	idea_id: String,
+	result: String,
+) -> Result<(), String> {
+	let result = result.trim().to_string();
+	if result.is_empty() {
+		return Err("the summary cannot be empty".into());
+	}
+	run_blocking("set idea result", move || {
+		let state = app.state::<AppState>();
+		state.refuse_if_shutting_down()?;
+		ensure_within("result", &result, MAX_RESULT_BYTES)?;
+		state.db.set_idea_result(&idea_id, &result)
+	})
+	.await
+}
+
 /// Link an idea to a daily log that was submitted after the idea was
 /// created (the daily-intent session's backfill path).
 #[tauri::command]
