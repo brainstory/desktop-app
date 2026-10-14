@@ -226,7 +226,8 @@ describe("ChatSection", () => {
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
 			const link = await screen.findByRole("link", { name: "Download a model in Settings" });
-			expect(link).toHaveAttribute("href", "/profile?tab=aiModels");
+			// the link carries the current page as the return target
+			expect(link).toHaveAttribute("href", "/profile?tab=aiModels&return=%2Fchat");
 			expect(screen.queryByText(/Loading the AI model/)).not.toBeInTheDocument();
 		});
 

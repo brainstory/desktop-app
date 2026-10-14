@@ -219,7 +219,9 @@ export const QUERY_PARAMS = {
 	qotd: "qotd",
 	tab: "tab",
 	parentId: "parentId",
-	dailyIntent: "dailyIntent"
+	dailyIntent: "dailyIntent",
+	/** where to go back to after a detour (same-app path only) */
+	return: "return"
 } as const;
 
 export type QueryParam = (typeof QUERY_PARAMS)[keyof typeof QUERY_PARAMS];

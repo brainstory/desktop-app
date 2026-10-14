@@ -2,7 +2,7 @@ import { useStore } from "@nanostores/react";
 import type { LlmAvailability } from "@components/global/aiStatusStore";
 import { $downloads } from "@components/global/downloadStore";
 
-const SETTINGS_HREF = "/profile?tab=aiModels";
+import { aiSettingsHref } from "@helpers/helpers";
 
 /** One-line chat notice for a language model that can't answer (yet). */
 export function ModelStatusNotice({
@@ -34,7 +34,7 @@ export function ModelStatusNotice({
 					Downloading {what}
 					{pct === null ? "…" : ` · ${pct}%`} — chatting unlocks as soon as it&rsquo;s
 					ready.{" "}
-					<a className="underline font-semibold" href={SETTINGS_HREF}>
+					<a className="underline font-semibold" href={aiSettingsHref()}>
 						AI Models
 					</a>
 				</p>
@@ -43,7 +43,7 @@ export function ModelStatusNotice({
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
 				No AI model is downloaded yet.{" "}
-				<a className="underline font-semibold" href={SETTINGS_HREF}>
+				<a className="underline font-semibold" href={aiSettingsHref()}>
 					Download a model in Settings
 				</a>{" "}
 				to start chatting.
@@ -54,7 +54,7 @@ export function ModelStatusNotice({
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
 				The AI model failed to load{error ? `: ${error}` : "."}{" "}
-				<a className="underline font-semibold" href={SETTINGS_HREF}>
+				<a className="underline font-semibold" href={aiSettingsHref()}>
 					Check Settings &gt; AI Models
 				</a>
 			</p>

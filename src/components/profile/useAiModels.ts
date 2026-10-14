@@ -9,7 +9,7 @@
  * refetching anything; each action reloads only what it changed.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "@nanostores/react";
 import {
@@ -27,7 +27,7 @@ import {
 	type AppleSttStatus,
 	type ModelsResponse
 } from "@helpers/api/models";
-import { normalizeApiError } from "@helpers/helpers";
+import { getQueryParam, normalizeApiError, safeReturnTarget } from "@helpers/helpers";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import {
 	$downloads,
@@ -36,7 +36,7 @@ import {
 	seedDownloads,
 	subscribeDownloads
 } from "@components/global/downloadStore";
-import { EVENTS } from "@src/tauri/commands";
+import { EVENTS, QUERY_PARAMS } from "@src/tauri/commands";
 
 /**
  * The only settings fields a secret save can change: the response carries
@@ -65,6 +65,11 @@ const mergeSecretPresence = (
 });
 
 export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
+	// the first-launch detour: where "back to your idea" goes once the
+	// downloaded model is ready (null when no valid target was given)
+	const backTarget = useMemo(() => safeReturnTarget(getQueryParam(QUERY_PARAMS.return)), []);
+	const [downloadLanded, setDownloadLanded] = useState(false);
+	const [backDismissed, setBackDismissed] = useState(false);
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
 	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
 	/** the settings read failed: the card shows the error + a retry
@@ -179,6 +184,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		}>(EVENTS.modelDownload, (event) => {
 			const { kind, message } = event.payload ?? {};
 			if (kind === "done") {
+				setDownloadLanded(true);
 				openSnackbar(true, "Model downloaded");
 				refreshModels();
 				refreshDiskSpace();
@@ -377,6 +383,11 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	}
 
 	return {
+		// the ready banner: only after a download finished here AND the
+		// runtime reports the LLM ready (activation can still fail)
+		backHref:
+			downloadLanded && !backDismissed && runtime.llm.state === "ready" ? backTarget : null,
+		dismissBack: () => setBackDismissed(true),
 		// state
 		models,
 		settings,

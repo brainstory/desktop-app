@@ -9,6 +9,7 @@ import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import AiModelsCard from "./AiModelsCard";
 import { useAiModels } from "./useAiModels";
+import { EVENTS } from "@src/tauri/commands";
 
 const aiSettings = {
 	llmMode: "local",
@@ -203,6 +204,30 @@ describe("AiModelsCard", () => {
 		$aiStatus.set({ llm: { state: "missing" }, stt: { state: "missing" } });
 		vi.mocked(listen).mockReset();
 		vi.mocked(listen).mockImplementation(async () => () => {});
+	});
+
+	it("offers the way back after a download makes the model ready", async () => {
+		// the first-launch detour carried its origin
+		window.history.replaceState(null, "", "/profile?tab=aiModels&return=%2Fchat%3Fid%3Di1");
+		const handlers = captureListeners();
+		mockCard();
+		renderCard();
+		expect(
+			await screen.findByText(/Everything runs locally on this machine/)
+		).toBeInTheDocument();
+		// nothing yet: no download finished on this visit
+		expect(screen.queryByText(/back to your idea/i)).not.toBeInTheDocument();
+
+		// the download finishes and the runtime reports the model live
+		emit(handlers, EVENTS.modelDownload, { kind: "done", modelId: "gemma-4-E2B-qat" });
+		const back = await screen.findByText(/back to your idea/i);
+		expect(back.closest("div")).toBeInTheDocument();
+		const link = screen.getByRole("link", { name: "Continue where you left off" });
+		expect(link).toHaveAttribute("href", "/chat?id=i1");
+
+		// "Stay in Settings" dismisses the banner
+		await userEvent.click(screen.getByRole("button", { name: "Stay in Settings" }));
+		expect(screen.queryByText(/back to your idea/i)).not.toBeInTheDocument();
 	});
 
 	it("refuses to switch to the external LLM without a URL and stays off", async () => {

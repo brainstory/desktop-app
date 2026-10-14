@@ -1,4 +1,4 @@
-import type { QueryParam } from "@src/tauri/commands";
+import { QUERY_PARAMS, type QueryParam } from "@src/tauri/commands";
 
 /** A query param of the current page (names come from QUERY_PARAMS). */
 export function getQueryParam(name: QueryParam): string | null {
@@ -127,4 +127,18 @@ export async function callApiWithRetry<T>(
 				signal?.addEventListener("abort", onAbort, { once: true });
 			});
 	});
+}
+
+/** The AI settings link, carrying the current page as the return target
+ * so the detour can end where it started. */
+export function aiSettingsHref(): string {
+	const target = `${window.location.pathname}${window.location.search}`;
+	return `/profile?tab=aiModels&${QUERY_PARAMS.return}=${encodeURIComponent(target)}`;
+}
+
+/** A return target is trusted only when it is a same-app path: it must
+ * start with "/" and carry no protocol-relative "//". */
+export function safeReturnTarget(raw: string | null): string | null {
+	if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return null;
+	return raw;
 }

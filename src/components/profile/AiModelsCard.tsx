@@ -39,7 +39,9 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		deleteModel,
 		cancelDownload,
 		pauseDownload,
-		activateModel
+		activateModel,
+		backHref,
+		dismissBack
 	} = useAiModels(openSnackbar);
 
 	if (!maybeSettings) {
@@ -65,6 +67,24 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		);
 	}
 	const settings = maybeSettings;
+
+	// the first-launch detour's way back: a download finished and the
+	// model is live again
+	const backBanner = backHref && (
+		<div className="mb-4 border-2 border-green-200 bg-green-50 rounded-lg p-4 text-center">
+			<p className="font-semibold text-stone-900 mb-2">
+				Model ready &mdash; back to your idea
+			</p>
+			<div className="flex justify-center gap-2">
+				<Button variant="pink" href={backHref}>
+					Continue where you left off
+				</Button>
+				<Button variant="transparent" onClick={dismissBack}>
+					Stay in Settings
+				</Button>
+			</div>
+		</div>
+	);
 
 	const modelList: ModelListContext = {
 		downloadProgress,
@@ -124,6 +144,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 			subtitle="Everything runs locally on this machine. You can also offload to an external OpenAI-compatible endpoint."
 			columns={3}
 		>
+			{backBanner}
 			<div className="mb-4 bg-stone-100 border border-stone-200 rounded-lg p-4 text-sm">
 				<p className="font-semibold mb-1">What&rsquo;s being used right now</p>
 				<p>

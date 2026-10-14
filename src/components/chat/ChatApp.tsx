@@ -9,7 +9,6 @@ import { CHAT_TYPE, type ChatType } from "@src/const";
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
 import DailyIntentModal from "@components/form/DailyIntentModal";
-import AiSetupNeeded from "@components/dashboard/AiSetupNeeded";
 
 /** Resolve the chat mode from the URL once, inside the component (module
  * scope would read window.location at import time and make the module
@@ -92,7 +91,6 @@ export default function ChatApp() {
 
 	return (
 		<AppWrapper>
-			<AiSetupNeeded />
 			{dailyStatusError && (
 				<div
 					role="alert"

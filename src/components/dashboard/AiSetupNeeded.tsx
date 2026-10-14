@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "@nanostores/react";
 import { listModelsApi } from "@helpers/api/models";
+import { aiSettingsHref } from "@helpers/helpers";
 import Button from "@ds/Button";
 import { $aiStatus, initAiStatus } from "@components/global/aiStatusStore";
 import { $downloads } from "@components/global/downloadStore";
@@ -88,7 +89,7 @@ export default function AiSetupNeeded() {
 					</>
 				)}
 			</p>
-			<Button variant="pink" href="/profile?tab=aiModels">
+			<Button variant="pink" href={aiSettingsHref()}>
 				{inFlight ? "View download" : "Set up AI Models"}
 			</Button>
 		</div>
