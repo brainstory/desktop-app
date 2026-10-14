@@ -363,6 +363,8 @@ where
 	if request.summarize && request.structured_feedback {
 		structured = extract_feedback_json(&output);
 	} else if second_pass && request.summarize && request.chat_type == ChatType::Feedback {
+		// the prose is done and rendering; say what the extra wait is for
+		on_event(EmitKind::Status, "Building comment cards...");
 		let json_system = crate::prompts::Prompt::FeedbackJsonResult
 			.text()
 			.to_string();

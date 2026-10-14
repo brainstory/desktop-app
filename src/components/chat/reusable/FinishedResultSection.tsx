@@ -16,6 +16,10 @@ interface FinishedResultSectionProps {
 	generationStopped?: boolean;
 	onRetryGeneration?: () => void;
 	onKeepDraft?: () => void;
+	/** the latest generation status line */
+	statusText?: string | null;
+	/** a feedback result finished without its comment cards */
+	cardsMissing?: boolean;
 }
 
 export default function FinishedResultSection({
@@ -28,7 +32,9 @@ export default function FinishedResultSection({
 	droppedTurns,
 	generationStopped,
 	onRetryGeneration,
-	onKeepDraft
+	onKeepDraft,
+	statusText,
+	cardsMissing
 }: FinishedResultSectionProps) {
 	return (
 		<section>
@@ -47,6 +53,8 @@ export default function FinishedResultSection({
 				generationStopped={generationStopped}
 				onRetryGeneration={onRetryGeneration}
 				onKeepDraft={onKeepDraft}
+				statusText={statusText}
+				cardsMissing={cardsMissing}
 			/>
 		</section>
 	);

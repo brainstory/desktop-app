@@ -78,6 +78,11 @@ export interface ChatSessionState {
 	readyToSave: boolean;
 	/** the summary stream finished: the result text is final */
 	resultComplete: boolean;
+	/** the latest status line from the generation ("Building comment
+	 * cards..."), shown while the result is still saving */
+	resultStatus: string | null;
+	/** a feedback result finished without its structured comment cards */
+	resultCardsMissing: boolean;
 	/** the model could only read part of the conversation (the oldest
 	 * turns were dropped to fit its context window) */
 	resultTruncated: boolean;
@@ -106,6 +111,8 @@ export type ChatSessionEvent =
 	| { type: "resultRequested" }
 	| { type: "resultStreamed" }
 	| { type: "resultTruncated"; droppedTurns: number }
+	| { type: "resultStatus"; text: string }
+	| { type: "resultCardsMissing" }
 	| { type: "resultSaved" }
 	| { type: "resultSaveFailed"; message?: string }
 	| { type: "resultSaveRetried" }
@@ -120,6 +127,8 @@ export const initialChatSessionState: ChatSessionState = {
 	resultComplete: false,
 	resultTruncated: false,
 	resultDroppedTurns: 0,
+	resultStatus: null,
+	resultCardsMissing: false,
 	resultStoppedEarly: false,
 	resultSaveError: null
 };
@@ -186,10 +195,16 @@ export function chatSessionReducer(
 				resultTruncated: false,
 				resultDroppedTurns: 0,
 				resultStoppedEarly: false,
+				resultStatus: null,
+				resultCardsMissing: false,
 				resultSaveError: null
 			};
 		case "resultStreamed":
 			return { ...state, resultComplete: true };
+		case "resultStatus":
+			return { ...state, resultStatus: event.text };
+		case "resultCardsMissing":
+			return { ...state, resultCardsMissing: true };
 		case "resultTruncated":
 			return {
 				...state,
@@ -434,12 +449,18 @@ export function useChatSession(
 			structuredResult: unknown,
 			generation: GenerationResult | null
 		): Promise<void> => {
+			// normally already dispatched by the cumulative event; repeated
+			// for any stream that ends without one
 			dispatch({ type: "resultStreamed" });
 			if (generation?.truncated) {
 				dispatch({
 					type: "resultTruncated",
 					droppedTurns: generation.dropped_turns ?? 0
 				});
+			}
+			if (parentIdea && (structuredResult === null || structuredResult === undefined)) {
+				// the prose saved fine; only the comment cards failed
+				dispatch({ type: "resultCardsMissing" });
 			}
 			await persistResult({
 				ideaId,
@@ -473,6 +494,12 @@ export function useChatSession(
 					onError(normalizeApiError(err));
 				}
 				dispatch({ type: "resultFailed" });
+			},
+			{
+				// the prose pass finished: render the markdown at once,
+				// while any follow-up pass (comment cards) is still running
+				onTextComplete: () => dispatch({ type: "resultStreamed" }),
+				onStatus: (text) => dispatch({ type: "resultStatus", text })
 			}
 		);
 	};

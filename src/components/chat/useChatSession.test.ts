@@ -213,6 +213,30 @@ describe("useChatSession", () => {
 			expect(result.current.readyToSave).toBe(true);
 		});
 
+		it("marks the text complete on the cumulative event and tracks status lines", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			const { result } = renderSession([q1, a1]);
+			act(() => result.current.handleGetResult());
+			const channel = streamChannel();
+			// the second pass announces itself while the save has not begun
+			act(() => {
+				channel.onmessage({ type: "status", content: "Building comment cards..." });
+				channel.onmessage({ type: "cumulative", content: "# Done prose" });
+			});
+			// the markdown view flips before the invoke resolves
+			expect(result.current.resultComplete).toBe(true);
+			expect(result.current.resultStatus).toBe("Building comment cards...");
+
+			await act(async () => {
+				finish({ response: "# Done prose", structured_result: null });
+				await Promise.resolve();
+			});
+			expect(result.current.readyToSave).toBe(true);
+		});
+
 		it("records when the summary was generated from a truncated transcript", async () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({

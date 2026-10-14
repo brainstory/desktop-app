@@ -267,6 +267,8 @@ export function ChatSection({
 				generationStopped={session.resultStoppedEarly}
 				onRetryGeneration={session.handleGetResult}
 				onKeepDraft={() => session.keepPartialResult(result)}
+				statusText={session.resultStatus}
+				cardsMissing={session.resultCardsMissing}
 			/>
 		);
 	} else if (fatalError === "draft-not-found") {

@@ -113,11 +113,20 @@ interface StreamHandle {
 	invokePromise: Promise<GenerationResult>;
 }
 
+/** Optional stream-event observers: the status line ("thinking...",
+ * "Building comment cards...") and the moment the final text is
+ * complete (before any follow-up passes run). */
+export interface StreamEventCallbacks {
+	onStatus?: (text: string) => void;
+	onTextComplete?: (text: string) => void;
+}
+
 export const handleStreamResult = async (
 	generateResultStream: () => StreamHandle,
 	updateMessage: UpdateMessage,
 	successCallbacks: SuccessCallbacks,
-	onError?: (err: unknown) => void
+	onError?: (err: unknown) => void,
+	events?: StreamEventCallbacks
 ): Promise<void> => {
 	const { channel, invokePromise } = generateResultStream();
 	let message = "";
@@ -129,6 +138,10 @@ export const handleStreamResult = async (
 		if (event.type === "cumulative" && typeof event.content === "string") {
 			message = event.content;
 			updateMessage(message);
+			events?.onTextComplete?.(message);
+		}
+		if (event.type === "status" && typeof event.content === "string") {
+			events?.onStatus?.(event.content);
 		}
 	};
 	try {

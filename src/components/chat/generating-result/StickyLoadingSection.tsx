@@ -18,6 +18,10 @@ interface StickyLoadingSectionProps {
 	generationStopped?: boolean;
 	onRetryGeneration?: () => void;
 	onKeepDraft?: () => void;
+	/** the latest generation status line ("Building comment cards...") */
+	statusText?: string | null;
+	/** a feedback result finished without its structured comment cards */
+	cardsMissing?: boolean;
 }
 
 /** One-line amber notice: the conversation was longer than the model's
@@ -41,7 +45,9 @@ export default function StickyLoadingSection({
 	result = "",
 	generationStopped = false,
 	onRetryGeneration,
-	onKeepDraft
+	onKeepDraft,
+	statusText = null,
+	cardsMissing = false
 }: StickyLoadingSectionProps) {
 	const truncated = droppedTurns > 0;
 	return (
@@ -86,6 +92,11 @@ export default function StickyLoadingSection({
 						Finished! Saved your summary
 					</h1>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
+					{cardsMissing && (
+						<p className="mb-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-center">
+							Couldn&rsquo;t build comment cards; your written feedback is saved.
+						</p>
+					)}
 					<div className="flex justify-end gap-2">
 						<Button
 							variant="bordered"
@@ -110,7 +121,9 @@ export default function StickyLoadingSection({
 				<>
 					<h1 className={headingStyle}>Hang tight! Writing your thoughts down...</h1>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
-					<LoadingAnimation text="Saving your summary — keep the app open." />
+					<LoadingAnimation
+						text={statusText ?? "Saving your summary — keep the app open."}
+					/>
 					<div className="flex justify-center mt-2">
 						<CancelGenerationButton />
 					</div>
