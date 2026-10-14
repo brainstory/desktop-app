@@ -63,6 +63,130 @@ pub async fn get_daily_status(app: tauri::AppHandle) -> Result<DailyStatus, Stri
 	.await
 }
 
+/// Open the app's data folder (database, models metadata) in the
+/// system file manager.
+#[tauri::command]
+pub fn open_data_folder(app: tauri::AppHandle) -> Result<(), String> {
+	let dir = app.state::<AppState>().data_dir.clone();
+	open_in_file_manager(&app, &dir)
+}
+
+/// Reveal the newest log file in the system file manager.
+#[tauri::command]
+pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+	use tauri::Manager;
+	let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+	// the newest brainstory log file (rotation may have renamed it)
+	let log_file = std::fs::read_dir(&dir)
+		.map_err(|e| e.to_string())?
+		.filter_map(|entry| entry.ok())
+		.filter(|entry| {
+			entry
+				.file_name()
+				.to_string_lossy()
+				.starts_with("brainstory")
+		})
+		.max_by_key(|entry| {
+			entry
+				.metadata()
+				.ok()
+				.and_then(|meta| meta.modified().ok())
+				.map(|time| {
+					time.duration_since(std::time::UNIX_EPOCH)
+						.map(|d| d.as_secs())
+						.unwrap_or(0)
+				})
+				.unwrap_or(0)
+		})
+		.map(|entry| entry.path());
+	match log_file {
+		Some(file) => reveal_in_file_manager(&app, &file),
+		None => open_in_file_manager(&app, &dir),
+	}
+}
+
+fn open_in_file_manager(app: &tauri::AppHandle, path: &std::path::Path) -> Result<(), String> {
+	use tauri_plugin_opener::OpenerExt;
+	app.opener()
+		.open_path(path.to_string_lossy().to_string(), None::<&str>)
+		.map_err(|e| e.to_string())
+}
+
+fn reveal_in_file_manager(app: &tauri::AppHandle, path: &std::path::Path) -> Result<(), String> {
+	use tauri_plugin_opener::OpenerExt;
+	app.opener()
+		.reveal_item_in_dir(path.to_string_lossy().to_string())
+		.map_err(|e| e.to_string())
+}
+
+/// A diagnostics bundle for support: app version, OS, the active engine
+/// statuses, free disk space and the tail of the log. Nothing leaves the
+/// device - the caller copies it to the clipboard.
+#[tauri::command]
+pub fn copy_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
+	use tauri::Manager;
+	let state = app.state::<AppState>();
+	let mut report = String::new();
+	report.push_str(&format!(
+		"Brainstory {} ({})\n",
+		env!("CARGO_PKG_VERSION"),
+		std::env::consts::OS
+	));
+	let llm = state.llm_status.lock().unwrap_or_else(|e| e.into_inner());
+	report.push_str(&format!(
+		"LLM: {:?} {}\n",
+		llm.state,
+		llm.model_id.as_deref().unwrap_or("-")
+	));
+	drop(llm);
+	let stt = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
+	report.push_str(&format!(
+		"STT: {:?} {}\n",
+		stt.state,
+		stt.model_id.as_deref().unwrap_or("-")
+	));
+	drop(stt);
+	if let Ok(free) = fs4::available_space(&state.data_dir) {
+		report.push_str(&format!("free disk: {} MB\n", free / (1024 * 1024)));
+	}
+	if let Ok(dir) = app.path().app_log_dir() {
+		let log_file = std::fs::read_dir(&dir).ok().and_then(|entries| {
+			entries
+				.filter_map(|entry| entry.ok())
+				.filter(|entry| {
+					entry
+						.file_name()
+						.to_string_lossy()
+						.starts_with("brainstory")
+				})
+				.max_by_key(|entry| {
+					entry
+						.metadata()
+						.ok()
+						.and_then(|meta| meta.modified().ok())
+						.map(|time| {
+							time.duration_since(std::time::UNIX_EPOCH)
+								.map(|d| d.as_secs())
+								.unwrap_or(0)
+						})
+						.unwrap_or(0)
+				})
+				.map(|entry| entry.path())
+		});
+		if let Some(file) = log_file {
+			if let Ok(contents) = std::fs::read_to_string(&file) {
+				let tail: Vec<&str> = contents.lines().rev().take(50).collect();
+				report.push_str("--- last log lines ---\n");
+				for line in tail.iter().rev() {
+					report.push_str(line);
+					report.push('\n');
+				}
+			}
+		}
+	}
+	Ok(report)
+}
+
 /// Link an idea to a daily log that was submitted after the idea was
 /// created (the daily-intent session's backfill path).
 #[tauri::command]

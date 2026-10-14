@@ -9,6 +9,7 @@ import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
 import { PhotoNameCard, GeneralCard, detectedTimezone } from "./ProfileCards";
+import { AboutCard } from "./AboutCard";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
@@ -177,6 +178,7 @@ function ProfileInner() {
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
 					<QuickCaptureCard enabled={quickCapture} openSnackbar={openSnackbar} />
 					<UpdatesCard enabled={updates.enabled} onToggle={updates.save} />
+					<AboutCard openSnackbar={openSnackbar} />
 				</div>
 			)
 		},

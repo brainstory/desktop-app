@@ -51,8 +51,10 @@ pub fn run() {
 					}),
 				])
 				.level(log::LevelFilter::Info)
-				.max_file_size(512_000)
-				.rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+				// generous retention: diagnosing a model-load failure a
+				// day later needs more than one 512 KB file
+				.max_file_size(2_000_000)
+				.rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
 				.build(),
 		)
 		.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -70,6 +72,9 @@ pub fn run() {
 		.plugin(tauri_plugin_process::init())
 		// remember the window's size and position across launches
 		.plugin(tauri_plugin_window_state::Builder::default().build())
+		// opening folders/files in the system file manager (Rust-side
+		// only; the capability file stays narrow)
+		.plugin(tauri_plugin_opener::init())
 		.plugin(
 			// Quick capture: the shortcut handler fires even while the
 			// window is hidden in the tray, so an idea can be started
@@ -86,6 +91,9 @@ pub fn run() {
 			commands::data::get_user,
 			commands::data::get_daily_status,
 			commands::data::link_idea_log,
+			commands::data::open_data_folder,
+			commands::data::open_log_folder,
+			commands::data::copy_diagnostics,
 			commands::data::get_all_ideas,
 			commands::data::get_idea,
 			commands::data::get_idea_children,
