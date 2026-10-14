@@ -34,6 +34,7 @@ export const COMMANDS = {
 	getIdeaChildren: "get_idea_children",
 	createIdea: "create_idea",
 	updateIdea: "update_idea",
+	linkIdeaLog: "link_idea_log",
 	markIdeaRead: "mark_idea_read",
 	deleteIdea: "delete_idea",
 	addIdeaNote: "add_idea_note",
@@ -125,6 +126,7 @@ interface CommandSignatures {
 		result: { id: string };
 	};
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
+	linkIdeaLog: { args: { ideaId: string; logId: string }; result: null };
 	deleteIdea: { args: IdeaIdArgs; result: unknown };
 	addIdeaNote: { args: { ideaId: string; note: string }; result: { id: string } };
 	updateIdeaNote: {

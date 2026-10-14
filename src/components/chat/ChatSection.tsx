@@ -36,6 +36,8 @@ import ChatTopBar from "./reusable/ChatTopBar";
 interface ChatSectionProps {
 	draftId?: string;
 	dailyLogId?: string | null;
+	/** today's daily-intent status is still being read: recording waits */
+	dailyStatusLoading?: boolean;
 	/** chat mode (computed by the parent from the URL, so this module has
 	 * no import-time window.location reads) */
 	chatType?: ChatType;
@@ -49,6 +51,7 @@ interface ChatSectionProps {
 export function ChatSection({
 	draftId,
 	dailyLogId,
+	dailyStatusLoading = false,
 	chatType = CHAT_TYPE.ORIGINAL,
 	parentIdParam = null,
 	fromGuideParam = null,
@@ -194,13 +197,15 @@ export function ChatSection({
 
 	// after the draft loader: its status decides whether input waits
 	const restoringDraft = draftStatus === "loading";
-	const micBlockedReason = restoringDraft
-		? "Restoring your draft…"
-		: llmBlocked
-			? "Set up AI to begin"
-			: sttBlocked
-				? "Speech model needed"
-				: undefined;
+	const micBlockedReason = dailyStatusLoading
+		? "Loading today's status…"
+		: restoringDraft
+			? "Restoring your draft…"
+			: llmBlocked
+				? "Set up AI to begin"
+				: sttBlocked
+					? "Speech model needed"
+					: undefined;
 	const sendBlockedReason = restoringDraft
 		? "Restoring your draft…"
 		: llmBlocked

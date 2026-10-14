@@ -63,6 +63,24 @@ pub async fn get_daily_status(app: tauri::AppHandle) -> Result<DailyStatus, Stri
 	.await
 }
 
+/// Link an idea to a daily log that was submitted after the idea was
+/// created (the daily-intent session's backfill path).
+#[tauri::command]
+pub async fn link_idea_log(
+	app: tauri::AppHandle,
+	idea_id: String,
+	log_id: String,
+) -> Result<(), String> {
+	if log_id.trim().is_empty() {
+		return Err("log id must not be empty".into());
+	}
+	run_blocking("link idea log", move || {
+		let state = app.state::<AppState>();
+		state.db.link_idea_log(&idea_id, &log_id)
+	})
+	.await
+}
+
 #[tauri::command]
 pub async fn get_all_ideas(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 	run_blocking("list ideas", move || {

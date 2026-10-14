@@ -83,6 +83,7 @@ pub fn run() {
 		.invoke_handler(tauri::generate_handler![
 			commands::data::get_user,
 			commands::data::get_daily_status,
+			commands::data::link_idea_log,
 			commands::data::get_all_ideas,
 			commands::data::get_idea,
 			commands::data::get_idea_children,

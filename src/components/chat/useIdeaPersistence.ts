@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@src/types";
-import { CHAT_SAVE_STATE, type ChatSaveState, type ChatType } from "@src/const";
+import { CHAT_SAVE_STATE, CHAT_TYPE, type ChatSaveState, type ChatType } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
@@ -174,10 +174,15 @@ export function useIdeaPersistence(
 		latestConversationRef.current = conversation;
 	}, [conversation]);
 
+	// A daily-intent idea must carry its log link, so its creation waits
+	// until today's status is known: undefined means the read is still in
+	// flight (null means "no log today", which is allowed to proceed).
+	const dailyLogPending = chatType === CHAT_TYPE.DAILY_INTENT && dailyLogId === undefined;
 	// derived: an idea must be created as soon as the conversation is long
 	// enough and no idea row exists yet - or right away when an early
 	// wrap-up requested it
-	const readyToCreateIdea = !ideaId && (conversation.length >= minLength || forceCreate);
+	const readyToCreateIdea =
+		!ideaId && !dailyLogPending && (conversation.length >= minLength || forceCreate);
 
 	// create-once effect: the guard prevents a second create while one is
 	// in flight (StrictMode double-invoke, conversation updates). The

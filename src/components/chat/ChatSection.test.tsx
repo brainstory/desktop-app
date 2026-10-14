@@ -288,7 +288,11 @@ describe("ChatSection", () => {
 		});
 		render(
 			<StrictMode>
-				<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />
+				<ChatSection
+					chatType="daily_intent"
+					dailyLogId={null}
+					conversationEndCallbacks={() => {}}
+				/>
 			</StrictMode>
 		);
 		const user = userEvent.setup();
@@ -312,7 +316,13 @@ describe("ChatSection", () => {
 			},
 			generate_response: () => ({ response: "and then?" })
 		});
-		render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
 		const user = userEvent.setup();
 		await user.click(screen.getByText("Not in a place to talk out-loud?"));
 		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
@@ -332,7 +342,13 @@ describe("ChatSection", () => {
 			},
 			generate_response: () => ({ response: "and then?" })
 		});
-		render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
 		const user = userEvent.setup();
 		await user.click(screen.getByText("Not in a place to talk out-loud?"));
 		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
@@ -359,7 +375,11 @@ describe("ChatSection", () => {
 			render(
 				<>
 					<a href="/dashboard">Library</a>
-					<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />
+					<ChatSection
+						chatType="daily_intent"
+						dailyLogId={null}
+						conversationEndCallbacks={() => {}}
+					/>
 				</>
 			);
 			await sendTyped("a calm day");
@@ -494,7 +514,13 @@ describe("ChatSection", () => {
 					structured_result: null
 				})
 			});
-			render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+			render(
+				<ChatSection
+					chatType="daily_intent"
+					dailyLogId={null}
+					conversationEndCallbacks={() => {}}
+				/>
+			);
 			await sendTyped("a calm day");
 			expect(await screen.findByText("and then?")).toBeInTheDocument();
 			// the create(s) at the minimum length failed: no idea id yet

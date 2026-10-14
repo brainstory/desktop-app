@@ -326,6 +326,30 @@ impl Db {
 		})
 	}
 
+	/// Link (or relink) an idea to a daily log: used when today's log was
+	/// submitted after the idea already existed (the session created it
+	/// before the log existed, or the log modal was dismissed first).
+	pub fn link_idea_log(&self, id: &str, log_id: &str) -> Result<(), String> {
+		self.with_tx(|conn| {
+			let exists: i64 = conn
+				.query_row(
+					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+					params![id],
+					|row| row.get(0),
+				)
+				.map_err(|e| format!("failed to read idea {id}: {e}"))?;
+			if exists == 0 {
+				return Err(format!("idea {id} not found"));
+			}
+			conn.execute(
+				"UPDATE ideas SET log_id = ?1 WHERE id = ?2",
+				params![log_id, id],
+			)
+			.map_err(|e| format!("failed to link idea to log: {e}"))?;
+			Ok(())
+		})
+	}
+
 	pub fn mark_idea_read(&self, id: &str) -> Result<(), String> {
 		self.lock()
 			.execute("UPDATE ideas SET is_unread = 0 WHERE id = ?1", params![id])

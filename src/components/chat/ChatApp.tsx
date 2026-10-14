@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
+import { linkIdeaLogApi } from "@helpers/api/idea";
 import { getQueryParam } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 import { CHAT_TYPE, type ChatType } from "@src/const";
@@ -29,7 +30,7 @@ export default function ChatApp() {
 	const chatType = chatTypeFromParams();
 	const parentId = getQueryParam(QUERY_PARAMS.parentId);
 	const isFromGuide = getQueryParam(QUERY_PARAMS.topic);
-	const [logId, setLogId] = useState<string | null | undefined>(null);
+	const [logId, setLogId] = useState<string | null | undefined>(undefined);
 	const [draftId, setDraftId] = useState(getQueryParam(QUERY_PARAMS.id));
 	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 	/** the daily-status read failed: warn + offer a retry instead of
@@ -61,13 +62,33 @@ export default function ChatApp() {
 				})
 				.catch((err) => {
 					console.error("error getting daily status", err);
-					if (isCurrent) setDailyStatusError(true);
+					if (!isCurrent) return;
+					setDailyStatusError(true);
+					// the session must not stay un-creatable forever: treat the
+					// status as "no log today" (the strip below offers a retry)
+					setLogId(null);
 				});
 			return () => {
 				isCurrent = false;
 			};
 		}
 	}, [isDailyIntent, statusAttempt]);
+
+	/** A log submitted after the session's idea exists must link back to
+	 * it (the idea was created while no log was known). */
+	const handleLogSubmit = (submittedLogId: string | null) => {
+		setLogId(submittedLogId);
+		if (typeof submittedLogId === "string") {
+			const ideaId = getQueryParam(QUERY_PARAMS.id);
+			if (ideaId) {
+				linkIdeaLogApi(ideaId, submittedLogId).catch((err) =>
+					console.error("failed to link the daily log to this session", err)
+				);
+			}
+		}
+	};
+
+	const showLogPrompt = isDailyIntent && logId === null && !isLogModalOpen;
 
 	return (
 		<AppWrapper>
@@ -92,12 +113,33 @@ export default function ChatApp() {
 					</button>
 				</div>
 			)}
+			{showLogPrompt && (
+				<div
+					role="status"
+					className="flex items-center justify-center gap-3 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-3 m-4 text-sm"
+				>
+					<span>
+						Today&rsquo;s daily log isn&rsquo;t filled in yet &mdash; this session
+						won&rsquo;t count toward your streak until it is.
+					</span>
+					<button
+						className="underline font-semibold whitespace-nowrap"
+						onClick={() => setIsLogModalOpen(true)}
+					>
+						Fill it in
+					</button>
+				</div>
+			)}
 			{isLogModalOpen && (
-				<DailyIntentModal setLogId={setLogId} onClose={() => setIsLogModalOpen(false)} />
+				<DailyIntentModal
+					setLogId={handleLogSubmit}
+					onClose={() => setIsLogModalOpen(false)}
+				/>
 			)}
 			{/* key field so that rerender happens if daily intent draft idea found */}
 			<ChatSection
 				key={draftId}
+				dailyStatusLoading={isDailyIntent && logId === undefined}
 				dailyLogId={logId}
 				draftId={draftId ?? undefined}
 				chatType={chatType}

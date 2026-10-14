@@ -199,6 +199,12 @@ export async function updateIdeaApi(
 	return response.id;
 }
 
+/** Link (or relink) an idea to a daily log that was submitted after the
+ * idea was created - the daily-intent session's backfill path. */
+export function linkIdeaLogApi(ideaId: string, logId: string): Promise<null> {
+	return invokeCommand("linkIdeaLog", { ideaId, logId });
+}
+
 /** Update an idea title saved in the database.
  * Called after user edits idea title
  * @returns created idea's uuid
@@ -243,6 +249,7 @@ export default {
 	createIdeaApi,
 	markIdeaReadApi,
 	updateIdeaTitleApi,
+	linkIdeaLogApi,
 	deleteIdeaApi,
 	addIdeaNoteApi,
 	updateIdeaNoteApi,

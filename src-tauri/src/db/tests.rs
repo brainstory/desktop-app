@@ -25,6 +25,41 @@ fn survey_does_not_complete_the_daily_intent() {
 }
 
 #[test]
+fn link_idea_log_attaches_and_relinks_a_daily_intent() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	let draft = vec![ChatMessage {
+		role: "user".into(),
+		content: "talked through the day".into(),
+	}];
+	// the session existed before today's log did: no log link
+	db.create_daily_intent_idea("i1", "", "", &draft, &serde_json::json!({}))
+		.unwrap();
+	let linked_log = || {
+		db.lock()
+			.query_row("SELECT log_id FROM ideas WHERE id = 'i1'", [], |row| {
+				row.get::<_, Option<String>>(0)
+			})
+			.unwrap()
+	};
+	assert_eq!(linked_log(), None);
+
+	// the log submitted afterwards links the existing idea
+	db.link_idea_log("i1", "log-1").unwrap();
+	assert_eq!(linked_log().as_deref(), Some("log-1"));
+
+	// a later log (a re-submitted same-day log) relinks
+	db.link_idea_log("i1", "log-2").unwrap();
+	assert_eq!(linked_log().as_deref(), Some("log-2"));
+
+	// unknown ideas report instead of silently no-op'ing
+	let err = db
+		.link_idea_log("ghost", "log-1")
+		.expect_err("missing idea");
+	assert!(err.contains("not found"), "unexpected error: {err}");
+}
+
+#[test]
 fn update_idea_reports_missing_ideas() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");

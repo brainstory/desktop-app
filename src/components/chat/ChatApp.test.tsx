@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { cleanStores } from "nanostores";
@@ -100,5 +100,107 @@ describe("ChatApp resuming a feedback draft", () => {
 		]);
 		expect(calls("create_idea")).toHaveLength(0);
 		expect(new URLSearchParams(window.location.search).get("id")).toBe("fb-draft");
+	});
+});
+
+describe("ChatApp daily intent log handling", () => {
+	afterEach(() => {
+		window.history.replaceState(null, "", "/");
+		cleanup();
+		cleanStores($aiStatus);
+	});
+
+	function mockDaily(handlers: Record<string, (args: unknown) => unknown> = {}) {
+		mockInvoke({
+			get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } }),
+			get_log_questions: () => ({
+				log: [{ id: 1, text: "How did today feel?", label: "mood" }]
+			}),
+			submit_log: () => ({ id: "log-1" }),
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: (args) => ({ id: (args as { id: string }).id }),
+			generate_response: () => ({ response: "and then?" }),
+			...handlers
+		});
+	}
+
+	it("blocks the mic and the create while today's status is unknown", async () => {
+		let resolveStatus!: (v: unknown) => void;
+		mockDaily({
+			get_daily_status: () => new Promise((res) => (resolveStatus = res))
+		});
+		window.history.replaceState(null, "", "/chat?dailyIntent=true");
+		render(<ChatApp />);
+
+		// the mic waits for the daily status, and no idea is created
+		expect(await screen.findByText("Loading today's status…")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Start recording" })).toHaveAttribute(
+			"aria-disabled",
+			"true"
+		);
+
+		await act(async () => {
+			resolveStatus({ log_id: "log-9", streak: 1 });
+			await Promise.resolve();
+		});
+		// the status arrived: input opens, and the modal stays closed
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Start recording" })).not.toHaveAttribute(
+				"aria-disabled",
+				"true"
+			)
+		);
+		expect(screen.queryByText(/daily log isn't filled in/)).not.toBeInTheDocument();
+	});
+
+	it("offers filling in today's log after the modal was dismissed", async () => {
+		mockDaily({
+			get_daily_status: () => ({ log_id: null, streak: 0 })
+		});
+		window.history.replaceState(null, "", "/chat?dailyIntent=true");
+		render(<ChatApp />);
+
+		// no log today: the modal opens; Escape dismisses it
+		expect(await screen.findByRole("dialog", { name: "Daily Intent Log" })).toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
+
+		// the persistent strip replaces the silently-unlinked session
+		const strip = await screen.findByText(/daily log isn.t filled in yet/i);
+		expect(strip.closest("[role='status']")).toBeInTheDocument();
+		expect(calls("create_idea")).toHaveLength(0);
+
+		// "Fill it in" reopens the modal
+		await userEvent.click(screen.getByRole("button", { name: "Fill it in" }));
+		expect(await screen.findByRole("dialog", { name: "Daily Intent Log" })).toBeInTheDocument();
+	});
+
+	it("links the session's idea when the log is submitted after it exists", async () => {
+		mockDaily({
+			get_daily_status: () => ({ log_id: null, streak: 0 }),
+			get_idea: () => ({
+				id: "idea-1",
+				transcript: [
+					{ role: "assistant", content: "Walk me through your day." },
+					{ role: "user", content: "so far so good" }
+				]
+			})
+		});
+		window.history.replaceState(null, "", "/chat?dailyIntent=true&id=idea-1");
+		render(<ChatApp />);
+
+		// no log today: the modal opens first, dismiss it to reach the strip
+		expect(await screen.findByRole("dialog", { name: "Daily Intent Log" })).toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
+		expect(await screen.findByText(/daily log isn.t filled in yet/i)).toBeInTheDocument();
+		// fill the log in from the strip
+		await userEvent.click(screen.getByRole("button", { name: "Fill it in" }));
+		const submit = await screen.findByRole("button", { name: "Submit" });
+		await userEvent.click(submit);
+
+		await waitFor(() => expect(calls("link_idea_log")).toHaveLength(1));
+		expect(calls("link_idea_log")[0]![1]).toMatchObject({
+			ideaId: "idea-1",
+			logId: "log-1"
+		});
 	});
 });
