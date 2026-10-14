@@ -137,6 +137,12 @@ export function SttEngineSection({
 	const languageOptions = baseLocales.includes(currentLanguage)
 		? baseLocales
 		: [currentLanguage, ...baseLocales];
+	// A non-English language with an English-only whisper: the prompts
+	// promise to match the user's language, so say so clearly
+	const englishOnlyMismatch =
+		whisperModel?.downloaded &&
+		!isMultilingualWhisper(whisperModel.id) &&
+		!currentLanguage.toLowerCase().startsWith("en");
 	const languageHelp = !appleActive
 		? `${whisperModel?.label ?? "The whisper model"} transcribes in this language.`
 		: multilingualWhisper
@@ -243,6 +249,13 @@ export function SttEngineSection({
 						</select>
 						<p className="text-sm text-stone-500 mt-1">{languageHelp}</p>
 					</div>
+				)}
+				{englishOnlyMismatch && (
+					<p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 max-w-md">
+						The selected whisper model is English-only: your speech is transcribed as
+						English whatever the language setting says. Pick a multilingual model
+						(Whisper base or small) below to transcribe {currentLanguage}.
+					</p>
 				)}
 			</div>
 			<h4 className="font-semibold text-stone-700 text-sm">

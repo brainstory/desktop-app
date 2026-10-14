@@ -61,7 +61,27 @@ pub const LLM_MODELS: [ModelSpec; 3] = [
 	},
 ];
 
-pub const STT_MODELS: [ModelSpec; 4] = [
+pub const STT_MODELS: [ModelSpec; 6] = [
+	ModelSpec {
+		id: "whisper-base",
+		kind: ModelKind::Stt,
+		label: "Whisper base (multilingual)",
+		description: "Everyday transcription in any language (~148 MB): fast, accurate enough.",
+		repo: "ggerganov/whisper.cpp",
+		filename: "ggml-base.bin",
+		size_bytes: 147_951_465,
+		sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+	},
+	ModelSpec {
+		id: "whisper-small",
+		kind: ModelKind::Stt,
+		label: "Whisper small (multilingual)",
+		description: "More accurate transcription in any language (~488 MB), still quick.",
+		repo: "ggerganov/whisper.cpp",
+		filename: "ggml-small.bin",
+		size_bytes: 487_601_967,
+		sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+	},
 	ModelSpec {
 		id: "whisper-base-en",
 		kind: ModelKind::Stt,

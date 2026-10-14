@@ -127,6 +127,13 @@ describe("SttEngineSection", () => {
 		expect(screen.queryByLabelText("Speech language")).not.toBeInTheDocument();
 	});
 
+	it("warns when a non-English language meets an English-only model", () => {
+		renderSection({
+			settings: { sttModel: "whisper-base-en", sttLanguage: "de-DE" }
+		});
+		expect(screen.getByText(/selected whisper model is English-only/i)).toBeInTheDocument();
+	});
+
 	it("offers the speech language for a multilingual whisper model", () => {
 		renderSection({
 			settings: { sttModel: "whisper-large-v3-turbo" },

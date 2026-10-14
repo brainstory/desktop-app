@@ -14,10 +14,15 @@ First launch (or from **Settings → AI Models**), download:
   (QAT 4-bit, ~5.2 GB), or MiniCPM5 2B (~1.6 GB) for lighter machines.
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
 - **STT** — whisper.cpp tiny.en (~78 MB), base.en (~148 MB, default), small.en
-  (~488 MB), or large-v3-turbo (~1.6 GB). On macOS 26+, the built-in Apple
+  (~488 MB), large-v3-turbo (~1.6 GB), or the multilingual base/small builds
+  (same sizes) for non-English speech. On macOS 26+, the built-in Apple
   Speech engine (Speech.framework, on-device) is available instead — no model
   download at all, with a selectable language and whisper as the automatic
-  fallback. New installs default to "Auto" (Apple Speech where available,
+  fallback.
+
+> The interview openers, the question of the day and the settings copy are
+> English regardless of the transcription language; the model itself is asked
+> to converse in your language. New installs default to "Auto" (Apple Speech where available,
   whisper otherwise); upgraded installs keep whisper and can switch under
   Settings → AI Models. Apple Speech needs one-time permission under System
   Settings → Privacy & Security → Speech Recognition.
