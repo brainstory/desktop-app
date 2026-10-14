@@ -377,6 +377,7 @@ pub async fn generate_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
+	state.refuse_if_shutting_down()?;
 	generate_and_respond(&state, &request, false, |_, _| true).await
 }
 
@@ -403,6 +404,7 @@ pub async fn generate_streaming_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
+	state.refuse_if_shutting_down()?;
 	// channel events surface to the webview; a dead channel cancels
 	// generation instead of burning CPU on unseen output
 	let sender = on_event;

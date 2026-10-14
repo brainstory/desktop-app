@@ -76,6 +76,44 @@ fn link_idea_log_attaches_and_relinks_a_daily_intent() {
 }
 
 #[test]
+fn quiesce_waits_for_a_held_connection_and_returns_after_release() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	// one write so the WAL has something to checkpoint
+	db.set_setting("k", "v").unwrap();
+
+	// Hold the connection like an in-flight write would (a MutexGuard
+	// is not Send, so the holder stays on this thread); quiesce runs on
+	// a scoped thread and must return only once the hold ends - not
+	// via its own timeout (which is 2s, far past the 250ms hold).
+	let started = std::time::Instant::now();
+	std::thread::scope(|scope| {
+		let _guard = db.conn.try_lock().expect("uncontended");
+		let waiter = scope.spawn(|| db.quiesce(std::time::Duration::from_secs(2)));
+		std::thread::sleep(std::time::Duration::from_millis(250));
+		drop(_guard);
+		waiter
+			.join()
+			.expect("quiesce returns once the connection is released");
+	});
+	let elapsed = started.elapsed();
+	assert!(
+		elapsed >= std::time::Duration::from_millis(200),
+		"quiesce must wait out the held connection, returned after {elapsed:?}"
+	);
+	assert!(
+		elapsed < std::time::Duration::from_secs(2),
+		"quiesce returned via its timeout instead of the release ({elapsed:?})"
+	);
+
+	// uncontended: returns promptly (and checkpoints) instead of
+	// sleeping the timeout away
+	let again = std::time::Instant::now();
+	db.quiesce(std::time::Duration::from_secs(2));
+	assert!(again.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[test]
 fn update_idea_reports_missing_ideas() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");

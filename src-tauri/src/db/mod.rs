@@ -279,6 +279,25 @@ impl Db {
 		tx.commit().map_err(|e| e.to_string())
 	}
 
+	/// Wait (up to `timeout`) for every in-flight database operation to
+	/// finish, then checkpoint the WAL so the file on disk is complete
+	/// before a hard process exit. Called only from the shutdown path.
+	pub fn quiesce(&self, timeout: std::time::Duration) {
+		let deadline = std::time::Instant::now() + timeout;
+		while self.conn.try_lock().is_err() {
+			if std::time::Instant::now() >= deadline {
+				log::warn!("database still busy after {timeout:?}; shutting down anyway");
+				return;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(20));
+		}
+		// uncontended now: checkpoint under the lock
+		let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+		if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+			log::warn!("shutdown WAL checkpoint failed: {e}");
+		}
+	}
+
 	// ---- settings ----
 
 	pub fn get_setting(&self, key: &str) -> Option<String> {

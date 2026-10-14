@@ -7,6 +7,16 @@ use super::{lock, AppState};
 use crate::models::AiSettings;
 
 impl AppState {
+	/// True once shutdown began: commands that write must refuse to
+	/// start (the exit path waits out in-flight work instead).
+	pub fn refuse_if_shutting_down(&self) -> Result<(), String> {
+		if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+			Err("app is shutting down".into())
+		} else {
+			Ok(())
+		}
+	}
+
 	/// The AI settings, from the read-through cache when warm. All writes
 	/// go through [`Self::mutate_ai_settings`], which publishes under
 	/// this same mutex, so the cache can never go stale and a cold read

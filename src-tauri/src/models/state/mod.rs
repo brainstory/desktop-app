@@ -126,6 +126,9 @@ pub struct AppState {
 	/// when the tray icon is hidden, closing the window quits the app
 	/// (otherwise it would keep running with no way to reach it)
 	pub quit_on_close: AtomicBool,
+	/// shutdown began: new database writes refuse to start so the exit
+	/// path can wait out the in-flight ones instead of cutting them off
+	pub shutting_down: AtomicBool,
 }
 
 /// Whisper reads the model file fresh on each load: after a failed
@@ -261,6 +264,7 @@ impl AppState {
 			active_generations: std::sync::atomic::AtomicUsize::new(0),
 			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),
+			shutting_down: AtomicBool::new(false),
 		}
 	}
 

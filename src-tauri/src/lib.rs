@@ -304,7 +304,7 @@ pub fn run() {
 						.load(std::sync::atomic::Ordering::Relaxed);
 					if quit_on_close {
 						// tray hidden: closing the window is the way out
-						crate::force_exit();
+						crate::shutdown_and_exit(app);
 					} else {
 						// Closing the window hides it to the tray so daily
 						// reminders keep working; quit via the tray menu.
@@ -332,14 +332,14 @@ pub fn run() {
 			eprintln!("error while building brainstory: {e}");
 			std::process::exit(1);
 		})
-		.run(|_app, event| {
+		.run(|app, event| {
 			// Every quit path (tray menu, Cmd+Q, dock quit, logout) funnels
 			// through here before AppKit calls exit(). _exit() skips C++
 			// static destructors, which abort on the vendored ggml teardown.
 			if let tauri::RunEvent::Exit = event {
 				// release the microphone on the way out
 				voice::abandon_capture();
-				crate::force_exit();
+				crate::shutdown_and_exit(app);
 			}
 		});
 }
@@ -475,7 +475,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 				});
 			}
 			"quit" => {
-				crate::force_exit();
+				crate::shutdown_and_exit(app);
 			}
 			_ => {}
 		})
@@ -540,8 +540,32 @@ pub fn apply_presence(app: &AppHandle, dock: bool, tray: bool) {
 /// skipping finalization is safe. The log is flushed first: _exit skips
 /// the Rust runtime teardown that would otherwise drain the buffer, and
 /// the tail of the log file is usually the interesting part.
-pub fn force_exit() -> ! {
+pub fn shutdown_and_exit(app: &AppHandle) -> ! {
+	let state = app.state::<AppState>();
+	// new writes refuse to start from here on; in-flight ones are
+	// waited out below instead of being cut off mid-transaction
+	state
+		.shutting_down
+		.store(true, std::sync::atomic::Ordering::SeqCst);
+	// The hidden-in-tray close path destroys the window without the
+	// page ever running its pagehide flush: ask for it explicitly and
+	// give the (already async) save a moment to land.
+	if state
+		.quit_on_close
+		.load(std::sync::atomic::Ordering::Relaxed)
+	{
+		if let Some(window) = app.get_webview_window("main") {
+			window
+				.eval("window.dispatchEvent(new Event('pagehide'));")
+				.ok();
+		}
+		std::thread::sleep(std::time::Duration::from_secs(1));
+	}
+	// wait out in-flight writes, then leave a fully checkpointed file
+	state.db.quiesce(std::time::Duration::from_secs(2));
 	log::logger().flush();
+	// _exit stays: the vendored ggml static destructors abort if the
+	// process unwinds normally
 	unsafe { libc::_exit(0) }
 }
 

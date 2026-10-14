@@ -126,6 +126,8 @@ pub async fn create_idea(
 ) -> Result<serde_json::Value, String> {
 	run_blocking("create idea", move || {
 		let state = app.state::<AppState>();
+		state.refuse_if_shutting_down()?;
+		state.refuse_if_shutting_down()?;
 		let id = uuid::Uuid::new_v4().to_string();
 		let idea_type = idea_type.unwrap_or_default();
 		let result = result.unwrap_or_default();
@@ -181,6 +183,8 @@ pub async fn update_idea(
 ) -> Result<serde_json::Value, String> {
 	run_blocking("update idea", move || {
 		let state = app.state::<AppState>();
+		state.refuse_if_shutting_down()?;
+		state.refuse_if_shutting_down()?;
 		if let Some(r) = &result {
 			ensure_within("result", r, MAX_RESULT_BYTES)?;
 		}
