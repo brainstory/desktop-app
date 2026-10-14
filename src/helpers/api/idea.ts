@@ -176,19 +176,25 @@ export async function createIdeaApi(
 
 /** Update an idea saved in the database.
  * Called whenever a draft is saved or the final result is stored.
- * @returns created idea's uuid
+ * `result` is only sent when the caller provides it: the backend
+ * leaves keys that are absent alone, while a transcript-only autosave
+ * defaulting it to "" would wipe a stored summary and its derived
+ * title.
+ * @returns updated idea's uuid
  */
 export async function updateIdeaApi(
 	ideaId: string,
 	transcript: ChatMessage[],
-	result = "",
-	structuredResult: unknown = null
+	options?: {
+		result?: string;
+		structuredResult?: unknown;
+	}
 ): Promise<string> {
 	const response = await invokeCommand("updateIdea", {
 		id: ideaId,
 		transcript,
-		result,
-		structuredResult
+		structuredResult: options?.structuredResult ?? null,
+		...(options?.result !== undefined && { result: options.result })
 	});
 	return response.id;
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
 
-import { getIdeaApi, getIdeaChildrenApi } from "./idea";
+import { getIdeaApi, getIdeaChildrenApi, updateIdeaApi } from "./idea";
 import { getAllIdeasApi } from "./user";
 import { saveUserSettingsApi } from "./settings";
 import { downloadModelApi } from "./models";
@@ -413,6 +413,27 @@ describe("getAllIdeasApi", () => {
 				draftSummary: undefined
 			})
 		]);
+	});
+});
+
+describe("updateIdeaApi", () => {
+	it("sends no result key on a transcript-only save", async () => {
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		await updateIdeaApi("i1", [{ role: "user", content: "hello" }]);
+		const call = vi.mocked(invoke).mock.calls[0]!;
+		expect(call[0]).toBe("update_idea");
+		// an explicit result: "" would make the backend clear the stored
+		// summary; the key must be absent so the field is left alone
+		expect(call[1]).not.toHaveProperty("result");
+		// null is the backend's "leave alone" for the structured result
+		expect(call[1]).toHaveProperty("structuredResult", null);
+	});
+
+	it("sends the result and structured result when finishing a session", async () => {
+		mockInvoke({ update_idea: () => ({ id: "i1" }) });
+		await updateIdeaApi("i1", [], { result: "# Summary", structuredResult: { items: [] } });
+		const call = vi.mocked(invoke).mock.calls[0]!;
+		expect(call[1]).toMatchObject({ result: "# Summary", structuredResult: { items: [] } });
 	});
 });
 

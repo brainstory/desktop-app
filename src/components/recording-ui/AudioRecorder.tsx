@@ -65,13 +65,10 @@ const AudioRecorder = ({
 	 * cancelled transcription nobody else resets the readout, and the
 	 * 4-minute warning would fire early (or go negative) on the next
 	 * attempt. */
-	const setIsRunning = useCallback(
-		(running: boolean) => {
-			if (running) setTime(0);
-			setIsRunningState(running);
-		},
-		[]
-	);
+	const setIsRunning = useCallback((running: boolean) => {
+		if (running) setTime(0);
+		setIsRunningState(running);
+	}, []);
 
 	// Timer
 	useTimer(isRunning, setTime);

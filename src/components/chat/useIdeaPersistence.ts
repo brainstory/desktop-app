@@ -150,7 +150,10 @@ export function useIdeaPersistence(
 			// the final write carries the full conversation
 			pendingSaveRef.current = null;
 			const write = saveQueueRef.current.then(async () => {
-				await updateIdeaApi(id, finalConversation, resultText, structuredResult);
+				await updateIdeaApi(id, finalConversation, {
+					result: resultText,
+					structuredResult
+				});
 				persistedRef.current = finalConversation;
 			});
 			saveQueueRef.current = write.catch(() => {});
