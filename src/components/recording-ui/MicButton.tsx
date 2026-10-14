@@ -97,7 +97,7 @@ export function MicButton({
 					recording &middot; {formatElapsed(elapsedSeconds)}
 				</p>
 			) : (
-				<p>{status === "idle" ? "ready to listen" : status}</p>
+				<p>{status === "idle" ? "ready to listen · Space" : status}</p>
 			)}
 		</div>
 	);

@@ -44,7 +44,7 @@ describe("AboutCard", () => {
 		await waitFor(() => expect(invoke).toHaveBeenCalledWith("copy_diagnostics"));
 		await waitFor(() => expect(writeText).toHaveBeenCalled());
 		// the raw report travels verbatim, the snackbar only confirms
-		expect(writeText.mock.calls[0]![0]).toContain("LLM: Ready gemma");
+		expect(writeText).toHaveBeenCalledWith(expect.stringContaining("LLM: Ready gemma"));
 		expect(openSnackbar).toHaveBeenCalledWith(true, "Diagnostics copied");
 	});
 

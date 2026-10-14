@@ -504,6 +504,29 @@ describe("ChatSection", () => {
 		});
 	});
 
+	it("finishes the session with Cmd+Enter once the minimum is met", async () => {
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" }),
+			generate_streaming_response: (args) =>
+				(args as { summarize?: boolean }).summarize
+					? { response: "# Summary", structured_result: null }
+					: { response: "and then?" }
+		});
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("a calm day");
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
+
+		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+		expect(await screen.findByText("Finished! Saved your summary")).toBeInTheDocument();
+	});
+
 	describe("early wrap-up", () => {
 		it("creates the session and generates the summary before the usual minimum", async () => {
 			mockChat({

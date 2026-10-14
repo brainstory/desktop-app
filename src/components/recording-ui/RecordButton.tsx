@@ -170,6 +170,44 @@ function RecordButton({
 			setAnnouncement(change === "started" ? "Recording started" : "Recording stopped")
 	});
 
+	// Keyboard: Space toggles the mic with the same guards as the click
+	// (and only when no field has focus - typing a space must stay
+	// typing); Escape cancels a transcription. The mic button itself
+	// stays focusable, so this is a shortcut, not the only path.
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent): void => {
+			const target = event.target as HTMLElement | null;
+			const tag = target?.tagName?.toLowerCase();
+			const inField =
+				tag === "input" ||
+				tag === "textarea" ||
+				tag === "select" ||
+				target?.isContentEditable === true;
+			if (event.key === "Escape") {
+				if (isTranscribing && !inField) {
+					event.preventDefault();
+					handleCancelTranscription();
+				}
+				return;
+			}
+			if (event.key !== " " || inField) return;
+			const micUsable =
+				!isDisabledOverride &&
+				!modelLoading &&
+				!micBlockedReason &&
+				!voice.micStarting &&
+				!voice.micPermissionDenied &&
+				conversationState !== CONVERSATION_STATE.WaitingForCoach &&
+				conversationState !== CONVERSATION_STATE.TranscribingUser;
+			if (micUsable) {
+				event.preventDefault();
+				void voice.toggleRecording();
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	});
+
 	useEffect(() => {
 		if (readyToSend && !respondedRef.current) {
 			respondedRef.current = true;

@@ -35,6 +35,8 @@ async function recordAndStop() {
 describe("RecordButton", () => {
 	afterEach(() => {
 		vi.useRealTimers();
+		// the input-mode preference must not leak between tests
+		localStorage.clear();
 	});
 
 	it("announces recording start, stop and transcription to screen readers", async () => {
@@ -107,6 +109,64 @@ describe("RecordButton", () => {
 		await recordAndStop();
 		expect(await screen.findByText("Recording stopped")).toHaveAttribute("aria-live", "polite");
 		vi.mocked(console.error).mockRestore();
+	});
+
+	describe("keyboard shortcuts", () => {
+		it("Space toggles the mic when no field has focus", async () => {
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav
+			});
+			renderRecorder();
+			const user = userEvent.setup();
+			await user.keyboard(" ");
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "start_voice_capture")
+			).toHaveLength(1);
+			await user.keyboard(" ");
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "stop_voice_capture")
+			).toHaveLength(1);
+		});
+
+		it("typing a space in the composer does not toggle the mic", async () => {
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav
+			});
+			renderRecorder();
+			const user = userEvent.setup();
+			await user.click(screen.getByText("Type instead"));
+			const box = screen.getByLabelText("Type your response");
+			await user.click(box);
+			await user.keyboard("hi there ");
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "start_voice_capture")
+			).toHaveLength(0);
+			expect(box).toHaveValue("hi there ");
+		});
+
+		it("Escape cancels a pending transcription", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				start_voice_capture: () => null,
+				stop_voice_capture: wav,
+				transcribe: () => new Promise((res) => (finish = res)),
+				cancel_transcription: () => null
+			});
+			renderRecorder();
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("button", { name: "Start recording" }));
+			await user.click(screen.getByRole("button", { name: "Stop recording" }));
+			expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
+
+			await user.keyboard("{Escape}");
+			expect(callsTo("cancel_transcription")).toHaveLength(1);
+			await act(async () => {
+				finish({ transcript: "late" });
+				await Promise.resolve();
+			});
+		});
 	});
 
 	describe("transcription", () => {

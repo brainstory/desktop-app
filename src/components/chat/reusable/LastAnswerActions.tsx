@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Button from "@ds/Button";
 import { useConfirmClick } from "@src/hooks/useTimeout";
 
@@ -25,6 +25,28 @@ export default function LastAnswerActions({
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(lastAnswer);
 	const { isConfirming, secondsLeft, confirm } = useConfirmClick();
+
+	// Keyboard inside the edit box: Escape discards, Cmd/Ctrl+Enter
+	// saves (the buttons remain the discoverable path). Re-attaches on
+	// each keystroke so the handler always sees the current draft.
+	useEffect(() => {
+		if (!isEditing) return;
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				setIsEditing(false);
+			} else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+				event.preventDefault();
+				const trimmed = draft.trim();
+				setIsEditing(false);
+				if (trimmed && trimmed !== lastAnswer) {
+					onEdit(trimmed);
+				}
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [isEditing, draft, lastAnswer, onEdit]);
 
 	const startEditing = (): void => {
 		setDraft(lastAnswer);

@@ -160,6 +160,10 @@ export function ChatSection({
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
+	// Cmd/Ctrl+Enter ends the session once there is something to end
+	// with (the same condition that shows a finish button)
+	const canFinish = currConversation.length >= minConversationLenForCreateAndEnd && !result;
+
 	// Sidebar links are full-document navigations: a pending autosave
 	// would be dropped (the pagehide flush is fire-and-forget). Intercept
 	// plain left-clicks on in-page anchors while anything is unsaved,
@@ -221,7 +225,7 @@ export function ChatSection({
 	 * Both finish buttons route through here, so a failed create retries
 	 * instead of dead-ending "Generate Summary" on a session without an
 	 * idea id. */
-	const finishSession = () => {
+	const finishSession = useCallback(() => {
 		if (persistence.ideaId) {
 			session.handleGetResult();
 			return;
@@ -229,7 +233,20 @@ export function ChatSection({
 		finishAfterCreateRef.current = true;
 		setIsWrappingUp(true);
 		persistence.requestCreate();
-	};
+	}, [persistence, session]);
+
+	// the keyboard twin of the finish buttons (Cmd/Ctrl+Enter)
+	useEffect(() => {
+		if (!canFinish) return;
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+				event.preventDefault();
+				finishSession();
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [canFinish, finishSession]);
 
 	useEffect(() => {
 		if (!finishAfterCreateRef.current || !persistence.ideaId) return;
