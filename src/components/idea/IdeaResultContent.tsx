@@ -97,6 +97,8 @@ function IdeaResultContentInner() {
 					}
 
 					setIdea(ideaContent);
+					// the window title follows the document, not the app
+					document.title = `${ideaContent.title ?? "Idea"} | Brainstory`;
 					setIsLoading(false);
 				}
 			})
@@ -113,6 +115,12 @@ function IdeaResultContentInner() {
 			isCurrent = false;
 		};
 	}, [ideaId]);
+
+	/** A rename landed: mirror it into the window title without a
+	 * refetch (the title bar already holds the saved value). */
+	const handleTitleSaved = useCallback((savedTitle: string) => {
+		document.title = `${savedTitle || "Idea"} | Brainstory`;
+	}, []);
 
 	/** Refresh the document after an out-of-band edit (an added note).
 	 * Silent: the current view stays until the fresh copy arrives. */
@@ -267,6 +275,7 @@ function IdeaResultContentInner() {
 					isOwnIdea={isOwn}
 					parentId={parentIdea?.id}
 					onNoteAdded={reloadIdea}
+					onTitleSaved={handleTitleSaved}
 				/>
 				<TailwindComposedTabs
 					data={tabData}

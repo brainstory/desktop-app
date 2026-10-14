@@ -13,13 +13,16 @@ interface IdeaTitleBarProps {
 	parentId?: string | null;
 	/** refresh the document after a note was appended */
 	onNoteAdded?: () => void;
+	/** the saved title after a successful rename */
+	onTitleSaved?: (savedTitle: string) => void;
 }
 
 export default function IdeaTitleBar({
 	idea,
 	isOwnIdea,
 	parentId,
-	onNoteAdded
+	onNoteAdded,
+	onTitleSaved
 }: IdeaTitleBarProps) {
 	const { openSnackbar, snackbars } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
@@ -82,11 +85,13 @@ export default function IdeaTitleBar({
 		// optimistic: reverted if the save fails
 		setEditedTitle(trimmed);
 		setIsEditing(false);
-		updateIdeaTitleApi(idea.id, trimmed).catch((err) => {
-			console.error("rename failed", err);
-			setEditedTitle(previous);
-			openSnackbar(false, "Error: Could not save the new title");
-		});
+		updateIdeaTitleApi(idea.id, trimmed)
+			.then(() => onTitleSaved?.(trimmed))
+			.catch((err) => {
+				console.error("rename failed", err);
+				setEditedTitle(previous);
+				openSnackbar(false, "Error: Could not save the new title");
+			});
 	};
 
 	const cancelEditing = (): void => {
