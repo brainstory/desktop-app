@@ -430,6 +430,136 @@ pub async fn export_idea(
 	}))
 }
 
+/// The user message recorded when someone asks for a different question
+/// (mirrors ASK_A_DIFFERENT_QUESTION in src/const.ts): meta, not an
+/// answer, so transcript exports skip it.
+const ASK_A_DIFFERENT_QUESTION: &str = "Ask me a different question!";
+
+/// Build the Markdown document for an idea export: `# title`, the
+/// result document, and (optionally) the transcript as question/answer
+/// pairs - the same pairing the idea page renders. Pure, for tests.
+pub(crate) fn build_markdown_document(
+	title: &str,
+	result: &str,
+	transcript: Option<&[crate::types::ChatMessage]>,
+) -> String {
+	let mut doc = format!("# {title}\n\n{result}");
+	if let Some(messages) = transcript {
+		if !messages.is_empty() {
+			doc.push_str("\n\n## Transcript\n\n");
+			let mut question: Option<&str> = None;
+			let mut answers: Vec<&str> = Vec::new();
+			let flush = |question: &mut Option<&str>, answers: &mut Vec<&str>, doc: &mut String| {
+				if let Some(q) = question.take() {
+					doc.push_str(&format!("**{q}**\n\n"));
+					if answers.is_empty() {
+						doc.push_str(concat!(r"_\[no answer\]_", "\n\n"));
+					} else {
+						for answer in answers.drain(..) {
+							doc.push_str(&format!("{answer}\n\n"));
+						}
+					}
+				}
+			};
+			for message in messages {
+				if message.role == "assistant" {
+					flush(&mut question, &mut answers, &mut doc);
+					question = Some(message.content.as_str());
+				} else if message.content != ASK_A_DIFFERENT_QUESTION {
+					answers.push(message.content.as_str());
+				}
+			}
+			flush(&mut question, &mut answers, &mut doc);
+		}
+	}
+	doc.trim_end().to_string()
+}
+
+/// A filesystem-safe file name slug for the export's default name.
+fn markdown_slug(title: &str) -> String {
+	let slug: String = title
+		.to_lowercase()
+		.chars()
+		.map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+		.collect();
+	// collapse runs of separators and trim the ends
+	let mut slug = slug.trim_matches('-').to_string();
+	while slug.contains("--") {
+		slug = slug.replace("--", "-");
+	}
+	if slug.is_empty() {
+		"idea".into()
+	} else {
+		slug.chars().take(48).collect()
+	}
+}
+
+/// Export an idea as a Markdown file through the save dialog: the
+/// document (and, with `include_transcript`, the conversation that
+/// produced it). Returns the path so the UI can say where it went.
+#[tauri::command]
+pub async fn export_markdown(
+	app: tauri::AppHandle,
+	idea_id: String,
+	include_transcript: Option<bool>,
+) -> Result<serde_json::Value, String> {
+	let idea = {
+		let app = app.clone();
+		let idea_id = idea_id.clone();
+		run_blocking("load idea for markdown", move || {
+			let state = app.state::<AppState>();
+			state
+				.db
+				.get_idea(&idea_id)?
+				.ok_or_else(|| format!("idea {idea_id} not found"))
+		})
+		.await?
+	};
+	let title = if idea.title.trim().is_empty() {
+		"Untitled idea"
+	} else {
+		idea.title.trim()
+	};
+	let document = build_markdown_document(
+		title,
+		idea.result.as_deref().unwrap_or(""),
+		if include_transcript.unwrap_or(false) {
+			idea.transcript.as_deref()
+		} else {
+			None
+		},
+	);
+	let default_name = format!("brainstory-{}.md", markdown_slug(title));
+
+	let (sender, receiver) = tokio::sync::oneshot::channel();
+	let dialog = app
+		.dialog()
+		.file()
+		.set_file_name(&default_name)
+		.add_filter("Markdown", &["md"]);
+	dialog.save_file(move |path| {
+		let _ = sender.send(path);
+	});
+	let path = receiver.await.map_err(|e| e.to_string())?;
+	let Some(path) = path else {
+		return Ok(json!({ "cancelled": true }));
+	};
+	let path = path.into_path().map_err(|e| e.to_string())?;
+	let path_display = path.to_string_lossy().to_string();
+
+	let document = document.clone();
+	run_blocking("write markdown file", move || {
+		std::fs::write(&path, document).map_err(|e| e.to_string())
+	})
+	.await?;
+
+	Ok(json!({
+		"cancelled": false,
+		"path": path_display,
+		"kind": "markdown",
+	}))
+}
+
 /// Import a previously exported brainstory share file. Importing an idea adds
 /// it to the library attributed to its author; importing feedback attaches it
 /// to the matching local idea, attributed to the feedback author and marked
@@ -1243,5 +1373,54 @@ mod tests {
 			4,
 			"valid members survive beside invalid ones"
 		);
+	}
+}
+
+#[cfg(test)]
+mod markdown_tests {
+	use super::{build_markdown_document, markdown_slug};
+	use crate::types::ChatMessage;
+
+	fn msg(role: &str, content: &str) -> ChatMessage {
+		ChatMessage {
+			role: role.into(),
+			content: content.into(),
+		}
+	}
+
+	#[test]
+	fn builds_title_result_and_paired_transcript() {
+		let transcript = vec![
+			msg("assistant", "What is the goal?"),
+			msg("user", "ship it"),
+			msg("assistant", "Why?"),
+			// the meta message is skipped, both questions pair correctly
+			msg("user", "Ask me a different question!"),
+			msg("user", "because it matters"),
+		];
+		let doc = build_markdown_document("My Idea", "## Body", Some(&transcript));
+		assert!(doc.starts_with("# My Idea\n\n## Body\n\n## Transcript"));
+		assert!(doc.contains("**What is the goal?**\n\nship it\n\n"));
+		assert!(doc.contains("**Why?**\n\nbecause it matters"));
+		assert!(!doc.contains("Ask me a different question!"));
+	}
+
+	#[test]
+	fn an_unanswered_question_is_marked() {
+		let transcript = vec![msg("assistant", "Anything else?")];
+		let doc = build_markdown_document("T", "body", Some(&transcript));
+		assert!(doc.contains("**Anything else?**\n\n_\\[no answer\\]_"));
+	}
+
+	#[test]
+	fn no_transcript_leaves_the_document_alone() {
+		let doc = build_markdown_document("T", "## Body", None);
+		assert_eq!(doc, "# T\n\n## Body");
+	}
+
+	#[test]
+	fn slugs_are_filesystem_safe() {
+		assert_eq!(markdown_slug("Zebra Plan: 2026!"), "zebra-plan-2026");
+		assert_eq!(markdown_slug("   "), "idea");
 	}
 }

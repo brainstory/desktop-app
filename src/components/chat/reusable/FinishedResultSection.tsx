@@ -36,6 +36,7 @@ export default function FinishedResultSection({
 				saveError={saveError}
 				onRetrySave={onRetrySave}
 				droppedTurns={droppedTurns}
+				result={result}
 			/>
 		</section>
 	);

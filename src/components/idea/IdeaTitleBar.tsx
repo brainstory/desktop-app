@@ -1,7 +1,7 @@
 import type { IdeaDetail } from "@src/types";
 import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
-import { exportIdeaApi } from "@helpers/api/share";
+import { exportIdeaApi, exportMarkdownApi, shortenHomePath } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
@@ -110,6 +110,22 @@ export default function IdeaTitleBar({
 		}
 	};
 
+	/** Copy the whole document as Markdown. */
+	const handleCopy = () => {
+		const text = idea.summary ?? "";
+		if (!text.trim()) {
+			openSnackbar(false, "Nothing to copy yet");
+			return;
+		}
+		navigator.clipboard
+			.writeText(text)
+			.then(() => openSnackbar(true, "Copied"))
+			.catch((err) => {
+				console.error("copy failed", err);
+				openSnackbar(false, "Couldn't copy - select the text and copy manually");
+			});
+	};
+
 	const handleExport = () => {
 		setExportState("exporting");
 		exportIdeaApi(idea.id)
@@ -118,6 +134,9 @@ export default function IdeaTitleBar({
 					setExportState(null);
 				} else {
 					setExportState("done");
+					if (res.path) {
+						openSnackbar(true, `Saved to ${shortenHomePath(res.path)}`);
+					}
 					scheduleExportReset(() => setExportState(null), 4000);
 				}
 			})
@@ -126,6 +145,23 @@ export default function IdeaTitleBar({
 				setExportState("error");
 				scheduleExportReset(() => setExportState(null), 4000);
 			});
+	};
+
+	/** Export the document (and its transcript) as a local .md file. */
+	const [isMarkdownExporting, setIsMarkdownExporting] = useState(false);
+	const handleMarkdownExport = () => {
+		setIsMarkdownExporting(true);
+		exportMarkdownApi(idea.id, true)
+			.then((res) => {
+				if (!res.cancelled && res.path) {
+					openSnackbar(true, `Saved to ${shortenHomePath(res.path)}`);
+				}
+			})
+			.catch((err) => {
+				console.error("markdown export failed", err);
+				openSnackbar(false, "Couldn't export the Markdown file");
+			})
+			.finally(() => setIsMarkdownExporting(false));
 	};
 
 	const handleDelete = () => {
@@ -162,6 +198,25 @@ export default function IdeaTitleBar({
 			buttons.push(
 				<Button variant="pink" key="add-note" onClick={() => setIsNoteOpen(true)}>
 					Add Note
+				</Button>
+			);
+		}
+		if (idea.summary !== null && idea.summary !== undefined) {
+			buttons.push(
+				<Button variant="bordered" key="copy-markdown" onClick={handleCopy}>
+					Copy as Markdown
+				</Button>
+			);
+		}
+		if (isOwnIdea) {
+			buttons.push(
+				<Button
+					variant="bordered"
+					key="export-markdown"
+					onClick={handleMarkdownExport}
+					disabled={isMarkdownExporting}
+				>
+					{isMarkdownExporting ? "Exporting..." : "Export as Markdown"}
 				</Button>
 			);
 		}

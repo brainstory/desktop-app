@@ -24,6 +24,20 @@ export function exportIdeaApi(ideaId: string): Promise<ExportIdeaResult> {
 	return invokeCommand("exportIdea", { ideaId });
 }
 
+/** Export an idea as a Markdown file (optionally with its transcript)
+ * through the save dialog. */
+export function exportMarkdownApi(
+	ideaId: string,
+	includeTranscript: boolean
+): Promise<ExportIdeaResult> {
+	return invokeCommand("exportMarkdown", { ideaId, includeTranscript });
+}
+
+/** Shorten a leading home directory to ~ for display. */
+export function shortenHomePath(path: string): string {
+	return path.replace(/^(?:\/Users|C:\\Users)[/\\]?[^/\\]+/, "~");
+}
+
 /** Import a shared idea or feedback JSON file. Opens a file dialog. */
 export function importShareApi(): Promise<ImportShareResult> {
 	return invokeCommand("importShare");

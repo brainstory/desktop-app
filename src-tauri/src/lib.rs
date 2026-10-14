@@ -129,6 +129,7 @@ pub fn run() {
 			commands::models_cmd::delete_model,
 			commands::models_cmd::activate_model,
 			commands::share::export_idea,
+			commands::share::export_markdown,
 			commands::share::import_share,
 			commands::reactions::get_reactions,
 			commands::reactions::toggle_section_reaction,

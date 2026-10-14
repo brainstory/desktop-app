@@ -12,6 +12,8 @@ interface StickyLoadingSectionProps {
 	onRetrySave?: () => void;
 	/** the model could only read the last part of the conversation */
 	droppedTurns?: number;
+	/** the finished text, for copying */
+	result?: string;
 }
 
 /** One-line amber notice: the conversation was longer than the model's
@@ -31,7 +33,8 @@ export default function StickyLoadingSection({
 	ideaId,
 	saveError = null,
 	onRetrySave,
-	droppedTurns = 0
+	droppedTurns = 0,
+	result = ""
 }: StickyLoadingSectionProps) {
 	const truncated = droppedTurns > 0;
 	return (
@@ -60,11 +63,21 @@ export default function StickyLoadingSection({
 						Finished! Saved your summary
 					</h1>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
-					<div>
+					<div className="flex justify-end gap-2">
+						<Button
+							variant="bordered"
+							onClick={() => {
+								void navigator.clipboard
+									.writeText(result)
+									.then(() => undefined)
+									.catch(() => undefined);
+							}}
+						>
+							Copy as Markdown
+						</Button>
 						<Button
 							variant="bordered"
 							onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
-							classes="ml-auto"
 						>
 							Open your idea &rarr;
 						</Button>

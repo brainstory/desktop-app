@@ -74,6 +74,7 @@ export const COMMANDS = {
 	deleteModel: "delete_model",
 	activateModel: "activate_model",
 	exportIdea: "export_idea",
+	exportMarkdown: "export_markdown",
 	importShare: "import_share",
 	getReactions: "get_reactions",
 	toggleSectionReaction: "toggle_section_reaction",
@@ -176,6 +177,10 @@ interface CommandSignatures {
 	deleteModel: { args: ModelIdArgs; result: void };
 	activateModel: { args: ModelIdArgs; result: void };
 	exportIdea: { args: IdeaIdArgs; result: ExportIdeaResult };
+	exportMarkdown: {
+		args: { ideaId: string; includeTranscript?: boolean };
+		result: ExportIdeaResult;
+	};
 	importShare: { args: undefined; result: ImportShareResult };
 	getReactions: { args: IdeaIdArgs; result: IdeaReactions };
 	toggleSectionReaction: {
