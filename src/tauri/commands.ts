@@ -46,6 +46,7 @@ export const COMMANDS = {
 	submitSurvey: "submit_survey",
 	getNotifications: "get_notifications",
 	transcribe: "transcribe",
+	/** one-shot generation: kept for tests, the UI streams via generateStreamingResponse */
 	generateResponse: "generate_response",
 	generateStreamingResponse: "generate_streaming_response",
 	cancelGeneration: "cancel_generation",

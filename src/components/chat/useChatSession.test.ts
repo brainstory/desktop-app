@@ -11,7 +11,8 @@ import {
 	initialChatSessionState,
 	useChatSession,
 	type ChatSessionEvent,
-	type ChatSessionOptions
+	type ChatSessionOptions,
+	type CoachResponseOutcome
 } from "./useChatSession";
 
 const q1: ChatMessage = { role: "assistant", content: "q1" };
@@ -53,8 +54,45 @@ describe("useChatSession", () => {
 	});
 
 	describe("coach response", () => {
+		it("streams the reply into view and appends exactly one message at the end", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			const { result } = renderSession([q1, a1]);
+			let settled: Promise<CoachResponseOutcome> | undefined;
+			act(() => {
+				settled = result.current.handleGetResponse();
+			});
+			const channel = streamChannel();
+			await act(async () => {
+				channel.onmessage({ type: "chunk", content: "one " });
+				channel.onmessage({ type: "chunk", content: "two " });
+				channel.onmessage({ type: "chunk", content: "three" });
+				await Promise.resolve();
+			});
+			// the partial reply is visible while the coach is still talking
+			expect(result.current.streamingReply).toBe("one two three");
+			expect(result.current.conversationState).toBe(CONVERSATION_STATE.WaitingForCoach);
+			expect(result.current.conversation).toHaveLength(2);
+
+			let outcome: CoachResponseOutcome | undefined;
+			await act(async () => {
+				finish({ response: "one two three and done" });
+				outcome = await settled;
+			});
+			// ...and the conversation gains exactly one assistant message
+			expect(outcome).toBe("sent");
+			expect(result.current.streamingReply).toBeNull();
+			expect(result.current.conversation).toHaveLength(3);
+			expect(result.current.conversation[2]).toEqual({
+				role: "assistant",
+				content: "one two three and done"
+			});
+		});
+
 		it("adds the answer and reports 'sent'", async () => {
-			mockInvoke({ generate_response: () => ({ response: "q2" }) });
+			mockInvoke({ generate_streaming_response: () => ({ response: "q2" }) });
 			const { result } = renderSession([q1, a1]);
 			let outcome: string | undefined;
 			await act(async () => {
@@ -71,7 +109,7 @@ describe("useChatSession", () => {
 
 		it("removes the flagged user message on a moderation error", async () => {
 			mockInvoke({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					throw "moderation: the AI provider flagged this message";
 				}
 			});
@@ -85,13 +123,13 @@ describe("useChatSession", () => {
 			expect(result.current.isUserResendRequired).toBe(true);
 			expect(result.current.inappropriateUserTranscript).toBe("a1");
 			expect(opts.onError).not.toHaveBeenCalled();
-			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(callsTo("generate_streaming_response")).toHaveLength(1);
 		});
 
 		it("reports other AI errors through onError and keeps the message", async () => {
 			vi.useFakeTimers();
 			mockInvoke({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					throw "endpoint down";
 				}
 			});
@@ -110,7 +148,7 @@ describe("useChatSession", () => {
 		it("unmounting cancels a pending retry", async () => {
 			vi.useFakeTimers();
 			mockInvoke({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					throw "endpoint down";
 				}
 			});
@@ -121,11 +159,11 @@ describe("useChatSession", () => {
 				pending = result.current.handleGetResponse().then((o) => (outcome = o));
 				await vi.advanceTimersByTimeAsync(100);
 			});
-			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(callsTo("generate_streaming_response")).toHaveLength(1);
 			unmount();
 			await vi.advanceTimersByTimeAsync(2000);
 			await pending;
-			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(callsTo("generate_streaming_response")).toHaveLength(1);
 			expect(outcome).toBe("cancelled");
 			expect(opts.onError).not.toHaveBeenCalled();
 		});
@@ -135,7 +173,7 @@ describe("useChatSession", () => {
 		it("does not retry a cancelled generation or show an error", async () => {
 			vi.useFakeTimers();
 			mockInvoke({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					throw "generation cancelled";
 				}
 			});
@@ -144,7 +182,7 @@ describe("useChatSession", () => {
 				void result.current.handleGetResponse();
 				await vi.advanceTimersByTimeAsync(2000);
 			});
-			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(callsTo("generate_streaming_response")).toHaveLength(1);
 			expect(opts.onError).not.toHaveBeenCalled();
 			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
 			// the user's message stays so the chat can continue
@@ -301,7 +339,7 @@ describe("useChatSession", () => {
 			act(() => result.current.dispatch({ type: "draftRestored", lastRole: "assistant" }));
 
 		it("edits the answer, retires the reply to it, and asks again", async () => {
-			mockInvoke({ generate_response: () => ({ response: "q4" }) });
+			mockInvoke({ generate_streaming_response: () => ({ response: "q4" }) });
 			// a settled exchange: q3 is the coach's reply to a2
 			const { result } = renderSession([q1, a1, q2, a2, q3]);
 			settle(result);
@@ -331,7 +369,7 @@ describe("useChatSession", () => {
 			await act(async () => {
 				await result.current.editLastUserMessage("too late");
 			});
-			expect(callsTo("generate_response")).toHaveLength(1);
+			expect(callsTo("generate_streaming_response")).toHaveLength(1);
 		});
 
 		it("removes the last answer and its reply, leaving the question open", () => {

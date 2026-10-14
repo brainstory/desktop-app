@@ -271,7 +271,7 @@ export function ChatSection({
 	} else {
 		const aiMessageContent = session.isUserResendRequired
 			? session.inappropriateUserTranscript
-			: findMostRecentAssistantContent(currConversation);
+			: (session.streamingReply ?? findMostRecentAssistantContent(currConversation));
 		const enableSkip =
 			currConversation.length > 1 && session.conversationState === CONVERSATION_STATE.Idle;
 		// canReviseLastAnswer guarantees the answer sits right before the

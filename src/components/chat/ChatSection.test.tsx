@@ -144,7 +144,7 @@ describe("ChatSection", () => {
 	describe("text composer", () => {
 		it("clears the composer once the coach answered", async () => {
 			mockChat({
-				generate_response: () => ({ response: "tell me more" })
+				generate_streaming_response: () => ({ response: "tell me more" })
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
 			const box = await sendTyped("my idea");
@@ -154,7 +154,7 @@ describe("ChatSection", () => {
 
 		it("keeps the typed text when the message was flagged by moderation", async () => {
 			mockChat({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					throw "moderation: the AI provider flagged this message";
 				}
 			});
@@ -167,7 +167,7 @@ describe("ChatSection", () => {
 		it("locks the composer while the coach is answering (no duplicate sends)", async () => {
 			let answer!: (v: unknown) => void;
 			mockChat({
-				generate_response: () => new Promise((res) => (answer = res))
+				generate_streaming_response: () => new Promise((res) => (answer = res))
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
 			const box = await sendTyped("first");
@@ -181,7 +181,7 @@ describe("ChatSection", () => {
 			await user.keyboard("{Enter}");
 			await user.click(send);
 			expect(
-				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_response")
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_streaming_response")
 			).toHaveLength(1);
 
 			await act(async () => {
@@ -195,7 +195,7 @@ describe("ChatSection", () => {
 		it("keeps the text after an AI failure and resends it without duplicating it", async () => {
 			let attempts = 0;
 			mockChat({
-				generate_response: () => {
+				generate_streaming_response: () => {
 					attempts++;
 					// the first send fails twice (call + its one retry)
 					if (attempts <= 2) throw "endpoint down";
@@ -211,7 +211,7 @@ describe("ChatSection", () => {
 			expect(await screen.findByText("got it")).toBeInTheDocument();
 			const lastCall = vi
 				.mocked(invoke)
-				.mock.calls.filter(([c]) => c === "generate_response")
+				.mock.calls.filter(([c]) => c === "generate_streaming_response")
 				.at(-1)!;
 			const sent = (lastCall[1] as { messages: { role: string; content: string }[] })
 				.messages;
@@ -270,7 +270,7 @@ describe("ChatSection", () => {
 			await user.keyboard("{Enter}");
 			await user.click(send);
 			expect(
-				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_response")
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_streaming_response")
 			).toHaveLength(0);
 			expect(box).toHaveValue("typed while loading");
 		});
@@ -291,7 +291,7 @@ describe("ChatSection", () => {
 		mockChat({
 			create_idea: () => ({ id: "idea-1" }),
 			update_idea: () => ({ id: "idea-1" }),
-			generate_response: () => ({ response: "and then?" })
+			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		render(
 			<StrictMode>
@@ -321,7 +321,7 @@ describe("ChatSection", () => {
 			get_idea: () => {
 				throw new Error("database is locked");
 			},
-			generate_response: () => ({ response: "and then?" })
+			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		render(
 			<ChatSection
@@ -347,7 +347,7 @@ describe("ChatSection", () => {
 			create_idea: () => {
 				throw "database is locked";
 			},
-			generate_response: () => ({ response: "and then?" })
+			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		render(
 			<ChatSection
@@ -370,7 +370,7 @@ describe("ChatSection", () => {
 			create_idea: () => ({ id: "idea-1" }),
 			// a slow write: the navigation must wait for it
 			update_idea: () => new Promise<void>((res) => (landSave = res)),
-			generate_response: () => ({ response: "and then?" })
+			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		// jsdom blocks real navigation: swap in an observable location
 		const originalLocation = window.location;
@@ -426,7 +426,7 @@ describe("ChatSection", () => {
 				if (attempts === 1) throw "database is locked";
 				return { id: "idea-1" };
 			},
-			generate_response: () => ({ response: "and then?" })
+			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		render(
 			<ChatSection
@@ -456,7 +456,7 @@ describe("ChatSection", () => {
 		async function sendFeedback(parent: Record<string, unknown>) {
 			mockChat({
 				get_idea: () => parent,
-				generate_response: () => ({ response: "what stands out?" })
+				generate_streaming_response: () => ({ response: "what stands out?" })
 			});
 			render(
 				<ChatSection
@@ -471,7 +471,9 @@ describe("ChatSection", () => {
 			await user.click(screen.getByText("Type instead"));
 			await user.type(screen.getByLabelText("Type your response"), "I like it{Enter}");
 			await screen.findByText("what stands out?");
-			const call = vi.mocked(invoke).mock.calls.find(([c]) => c === "generate_response")!;
+			const call = vi
+				.mocked(invoke)
+				.mock.calls.find(([c]) => c === "generate_streaming_response")!;
 			return call[1] as {
 				reactTo: string | null;
 				reactToAuthor: string | null;
@@ -507,11 +509,12 @@ describe("ChatSection", () => {
 			mockChat({
 				create_idea: () => ({ id: "idea-early" }),
 				update_idea: () => ({ id: "idea-early" }),
-				generate_response: () => ({ response: "tell me more" }),
-				generate_streaming_response: () => ({
-					response: "# Early Summary",
-					structured_result: null
-				})
+				// one command serves the coach turn and the summary: split on
+				// the summarize flag
+				generate_streaming_response: (args) =>
+					(args as { summarize?: boolean }).summarize
+						? { response: "# Early Summary", structured_result: null }
+						: { response: "tell me more" }
 			});
 			render(<ChatSection conversationEndCallbacks={() => {}} />);
 			// one answered exchange: below the 4-message minimum
@@ -550,11 +553,10 @@ describe("ChatSection", () => {
 					return { id: "idea-1" };
 				},
 				update_idea: () => ({ id: "idea-1" }),
-				generate_response: () => ({ response: "and then?" }),
-				generate_streaming_response: () => ({
-					response: "# Summary",
-					structured_result: null
-				})
+				generate_streaming_response: (args) =>
+					(args as { summarize?: boolean }).summarize
+						? { response: "# Summary", structured_result: null }
+						: { response: "and then?" }
 			});
 			render(
 				<ChatSection
@@ -578,9 +580,10 @@ describe("ChatSection", () => {
 			await user.click(screen.getByRole("button", { name: "Generate Summary & Save" }));
 			await waitFor(() => expect(createCalls).toBe(attemptsBeforeFinish + 1));
 			expect(await screen.findByText("Finished! Saved your summary")).toBeInTheDocument();
+			// one coach turn plus one summary generation
 			expect(
 				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_streaming_response")
-			).toHaveLength(1);
+			).toHaveLength(2);
 			vi.mocked(console.error).mockRestore();
 		});
 	});

@@ -19,13 +19,10 @@ import {
 	addConversationMessage,
 	removeLastConversationMessage,
 	isGenerationCancelled,
-	type GenerationResult
+	type GenerationResult,
+	type StreamChunk
 } from "@helpers/chat";
-import {
-	generateResponseApi,
-	generateResponseStreamApi,
-	type GenerateOptions
-} from "@helpers/api/ai";
+import { generateResponseStreamApi, type GenerateOptions } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
 import { markGettingStartedDone } from "@helpers/storage";
 import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
@@ -74,6 +71,9 @@ export interface ChatSessionState {
 	/** moderation removed the last message; the user must reword it */
 	isUserResendRequired: boolean;
 	inappropriateUserTranscript: string | null;
+	/** the coach's reply as it streams in (null once it lands in the
+	 * conversation); not persisted until complete */
+	streamingReply: string | null;
 	/** the final summary is saved */
 	readyToSave: boolean;
 	/** the summary stream finished: the result text is final */
@@ -95,6 +95,7 @@ export type ChatSessionEvent =
 	| { type: "userMessageReady" }
 	| { type: "draftRestored"; lastRole: ChatMessage["role"] | undefined }
 	| { type: "coachRequested" }
+	| { type: "coachStreaming"; text: string }
 	| { type: "coachAnswered" }
 	| { type: "coachFlagged"; transcript: string }
 	| { type: "coachFailed" }
@@ -111,6 +112,7 @@ export const initialChatSessionState: ChatSessionState = {
 	conversationState: CONVERSATION_STATE.Start,
 	isUserResendRequired: false,
 	inappropriateUserTranscript: null,
+	streamingReply: null,
 	readyToSave: false,
 	resultComplete: false,
 	resultTruncated: false,
@@ -127,7 +129,7 @@ export function chatSessionReducer(
 			return { ...state, conversationState: CONVERSATION_STATE.TranscribingUser };
 		case "transcriptionFailed":
 		case "coachFailed":
-			return { ...state, conversationState: CONVERSATION_STATE.Idle };
+			return { ...state, conversationState: CONVERSATION_STATE.Idle, streamingReply: null };
 		case "userMessageReady":
 			return { ...state, conversationState: CONVERSATION_STATE.ReadyToSendUserTranscript };
 		case "draftRestored":
@@ -140,20 +142,28 @@ export function chatSessionReducer(
 						: CONVERSATION_STATE.Idle
 			};
 		case "coachRequested":
-			return { ...state, conversationState: CONVERSATION_STATE.WaitingForCoach };
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.WaitingForCoach,
+				streamingReply: null
+			};
+		case "coachStreaming":
+			return { ...state, streamingReply: event.text };
 		case "coachAnswered":
 			return {
 				...state,
 				conversationState: CONVERSATION_STATE.Idle,
 				isUserResendRequired: false,
-				inappropriateUserTranscript: null
+				inappropriateUserTranscript: null,
+				streamingReply: null
 			};
 		case "coachFlagged":
 			return {
 				...state,
 				conversationState: CONVERSATION_STATE.Idle,
 				isUserResendRequired: true,
-				inappropriateUserTranscript: event.transcript
+				inappropriateUserTranscript: event.transcript,
+				streamingReply: null
 			};
 		case "userTurnRemoved":
 			// the undone answer is gone (with the coach's reply to it):
@@ -227,12 +237,30 @@ export function useChatSession(
 	const respondTo = useCallback(
 		async (conversation: ChatMessage[]): Promise<CoachResponseOutcome> => {
 			dispatch({ type: "coachRequested" });
-			const apiCall = () =>
-				generateResponseApi({
+			// Streamed: the reply renders piece by piece (a partial reply is
+			// session state only - the conversation, and with it the
+			// autosave, sees just the finished text).
+			const apiCall = async (): Promise<string> => {
+				const { channel, invokePromise } = generateResponseStreamApi({
 					messages: conversation,
 					chatType,
 					...reactionOptions(parentIdea)
 				});
+				let streamed = "";
+				channel.onmessage = (raw: unknown) => {
+					const event = raw as StreamChunk;
+					if (event.type === "chunk" && typeof event.content === "string") {
+						streamed += event.content;
+					} else if (event.type === "cumulative" && typeof event.content === "string") {
+						streamed = event.content;
+					} else {
+						return;
+					}
+					dispatch({ type: "coachStreaming", text: streamed });
+				};
+				const result = await invokePromise;
+				return result.response ?? "";
+			};
 			const signal = unmountSignal();
 			try {
 				// a cancel must stay cancelled: retrying would start a fresh

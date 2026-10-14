@@ -61,7 +61,7 @@ describe("ChatApp resuming a feedback draft", () => {
 				if (ideaId === "party") return parent;
 				throw new Error(`idea ${ideaId} not found`);
 			},
-			generate_response: () => ({ response: "And the cake?" }),
+			generate_streaming_response: () => ({ response: "And the cake?" }),
 			update_idea: (args) => ({ id: (args as { id: string }).id })
 		});
 		render(<ChatApp />);
@@ -77,7 +77,7 @@ describe("ChatApp resuming a feedback draft", () => {
 
 		// the coach got the whole resumed conversation as a feedback chat
 		// on the parent idea
-		const generateArgs = calls("generate_response")[0]![1] as {
+		const generateArgs = calls("generate_streaming_response")[0]![1] as {
 			chatType: string;
 			reactTo: string;
 			messages: { content: string }[];
@@ -126,7 +126,7 @@ describe("ChatApp daily intent log handling", () => {
 			submit_log: () => ({ id: "log-1" }),
 			create_idea: () => ({ id: "idea-1" }),
 			update_idea: (args) => ({ id: (args as { id: string }).id }),
-			generate_response: () => ({ response: "and then?" }),
+			generate_streaming_response: () => ({ response: "and then?" }),
 			...handlers
 		});
 	}
