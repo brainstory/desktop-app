@@ -26,7 +26,7 @@ function setUrl(search: string) {
 /** Type + send a message in the text composer (voice is not exercisable here). */
 async function sendTyped(text: string) {
 	const user = userEvent.setup();
-	await user.click(screen.getByText("Not in a place to talk out-loud?"));
+	await user.click(screen.getByText("Type instead"));
 	const box = screen.getByLabelText("Type your response");
 	await user.type(box, text);
 	await user.keyboard("{Enter}");
@@ -36,6 +36,8 @@ async function sendTyped(text: string) {
 describe("ChatSection", () => {
 	beforeEach(() => {
 		setUrl("");
+		// the recorder's persisted input mode must not leak between tests
+		localStorage.clear();
 	});
 	afterEach(() => {
 		setUrl("");
@@ -85,11 +87,15 @@ describe("ChatSection", () => {
 		setUrl("?id=draft-1");
 		render(<ChatSection draftId="draft-1" conversationEndCallbacks={() => {}} />);
 
-		// while the draft loads the mic and Send wait, with a status line
+		// while the draft loads the input waits behind a status line,
+		// and the recorder defaults to typing (no mic to misfire)
 		const mentions = await screen.findAllByText("Restoring your draft…");
 		expect(mentions.some((el) => el.getAttribute("role") === "status")).toBe(true);
-		const mic = screen.getByRole("button", { name: "Start recording" });
-		expect(mic).toHaveAttribute("aria-disabled", "true");
+		// typing stays possible; sending waits
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"aria-disabled",
+			"true"
+		);
 		expect(screen.getAllByText("Restoring your draft…").length).toBeGreaterThan(0);
 
 		await act(async () => {
@@ -105,11 +111,12 @@ describe("ChatSection", () => {
 		});
 		// the draft arrived: the restored question shows and input opens
 		expect(await screen.findByText("q2")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Start recording" })).not.toHaveAttribute(
+		expect(screen.queryAllByText("Restoring your draft…")).toHaveLength(0);
+		await userEvent.type(screen.getByLabelText("Type your response"), "new answer");
+		expect(screen.getByRole("button", { name: "Send message" })).not.toHaveAttribute(
 			"aria-disabled",
 			"true"
 		);
-		expect(screen.queryAllByText("Restoring your draft…")).toHaveLength(0);
 	});
 
 	it("does not write a freshly loaded draft straight back to the database", async () => {
@@ -254,7 +261,7 @@ describe("ChatSection", () => {
 				vi.mocked(invoke).mock.calls.filter(([c]) => c === "start_voice_capture")
 			).toHaveLength(0);
 
-			await user.click(screen.getByText("Not in a place to talk out-loud?"));
+			await user.click(screen.getByText("Type instead"));
 			const box = screen.getByLabelText("Type your response");
 			await user.type(box, "typed while loading");
 			expect(box).toHaveValue("typed while loading");
@@ -296,7 +303,7 @@ describe("ChatSection", () => {
 			</StrictMode>
 		);
 		const user = userEvent.setup();
-		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.click(screen.getByText("Type instead"));
 		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
 		expect(await screen.findByText("and then?")).toBeInTheDocument();
 		await waitFor(() =>
@@ -324,7 +331,7 @@ describe("ChatSection", () => {
 			/>
 		);
 		const user = userEvent.setup();
-		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.click(screen.getByText("Type instead"));
 		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
 		await waitFor(() =>
 			expect(new URLSearchParams(window.location.search).get("id")).toBe("idea-1")
@@ -350,7 +357,7 @@ describe("ChatSection", () => {
 			/>
 		);
 		const user = userEvent.setup();
-		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.click(screen.getByText("Type instead"));
 		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent("Not saved yet: Could not save this session");
@@ -461,7 +468,7 @@ describe("ChatSection", () => {
 			// the feedback layout replaces the default one once the parent loads
 			await screen.findByText("Let's take this idea even further!");
 			const user = userEvent.setup();
-			await user.click(screen.getByText("Not in a place to talk out-loud?"));
+			await user.click(screen.getByText("Type instead"));
 			await user.type(screen.getByLabelText("Type your response"), "I like it{Enter}");
 			await screen.findByText("what stands out?");
 			const call = vi.mocked(invoke).mock.calls.find(([c]) => c === "generate_response")!;

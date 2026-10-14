@@ -216,5 +216,7 @@ export type QueryParam = (typeof QUERY_PARAMS)[keyof typeof QUERY_PARAMS];
 export const STORAGE_KEYS = {
 	gettingStartedDone: "has_done_getting_started",
 	indexSeen: "has_seen_index",
-	lastUpdateCheckMs: "last_update_check_ms"
+	lastUpdateCheckMs: "last_update_check_ms",
+	/** the recorder's input mode: "voice" | "text" */
+	inputMode: "inputMode"
 } as const;

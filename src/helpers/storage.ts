@@ -30,3 +30,7 @@ export const setGettingStartedDone = (done: boolean): void => {
 		setFlag(STORAGE_KEYS.gettingStartedDone);
 	}
 };
+
+/** The recorder's persisted input mode ("voice" | "text"). */
+export const getInputMode = (): string | null => getFlag(STORAGE_KEYS.inputMode);
+export const setInputMode = (mode: "voice" | "text"): void => setFlag(STORAGE_KEYS.inputMode, mode);

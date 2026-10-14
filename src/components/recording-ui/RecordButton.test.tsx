@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { CONVERSATION_STATE } from "@src/const";
+import { STORAGE_KEYS } from "@src/tauri/commands";
 import AudioRecorder from "./AudioRecorder";
 
 /** a WAV-sized buffer (anything over the 44-byte header counts as audio) */
@@ -58,6 +59,42 @@ describe("RecordButton", () => {
 			await Promise.resolve();
 		});
 		expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
+	});
+
+	it("remembers the typed-input preference across mounts", async () => {
+		mockInvoke({
+			start_voice_capture: () => null,
+			stop_voice_capture: wav
+		});
+		// a previous session chose typing
+		localStorage.setItem(STORAGE_KEYS.inputMode, "text");
+		const props = {
+			conversationState: CONVERSATION_STATE.Idle,
+			getCoachResponse: vi.fn(async () => "sent" as const),
+			onTranscript: vi.fn(),
+			setIsTranscribing: vi.fn()
+		};
+		const { unmount } = render(<AudioRecorder {...props} />);
+		expect(screen.getByLabelText("Type your response")).toBeInTheDocument();
+
+		// switch back to the microphone: the choice persists
+		await userEvent.click(screen.getByText("Use the microphone"));
+		expect(localStorage.getItem(STORAGE_KEYS.inputMode)).toBe("voice");
+		unmount();
+		cleanup();
+
+		// a fresh mount starts on the microphone again
+		render(<AudioRecorder {...props} />);
+		expect(screen.getByRole("button", { name: "Start recording" })).toBeInTheDocument();
+
+		// and a blocked mic defaults to typing even without a stored choice
+		localStorage.removeItem(STORAGE_KEYS.inputMode);
+		cleanup();
+		render(<AudioRecorder {...props} micBlockedReason="Speech model needed" />);
+		expect(screen.getByLabelText("Type your response")).toBeInTheDocument();
+
+		// never leak the preference into the other tests
+		localStorage.removeItem(STORAGE_KEYS.inputMode);
 	});
 
 	it("announces a stop that is not followed by a transcription", async () => {

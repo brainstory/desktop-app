@@ -5,6 +5,7 @@ import { transcribeApi, cancelTranscriptionApi } from "@helpers/api/ai";
 import { callApiWithRetry } from "@helpers/helpers";
 import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 import { describeError } from "@helpers/describeError";
+import { getInputMode, setInputMode } from "@helpers/storage";
 import ChangeInputTypeButton from "./ChangeInputTypeButton";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { isTranscriptionCancelled, isTransientTranscriptionError } from "./transcription";
@@ -50,7 +51,11 @@ function RecordButton({
 	isCompressed
 }: RecordButtonProps) {
 	const readyToSend = conversationState === CONVERSATION_STATE.ReadyToSendUserTranscript;
-	const [isTextInput, setIsTextInput] = useState(false);
+	// remembered across sessions; text is the sane default when the mic
+	// cannot be used at all
+	const [isTextInput, setIsTextInput] = useState(
+		() => getInputMode() === "text" || Boolean(micBlockedReason)
+	);
 	const [userTextInput, setUserTextInput] = useState("");
 	const context = useContext(AppContext);
 	const { warningType, setWarningType, errorMessage, setErrorMessage, dismiss } =
@@ -256,7 +261,11 @@ function RecordButton({
 			/>
 			<ChangeInputTypeButton
 				isTextInput={isTextInput}
-				onToggle={() => setIsTextInput(!isTextInput)}
+				onToggle={() => {
+					const next = !isTextInput;
+					setIsTextInput(next);
+					setInputMode(next ? "text" : "voice");
+				}}
 			/>
 		</>
 	);

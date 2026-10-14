@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
@@ -41,6 +41,10 @@ function calls(command: string) {
 }
 
 describe("ChatApp resuming a feedback draft", () => {
+	beforeEach(() => {
+		// the recorder's persisted input mode must not leak between tests
+		localStorage.clear();
+	});
 	afterEach(() => {
 		window.history.replaceState(null, "", "/");
 		cleanup();
@@ -67,7 +71,7 @@ describe("ChatApp resuming a feedback draft", () => {
 		expect(await screen.findByText("Who else should come?")).toBeInTheDocument();
 
 		const user = userEvent.setup();
-		await user.click(screen.getByText("Not in a place to talk out-loud?"));
+		await user.click(screen.getByText("Type instead"));
 		await user.type(screen.getByLabelText("Type your response"), "my aunt{Enter}");
 		expect(await screen.findByText("And the cake?")).toBeInTheDocument();
 
@@ -104,6 +108,9 @@ describe("ChatApp resuming a feedback draft", () => {
 });
 
 describe("ChatApp daily intent log handling", () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
 	afterEach(() => {
 		window.history.replaceState(null, "", "/");
 		cleanup();
@@ -132,9 +139,11 @@ describe("ChatApp daily intent log handling", () => {
 		window.history.replaceState(null, "", "/chat?dailyIntent=true");
 		render(<ChatApp />);
 
-		// the mic waits for the daily status, and no idea is created
+		// the input waits for the daily status (typing is the default
+		// while the mic is blocked), and no idea is created
 		expect(await screen.findByText("Loading today's status…")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Start recording" })).toHaveAttribute(
+		// typing stays possible; sending waits
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
 			"aria-disabled",
 			"true"
 		);
@@ -143,14 +152,17 @@ describe("ChatApp daily intent log handling", () => {
 			resolveStatus({ log_id: "log-9", streak: 1 });
 			await Promise.resolve();
 		});
-		// the status arrived: input opens, and the modal stays closed
+		// the status arrived: the lock note is gone, a typed message can
+		// be sent, and the modal stays closed
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Start recording" })).not.toHaveAttribute(
-				"aria-disabled",
-				"true"
-			)
+			expect(screen.queryByText("Loading today's status…")).not.toBeInTheDocument()
 		);
-		expect(screen.queryByText(/daily log isn't filled in/)).not.toBeInTheDocument();
+		await userEvent.type(screen.getByLabelText("Type your response"), "planned day");
+		expect(screen.getByRole("button", { name: "Send message" })).not.toHaveAttribute(
+			"aria-disabled",
+			"true"
+		);
+		expect(screen.queryByText(/daily log isn.t filled in/)).not.toBeInTheDocument();
 	});
 
 	it("offers filling in today's log after the modal was dismissed", async () => {

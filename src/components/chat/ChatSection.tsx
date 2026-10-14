@@ -206,11 +206,13 @@ export function ChatSection({
 				: sttBlocked
 					? "Speech model needed"
 					: undefined;
-	const sendBlockedReason = restoringDraft
-		? "Restoring your draft…"
-		: llmBlocked
-			? "Set up AI to reply"
-			: undefined;
+	const sendBlockedReason = dailyStatusLoading
+		? "Loading today's status…"
+		: restoringDraft
+			? "Restoring your draft…"
+			: llmBlocked
+				? "Set up AI to reply"
+				: undefined;
 
 	/** Wrap up the session and generate its summary. The summary needs
 	 * the idea to exist, so a session without one is created first; the

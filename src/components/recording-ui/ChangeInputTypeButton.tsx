@@ -10,13 +10,13 @@ export default function ChangeInputTypeButton({
 	if (isTextInput) {
 		return (
 			<button className={buttonStyle} onClick={() => onToggle()}>
-				Switch back for the optimal experience!
+				Use the microphone
 			</button>
 		);
 	} else {
 		return (
 			<button className={buttonStyle} onClick={() => onToggle()}>
-				Not in a place to talk out-loud?
+				Type instead
 			</button>
 		);
 	}
