@@ -20,6 +20,8 @@ pub const FEEDBACK_RESULT_SYSTEM: &str =
 	include_str!("../../prompts/feedback_result_system_message.txt");
 pub const FEEDBACK_JSON_RESULT_SYSTEM: &str =
 	include_str!("../../prompts/feedback_json_result_system_message.txt");
+pub const DAILY_INTENT_RESULT_SYSTEM: &str =
+	include_str!("../../prompts/daily_intent_result_system_message.txt");
 
 /// The prompts the app ships, one per file under prompts/.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,17 +32,19 @@ pub enum Prompt {
 	StoryResult,
 	FeedbackResult,
 	FeedbackJsonResult,
+	DailyIntentResult,
 }
 
 impl Prompt {
 	/// Every prompt, in declaration order (so `p as usize` indexes it).
-	pub const ALL: [Prompt; 6] = [
+	pub const ALL: [Prompt; 7] = [
 		Prompt::StoryInterview,
 		Prompt::StoryInterviewContext,
 		Prompt::StoryInterviewReact,
 		Prompt::StoryResult,
 		Prompt::FeedbackResult,
 		Prompt::FeedbackJsonResult,
+		Prompt::DailyIntentResult,
 	];
 
 	/// The prompt's file name under prompts/, without the `.txt`.
@@ -52,6 +56,7 @@ impl Prompt {
 			Prompt::StoryResult => "story_result_system_message",
 			Prompt::FeedbackResult => "feedback_result_system_message",
 			Prompt::FeedbackJsonResult => "feedback_json_result_system_message",
+			Prompt::DailyIntentResult => "daily_intent_result_system_message",
 		}
 	}
 
@@ -64,6 +69,7 @@ impl Prompt {
 			Prompt::StoryResult => STORY_RESULT_SYSTEM,
 			Prompt::FeedbackResult => FEEDBACK_RESULT_SYSTEM,
 			Prompt::FeedbackJsonResult => FEEDBACK_JSON_RESULT_SYSTEM,
+			Prompt::DailyIntentResult => DAILY_INTENT_RESULT_SYSTEM,
 		}
 	}
 
@@ -226,6 +232,10 @@ impl PromptRequest {
 					return Prompt::FeedbackJsonResult.text().to_string();
 				}
 				return Prompt::FeedbackResult.text().to_string();
+			}
+			// a daily intent is a short plan, not a full story document
+			if self.chat_type == ChatType::DailyIntent {
+				return Prompt::DailyIntentResult.text().to_string();
 			}
 			return Prompt::StoryResult.text().to_string();
 		}
@@ -467,6 +477,7 @@ mod contract_tests {
 			("story_result", STORY_RESULT_SYSTEM),
 			("feedback_result", FEEDBACK_RESULT_SYSTEM),
 			("feedback_json_result", FEEDBACK_JSON_RESULT_SYSTEM),
+			("daily_intent_result", DAILY_INTENT_RESULT_SYSTEM),
 		] {
 			assert!(
 				!text.trim().is_empty(),
@@ -486,6 +497,7 @@ mod contract_tests {
 			("story_result", STORY_RESULT_SYSTEM),
 			("feedback_result", FEEDBACK_RESULT_SYSTEM),
 			("feedback_json_result", FEEDBACK_JSON_RESULT_SYSTEM),
+			("daily_intent_result", DAILY_INTENT_RESULT_SYSTEM),
 		] {
 			let mut seen = std::collections::HashSet::new();
 			for line in text.lines().filter(|l| l.starts_with("- **")) {
@@ -697,8 +709,11 @@ mod contract_tests {
 							assert!(system.contains("oid_heading_text"), "{case}");
 						}
 						// structured_feedback only applies to feedback results
-						(Original | DailyIntent, true, _) => {
+						(Original, true, _) => {
 							assert_eq!(system, STORY_RESULT_SYSTEM, "{case}")
+						}
+						(DailyIntent, true, _) => {
+							assert_eq!(system, DAILY_INTENT_RESULT_SYSTEM, "{case}")
 						}
 					}
 				}

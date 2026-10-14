@@ -54,6 +54,12 @@ Unstructured (prose) feedback idea result.
 Structured JSON feedback result. Stored as the idea's `structured_result` and rendered as
 comment cards in the UI.
 
+`daily_intent_result_system_message`
+
+Daily-intent result: a short first-person plan (What I want to get done / Why it matters /
+What might get in the way / First step), at most ~150 words and with no synthesis appendix -
+the session is often only a few messages long.
+
 ## Runtime overrides
 
 The prompts are compiled into the binary. At startup the app also looks for
