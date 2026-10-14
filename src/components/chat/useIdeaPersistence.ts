@@ -209,7 +209,10 @@ export function useIdeaPersistence(
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
 					params.set(QUERY_PARAMS.id, createdIdeaId);
-					history.pushState(null, "", "?" + params.toString());
+					// replace, not push: a pushed entry makes Back land on /chat
+					// with no id - a brand-new session, not the list the user
+					// came from
+					history.replaceState(null, "", "?" + params.toString());
 				})
 				.catch((err) => {
 					creatingIdeaRef.current = false;

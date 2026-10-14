@@ -115,6 +115,23 @@ describe("useIdeaPersistence", () => {
 		expect(callsTo("create_idea")).toHaveLength(1);
 	});
 
+	it("assigns the idea id without pushing a history entry", async () => {
+		mockInvoke({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" })
+		});
+		const { result } = renderHook(
+			({ conversation }) => useIdeaPersistence(conversation, "", options()),
+			{ initialProps: { conversation: [q1, a1] as ChatMessage[] } }
+		);
+		const historyLengthBefore = window.history.length;
+		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
+		expect(new URLSearchParams(window.location.search).get("id")).toBe("idea-1");
+		// a pushed entry would make Back land on /chat with no id - a
+		// brand-new session instead of the page the user came from
+		expect(window.history.length).toBe(historyLengthBefore);
+	});
+
 	describe("create completion handoff", () => {
 		it("saves the newest transcript when creation resolves after unmount", async () => {
 			let finish!: (value: { id: string }) => void;

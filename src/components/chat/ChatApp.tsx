@@ -53,7 +53,9 @@ export default function ChatApp() {
 						const url = new URL(window.location.href);
 						const params = new URLSearchParams(url.search);
 						params.set(QUERY_PARAMS.id, resp.intentIdeaId);
-						history.pushState(null, "", "?" + params.toString());
+						// replace, not push: Back must leave the chat, not open a
+						// fresh session at /chat with no id
+						history.replaceState(null, "", "?" + params.toString());
 						setDraftId(resp.intentIdeaId);
 					}
 				})
