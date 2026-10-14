@@ -399,11 +399,25 @@ impl LocalLlm {
 		// The context borrows the model, so it lives only within this call;
 		// the KV cache travels separately, as captured state bytes.
 		let n_ctx = self.built_ctx;
+		// CPU threads: llama.cpp defaults to 4, which leaves most of an
+		// 8-16 core CPU-only machine idle. Physical cores only (the
+		// hyperthreads slow generation down), clamped so an inflated
+		// core count cannot spawn an absurd pool.
+		let n_threads = num_cpus::get_physical().clamp(1, 32) as i32;
+		// On macOS the Metal backend does the heavy lifting; a large host
+		// thread pool for batch decode only competes for memory
+		// bandwidth. CPU-only builds (Windows/Linux) use every core.
+		#[cfg(target_os = "macos")]
+		let n_threads_batch = n_threads.min(4);
+		#[cfg(not(target_os = "macos"))]
+		let n_threads_batch = n_threads;
 		let ctx_params = LlamaContextParams::default()
 			.with_n_ctx(Some(
 				NonZeroU32::new(n_ctx).expect("context size is never zero"),
 			))
-			.with_n_batch(PROMPT_DECODE_CHUNK as u32);
+			.with_n_batch(PROMPT_DECODE_CHUNK as u32)
+			.with_n_threads(n_threads)
+			.with_n_threads_batch(n_threads_batch);
 		let mut ctx = self
 			.model
 			.new_context(&self.backend, ctx_params)
