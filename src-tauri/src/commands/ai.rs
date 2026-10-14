@@ -139,14 +139,9 @@ pub async fn transcribe(
 		}
 	}
 
-	let engine = {
-		let state = app.state::<AppState>();
-		let runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
-		runtime.stt.clone()
-	};
-	let engine = engine.ok_or_else(|| {
-		"Speech model not downloaded yet. Open Settings > AI Models to download one.".to_string()
-	})?;
+	// the whisper slot may still be filling (startup load or a model
+	// switch): wait instead of reporting "not downloaded"
+	let engine = await_stt_engine(app.state::<AppState>().inner()).await?;
 	if cancel.load(Ordering::Relaxed) {
 		return Err(stt::TRANSCRIPTION_CANCELLED.into());
 	}
@@ -258,6 +253,10 @@ where
 	// instead of burning CPU on output nobody will see.
 	let cancel_for_writer = cancel.clone();
 	let emit = on_event.clone();
+	let status_emit = on_event.clone();
+	let on_status = move |text: &str| {
+		status_emit(EmitKind::Status, text);
+	};
 	let mut channel_dead = false;
 	let channel_writer = move |piece: String| {
 		if channel_dead {
@@ -276,6 +275,7 @@ where
 		request.summarize,
 		cancel.clone(),
 		channel_writer,
+		&on_status,
 	)
 	.await?;
 
@@ -301,6 +301,7 @@ where
 			true,
 			cancel,
 			|_| {},
+			&on_status,
 		)
 		.await;
 		match json_output {
@@ -427,17 +428,126 @@ pub fn send_test_notification(app: AppHandle) {
 		.show();
 }
 
-fn local_llm(state: &State<'_, AppState>) -> Result<Arc<crate::llm::LocalLlm>, String> {
-	state
-		.runtime
-		.lock()
-		.unwrap_or_else(|e| e.into_inner())
-		.llm
-		.clone()
-		.ok_or_else(|| {
-			"Language model not downloaded yet. Open Settings > AI Models to download one."
-				.to_string()
-		})
+/// How long an AI command waits for an in-flight engine load (startup
+/// or a model switch) before giving up, and how often it polls.
+const LOAD_WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+const LOAD_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Resolve an engine slot that may still be filling: startup and model
+/// switches load outside the AI commands, so an empty slot during a
+/// load means "wait", not "not downloaded". `read_slot` returns the
+/// current engine and its published status; `on_status` fires once
+/// when the wait starts; an `Error` status maps through `failed`;
+/// anything else with an empty slot keeps the not-downloaded message.
+async fn await_engine_slot<T>(
+	mut read_slot: impl FnMut() -> (Option<Arc<T>>, crate::models::EngineStatus),
+	loading_msg: &'static str,
+	on_status: Option<&(dyn Fn(&str) + Sync)>,
+	failed: impl Fn(&crate::models::EngineStatus) -> String,
+	not_downloaded: &'static str,
+) -> Result<Arc<T>, String> {
+	let mut announced = false;
+	let started = std::time::Instant::now();
+	loop {
+		let (engine, status) = read_slot();
+		if let Some(engine) = engine {
+			return Ok(engine);
+		}
+		match status.state {
+			crate::models::EngineState::Loading => {
+				if !announced {
+					if let Some(emit) = on_status {
+						emit(loading_msg);
+					}
+					announced = true;
+				}
+				if started.elapsed() >= LOAD_WAIT_MAX {
+					return Err("The model is still loading - try again in a moment.".into());
+				}
+				tokio::time::sleep(LOAD_WAIT_POLL).await;
+			}
+			crate::models::EngineState::Error => return Err(failed(&status)),
+			_ => return Err(not_downloaded.into()),
+		}
+	}
+}
+
+/// The LLM slot, waiting out an in-flight load. A failed load surfaces
+/// its error text instead of the misleading "not downloaded".
+async fn await_local_llm(
+	state: &AppState,
+	on_status: &(dyn Fn(&str) + Sync),
+) -> Result<Arc<crate::llm::LocalLlm>, String> {
+	await_engine_slot(
+		|| {
+			let engine = state
+				.runtime
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.llm
+				.clone();
+			let status = state
+				.llm_status
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.clone();
+			(engine, status)
+		},
+		"Loading the language model...",
+		Some(on_status),
+		|status| {
+			format!(
+				"Language model failed to load{}",
+				status
+					.error
+					.as_deref()
+					.map(|e| format!(": {e}"))
+					.unwrap_or_default()
+			)
+		},
+		"Language model not downloaded yet. Open Settings > AI Models to download one.",
+	)
+	.await
+}
+
+/// The whisper slot, waiting out an in-flight load. Only a whisper
+/// load's error maps to its text: an error published for another
+/// engine (e.g. the Apple Speech notice) with no whisper resident
+/// means whisper was never downloaded, not that it failed.
+async fn await_stt_engine(state: &AppState) -> Result<Arc<crate::stt::SttEngine>, String> {
+	const NOT_DOWNLOADED: &str =
+		"Speech model not downloaded yet. Open Settings > AI Models to download one.";
+	await_engine_slot(
+		|| {
+			let engine = state
+				.runtime
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.stt
+				.clone();
+			let status = state
+				.stt_status
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.clone();
+			(engine, status)
+		},
+		"Loading the speech model...",
+		None,
+		|status| match status.model_id.as_deref() {
+			Some(id) if id.starts_with("whisper") => format!(
+				"Speech model failed to load{}",
+				status
+					.error
+					.as_deref()
+					.map(|e| format!(": {e}"))
+					.unwrap_or_default()
+			),
+			_ => NOT_DOWNLOADED.to_string(),
+		},
+		NOT_DOWNLOADED,
+	)
+	.await
 }
 
 fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
@@ -459,6 +569,7 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 /// OpenAI-compatible endpoint), streaming pieces through `on_chunk`.
 /// Returns the final text plus the prompt token count (0 when unknown, as
 /// with external endpoints).
+#[allow(clippy::too_many_arguments)]
 async fn run_generation(
 	state: &State<'_, AppState>,
 	settings: &AiSettings,
@@ -467,6 +578,7 @@ async fn run_generation(
 	summarize: bool,
 	cancel: Arc<AtomicBool>,
 	on_chunk: impl FnMut(String) + Send + 'static,
+	on_status: &(dyn Fn(&str) + Sync),
 ) -> Result<(String, usize), String> {
 	let max_tokens = if summarize {
 		crate::llm::MAX_NEW_TOKENS_RESULT
@@ -480,7 +592,9 @@ async fn run_generation(
 			.await?;
 		Ok((text, 0))
 	} else {
-		let engine = local_llm(state)?;
+		// the slot may still be filling (startup load or a model
+		// switch): wait instead of reporting "not downloaded"
+		let engine = await_local_llm(state.inner(), on_status).await?;
 		let messages = messages.to_vec();
 		tauri::async_runtime::spawn_blocking(move || {
 			engine.generate(&system, &messages, summarize, &cancel, on_chunk)
@@ -727,5 +841,150 @@ mod feedback_json_tests {
 			["null heading stays", "absent heading stays", "kept"],
 			"non-string headings dropped, everything else kept"
 		);
+	}
+}
+
+#[cfg(test)]
+mod engine_wait_tests {
+	use super::{await_engine_slot, LOAD_WAIT_MAX, LOAD_WAIT_POLL};
+	use crate::models::EngineStatus;
+	use std::sync::{Arc, Mutex};
+	use std::time::Duration;
+
+	/// The wait must stay far below the 60 s cap in tests: a bug that
+	/// polls past the cap would hang the suite for a minute per call.
+	#[test]
+	fn poll_and_cap_are_sane() {
+		assert!(LOAD_WAIT_POLL >= Duration::from_millis(50));
+		assert!(LOAD_WAIT_MAX >= Duration::from_secs(30));
+	}
+
+	#[tokio::test]
+	async fn a_loading_slot_is_waited_out_until_the_engine_appears() {
+		#[derive(Debug)]
+		struct FakeEngine;
+		let slot: Arc<Mutex<Option<Arc<FakeEngine>>>> = Arc::new(Mutex::new(None));
+		let status: Arc<Mutex<EngineStatus>> =
+			Arc::new(Mutex::new(EngineStatus::loading("gemma-4-E2B")));
+
+		// the load completes 300 ms in, from another "thread"
+		let filler_slot = Arc::clone(&slot);
+		let filler_status = Arc::clone(&status);
+		tokio::spawn(async move {
+			tokio::time::sleep(Duration::from_millis(300)).await;
+			*filler_slot.lock().unwrap() = Some(Arc::new(FakeEngine));
+			*filler_status.lock().unwrap() = EngineStatus::ready(Some("gemma-4-E2B"));
+		});
+
+		let read_slot = move || (slot.lock().unwrap().clone(), status.lock().unwrap().clone());
+		let announced = Arc::new(Mutex::new(Vec::<String>::new()));
+		let seen = Arc::clone(&announced);
+		let on_status = move |text: &str| seen.lock().unwrap().push(text.to_string());
+
+		let engine = await_engine_slot(
+			read_slot,
+			"Loading the language model...",
+			Some(&on_status),
+			|_| "failed".to_string(),
+			"not downloaded",
+		)
+		.await
+		.expect("the engine appears once the load lands");
+
+		assert!(
+			Arc::strong_count(&engine) >= 1,
+			"the engine resolved from the filled slot"
+		);
+		assert_eq!(
+			*announced.lock().unwrap(),
+			vec!["Loading the language model...".to_string()],
+			"the loading status is announced exactly once"
+		);
+	}
+
+	#[tokio::test]
+	async fn a_missing_slot_keeps_the_not_downloaded_message_without_waiting() {
+		#[derive(Debug)]
+		struct FakeEngine;
+		let slot: Arc<Mutex<Option<Arc<FakeEngine>>>> = Arc::new(Mutex::new(None));
+		let status: Arc<Mutex<EngineStatus>> = Arc::new(Mutex::new(EngineStatus::missing()));
+
+		let started = std::time::Instant::now();
+		let read_slot = move || (slot.lock().unwrap().clone(), status.lock().unwrap().clone());
+		let err = await_engine_slot(
+			read_slot,
+			"Loading the language model...",
+			None,
+			|_| "failed".to_string(),
+			"Language model not downloaded yet. Open Settings > AI Models to download one.",
+		)
+		.await
+		.expect_err("missing stays missing");
+		assert_eq!(
+			err,
+			"Language model not downloaded yet. Open Settings > AI Models to download one."
+		);
+		assert!(
+			started.elapsed() < Duration::from_secs(1),
+			"a missing slot must not wait out the load timeout"
+		);
+	}
+
+	#[tokio::test]
+	async fn an_error_slot_surfaces_its_error_text() {
+		#[derive(Debug)]
+		struct FakeEngine;
+		let slot: Arc<Mutex<Option<Arc<FakeEngine>>>> = Arc::new(Mutex::new(None));
+		let status: Arc<Mutex<EngineStatus>> = Arc::new(Mutex::new(EngineStatus::error(
+			Some("gemma-4-E4B"),
+			"bad gguf header",
+		)));
+
+		let read_slot = move || (slot.lock().unwrap().clone(), status.lock().unwrap().clone());
+		let err = await_engine_slot(
+			read_slot,
+			"Loading the language model...",
+			None,
+			|status| {
+				format!(
+					"Language model failed to load: {}",
+					status.error.clone().unwrap_or_default()
+				)
+			},
+			"not downloaded",
+		)
+		.await
+		.expect_err("a failed load is an error, not a wait");
+		assert_eq!(err, "Language model failed to load: bad gguf header");
+	}
+
+	/// The STT error mapping: only a whisper-model error maps to its
+	/// text; an error published for another engine (the Apple Speech
+	/// notice) with no whisper resident means whisper was never
+	/// downloaded.
+	#[tokio::test]
+	async fn a_non_whisper_error_keeps_the_not_downloaded_message() {
+		#[derive(Debug)]
+		struct FakeEngine;
+		let slot: Arc<Mutex<Option<Arc<FakeEngine>>>> = Arc::new(Mutex::new(None));
+		let status: Arc<Mutex<EngineStatus>> = Arc::new(Mutex::new(EngineStatus::error(
+			Some("apple-speech"),
+			"Apple Speech requires macOS 26+ - using whisper instead",
+		)));
+
+		let read_slot = move || (slot.lock().unwrap().clone(), status.lock().unwrap().clone());
+		let err = await_engine_slot(
+			read_slot,
+			"Loading the speech model...",
+			None,
+			|status| match status.model_id.as_deref() {
+				Some(id) if id.starts_with("whisper") => "whisper failed".to_string(),
+				_ => "Speech model not downloaded yet.".to_string(),
+			},
+			"Speech model not downloaded yet.",
+		)
+		.await
+		.expect_err("no whisper resident");
+		assert_eq!(err, "Speech model not downloaded yet.");
 	}
 }
