@@ -219,5 +219,9 @@ export const STORAGE_KEYS = {
 	indexSeen: "has_seen_index",
 	lastUpdateCheckMs: "last_update_check_ms",
 	/** the recorder's input mode: "voice" | "text" */
-	inputMode: "inputMode"
+	inputMode: "inputMode",
+	/** the library's sort order (LibrarySort) */
+	librarySort: "librarySort",
+	/** the library's filter chips, comma-separated (LibraryFilter) */
+	librarySortFilters: "librarySortFilters"
 } as const;

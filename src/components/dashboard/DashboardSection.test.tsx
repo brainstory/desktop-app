@@ -230,11 +230,11 @@ describe("DashboardSection onboarding flag", () => {
 	it("sets the getting-started flag once an own idea exists", async () => {
 		mockBase({
 			get_all_ideas: () => ({
-				ideas: [{ id: "own1", title: "Mine", result: "summary", feedback: [] }]
+				ideas: [{ id: "own1", title: "My own idea", result: "summary", feedback: [] }]
 			})
 		});
 		render(<DashboardSection />);
-		expect(await screen.findByText("Mine")).toBeInTheDocument();
+		expect(await screen.findByText("My own idea")).toBeInTheDocument();
 		expect(hasDoneGettingStarted()).toBe(true);
 	});
 

@@ -1,4 +1,4 @@
-import type { CreatorInfo } from "@src/types";
+import type { CreatorInfo, IdeaListItem } from "@src/types";
 
 /**
  * An "own" idea is one without creator attribution: imported ideas and
@@ -7,6 +7,103 @@ import type { CreatorInfo } from "@src/types";
  */
 export function isOwnIdea(idea: Pick<CreatorInfo, "creatorName">): boolean {
 	return !idea.creatorName;
+}
+
+/** Sort orders for the library toolbar. */
+export type LibrarySort = "newest" | "oldest" | "title" | "unread";
+/** Filter chips for the library toolbar. */
+export type LibraryFilter = "drafts" | "unread" | "shared" | "mine";
+
+export const LIBRARY_SORTS: { value: LibrarySort; label: string }[] = [
+	{ value: "newest", label: "Newest first" },
+	{ value: "oldest", label: "Oldest first" },
+	{ value: "title", label: "Title A-Z" },
+	{ value: "unread", label: "Unread first" }
+];
+
+export const LIBRARY_FILTERS: { value: LibraryFilter; label: string }[] = [
+	{ value: "drafts", label: "Drafts" },
+	{ value: "unread", label: "Unread" },
+	{ value: "shared", label: "Shared with me" },
+	{ value: "mine", label: "Mine" }
+];
+
+const sortByCreated = (a: IdeaListItem, b: IdeaListItem, dir: 1 | -1): number => {
+	const at = a.createdAt ?? "";
+	const bt = b.createdAt ?? "";
+	return at < bt ? -dir : at > bt ? dir : 0;
+};
+
+/**
+ * The library's whole view, derived client-side (all data is already
+ * loaded). `query` matches title, summary preview, draft summary or
+ * creator, case-insensitively. Chips combine with AND semantics; the
+ * drafts/unread chips keep a parent whose nested feedback matches, so
+ * the card the draft is reachable from stays in view. The sorts are
+ * stable, so ties keep their previous order.
+ */
+export function filterAndSortIdeas(
+	ideas: IdeaListItem[],
+	query: string,
+	filters: LibraryFilter[],
+	sort: LibrarySort
+): IdeaListItem[] {
+	const q = query.trim().toLowerCase();
+	const fieldsOf = (item: IdeaListItem) => [
+		item.title,
+		item.summaryPreview,
+		item.draftSummary,
+		item.creatorName
+	];
+	const matchesQuery = (idea: IdeaListItem): boolean => {
+		if (!q) return true;
+		// nested feedback drafts are only reachable through their parent
+		// card, so their text keeps that card findable
+		const children = (idea.feedback ?? []).flatMap(fieldsOf);
+		return [...fieldsOf(idea), ...children].some(
+			(field) => typeof field === "string" && field.toLowerCase().includes(q)
+		);
+	};
+	const has = (filter: LibraryFilter) => filters.includes(filter);
+	const passesChips = (idea: IdeaListItem): boolean => {
+		if (
+			has("drafts") &&
+			!(idea.isDraft || (idea.feedback ?? []).some((child) => child.isDraft))
+		) {
+			return false;
+		}
+		if (
+			has("unread") &&
+			!(idea.isUnread || (idea.feedback ?? []).some((child) => child.isUnread))
+		) {
+			return false;
+		}
+		if (has("shared") && isOwnIdea(idea)) return false;
+		if (has("mine") && !isOwnIdea(idea)) return false;
+		return true;
+	};
+
+	const filtered = ideas.filter((idea) => matchesQuery(idea) && passesChips(idea));
+	switch (sort) {
+		case "oldest":
+			filtered.sort((a, b) => sortByCreated(a, b, 1));
+			break;
+		case "title":
+			filtered.sort(
+				(a, b) => (a.title ?? "").localeCompare(b.title ?? "") || sortByCreated(a, b, -1)
+			);
+			break;
+		case "unread":
+			filtered.sort(
+				(a, b) =>
+					Number(Boolean(b.isUnread)) - Number(Boolean(a.isUnread)) ||
+					sortByCreated(a, b, -1)
+			);
+			break;
+		default:
+			filtered.sort((a, b) => sortByCreated(a, b, -1));
+	}
+	return filtered;
 }
 
 /**

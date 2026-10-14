@@ -15,6 +15,7 @@ import ErrorBoundary from "@components/global/ErrorBoundary";
 import IdeaGrid from "./IdeaGrid";
 import FeedbackGrid from "./FeedbackGrid";
 import AiSetupNeeded from "./AiSetupNeeded";
+import { useLibraryView } from "./LibraryToolbar";
 
 function DashboardSectionInner() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
@@ -44,6 +45,8 @@ function DashboardSectionInner() {
 	const userIdeasList = userIdeas ?? [];
 	const hasOwnIdea = userIdeasList.some(isOwnIdea);
 	const showGetStarted = userIdeasList.length === 0;
+	// search/filter/sort over the already-loaded library
+	const library = useLibraryView(userIdeasList);
 
 	useEffect(() => {
 		if (userIdeas && hasOwnIdea) {
@@ -153,7 +156,19 @@ function DashboardSectionInner() {
 			) : (
 				<div>
 					<FeedbackGrid />
-					<IdeaGrid userIdeas={userIdeas} />
+					{library.toolbar}
+					{library.isFiltering && library.visible.length === 0 ? (
+						<div className="text-center py-10">
+							<p className="text-stone-600 mb-3">
+								No ideas match your search or filters.
+							</p>
+							<Button variant="bordered" onClick={library.clear}>
+								Clear filters
+							</Button>
+						</div>
+					) : (
+						<IdeaGrid userIdeas={library.visible} />
+					)}
 				</div>
 			)}
 		</section>

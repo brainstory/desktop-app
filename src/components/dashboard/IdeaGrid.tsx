@@ -56,7 +56,7 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 					if (idea.isDraft) {
 						return (
 							<DraftIdeaCard
-								key={`draft-idea-card-${index}-${idea.id}`}
+								key={`draft-${idea.id}`}
 								id={idea.id}
 								createdAt={idea.createdAt}
 								draftSummary={idea.draftSummary}
@@ -70,9 +70,10 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 					} else {
 						return (
 							<IdeaCard
-								key={`idea-card-${index}-${idea.id}`}
+								key={idea.id}
 								id={idea.id}
-								title={idea.title}
+								title={idea.title?.trim() || "Untitled idea"}
+								summaryPreview={idea.summaryPreview}
 								createdAt={idea.createdAt}
 								creatorName={idea.creatorName}
 								isUnread={idea.isUnread ?? false}
