@@ -391,5 +391,45 @@ describe("ChatSection", () => {
 				.at(-1)!;
 			expect((update[1] as { result?: string }).result).toBe("# Early Summary");
 		});
+
+		it("retries a failed create when the finish button is clicked", async () => {
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			let allowCreate = false;
+			let createCalls = 0;
+			mockChat({
+				create_idea: () => {
+					createCalls += 1;
+					// every create fails until the test lets one through
+					if (!allowCreate) throw "database is locked";
+					return { id: "idea-1" };
+				},
+				update_idea: () => ({ id: "idea-1" }),
+				generate_response: () => ({ response: "and then?" }),
+				generate_streaming_response: () => ({
+					response: "# Summary",
+					structured_result: null
+				})
+			});
+			render(<ChatSection chatType="daily_intent" conversationEndCallbacks={() => {}} />);
+			await sendTyped("a calm day");
+			expect(await screen.findByText("and then?")).toBeInTheDocument();
+			// the create(s) at the minimum length failed: no idea id yet
+			expect(await screen.findByRole("alert")).toHaveTextContent(
+				"Could not save this session"
+			);
+			expect(createCalls).toBeGreaterThan(0);
+
+			// finishing routes through the create: a retry, then the summary
+			allowCreate = true;
+			const attemptsBeforeFinish = createCalls;
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("button", { name: "Generate Summary & Save" }));
+			await waitFor(() => expect(createCalls).toBe(attemptsBeforeFinish + 1));
+			expect(await screen.findByText("Finished! Saved your summary")).toBeInTheDocument();
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_streaming_response")
+			).toHaveLength(1);
+			vi.mocked(console.error).mockRestore();
+		});
 	});
 });

@@ -162,11 +162,14 @@ export function ChatSection({
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
-	/** Wrap up before the minimum length. The summary needs the idea to
-	 * exist, so a session without one is created first; the effect below
-	 * finishes the job when the create lands (the later unrelated-create
-	 * guard lives in the ref, see finishAfterCreateRef). */
-	const handleEarlyFinish = () => {
+	/** Wrap up the session and generate its summary. The summary needs
+	 * the idea to exist, so a session without one is created first; the
+	 * effect below finishes the job when the create lands (the later
+	 * unrelated-create guard lives in the ref, see finishAfterCreateRef).
+	 * Both finish buttons route through here, so a failed create retries
+	 * instead of dead-ending "Generate Summary" on a session without an
+	 * idea id. */
+	const finishSession = () => {
 		if (persistence.ideaId) {
 			session.handleGetResult();
 			return;
@@ -284,8 +287,8 @@ export function ChatSection({
 						parentIdea={parentIdea}
 						currConversation={currConversation}
 						conversationState={session.conversationState}
-						handleGetResult={session.handleGetResult}
-						handleEarlyFinish={handleEarlyFinish}
+						handleGetResult={finishSession}
+						handleEarlyFinish={finishSession}
 						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
@@ -297,8 +300,8 @@ export function ChatSection({
 						setShowTranscript={setShowTranscript}
 						currConversation={currConversation}
 						conversationState={session.conversationState}
-						handleGetResult={session.handleGetResult}
-						handleEarlyFinish={handleEarlyFinish}
+						handleGetResult={finishSession}
+						handleEarlyFinish={finishSession}
 						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
 					>
