@@ -6,8 +6,8 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
 use crate::models::{
-	download_model_file_with_pause, find_model, kv_bytes_per_token, model_url, ModelKind,
-	PauseEntry,
+	download_model_file_with_pause, find_model, kv_bytes_per_token, model_url, part_path,
+	ModelKind, PauseEntry,
 };
 use crate::types::ModelStatus;
 use crate::AppState;
@@ -350,6 +350,28 @@ pub async fn download_model(
 	// forever (which would block re-download and delete until restart).
 	std::fs::create_dir_all(dest.parent().ok_or("blob path has no parent")?)
 		.map_err(|e| e.to_string())?;
+
+	// Pre-flight free space: a staged `.part` that can grow past the
+	// volume's limit fails late (ENOSPC mid-transfer). Refuse up front
+	// when even the model plus a 64 MiB scratch margin does not fit,
+	// crediting whatever the leftover `.part` already holds.
+	{
+		let existing_part_len = std::fs::metadata(part_path(&dest))
+			.map(|meta| meta.len())
+			.unwrap_or(0);
+		let needed = spec
+			.size_bytes
+			.saturating_sub(existing_part_len)
+			.saturating_add(64 * 1024 * 1024);
+		let available = fs4::available_space(&cache).map_err(|e| e.to_string())?;
+		if available < needed {
+			let short_by_mb = (needed - available) / (1024 * 1024);
+			return Err(format!(
+				"not enough disk space: this model needs about {} MB more - free some room and try again",
+				short_by_mb.max(1)
+			));
+		}
+	}
 
 	// This download gets its own cancel and pause tokens, fully
 	// independent of the generation token - chatting must never kill a

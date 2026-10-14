@@ -76,7 +76,7 @@ pub fn sweep_stale_part_files(models_dir: &Path, cache_dir: &Path) {
 /// The `.part` staging path for a download destination: `<file>.part`
 /// appended to the full name (with_extension would collapse `x.bin` and
 /// `x.gguf` to the same `x.part`).
-pub(super) fn part_path(dest: &Path) -> PathBuf {
+pub fn part_path(dest: &Path) -> PathBuf {
 	let mut name = dest.as_os_str().to_os_string();
 	name.push(".part");
 	PathBuf::from(name)
@@ -128,6 +128,19 @@ enum StreamFailure {
 	/// Cancelled by the user, corrupt, oversized or unwritable: the
 	/// staged bytes are worthless (or unwanted) and are removed.
 	Discard(String),
+}
+
+/// True when a write failed because the volume ran out of space: the
+/// staged `.part` is a valid prefix (ENOSPC never corrupts what already
+/// landed), so the download stays resumable once space is freed instead
+/// of discarding hours of progress. libc's ENOSPC (28 on unix) covers
+/// every desktop platform's errno numbering in practice.
+fn is_out_of_space(e: &std::io::Error) -> bool {
+	#[cfg(unix)]
+	const ENOSPC: i32 = libc::ENOSPC;
+	#[cfg(windows)]
+	const ENOSPC: i32 = 112; // ERROR_DISK_FULL
+	e.raw_os_error() == Some(ENOSPC)
 }
 
 /// The exact error a user-initiated cancel produces. Callers that want to
@@ -542,9 +555,17 @@ async fn download_with_timeouts(
 			if let Some(hasher) = hasher.as_mut() {
 				hasher.update(&chunk);
 			}
-			file.write_all(&chunk)
-				.await
-				.map_err(|e| Discard(e.to_string()))?;
+			file.write_all(&chunk).await.map_err(|e| {
+				if is_out_of_space(&e) {
+					// the prefix on disk is fine: keep it, tell the user
+					// how much to free, and let Resume continue
+					Resumable(
+						"not enough disk space - free some room and press Resume".into(),
+					)
+				} else {
+					Discard(e.to_string())
+				}
+			})?;
 			downloaded = next;
 			if downloaded - last_report > 2_000_000 || downloaded == total {
 				last_report = downloaded;
@@ -558,7 +579,13 @@ async fn download_with_timeouts(
 				on_progress(pct);
 			}
 		}
-		file.flush().await.map_err(|e| Discard(e.to_string()))?;
+		file.flush().await.map_err(|e| {
+			if is_out_of_space(&e) {
+				Resumable("not enough disk space - free some room and press Resume".into())
+			} else {
+				Discard(e.to_string())
+			}
+		})?;
 		// The stream can end "cleanly" mid-body; only a full-length file is
 		// a valid model, anything else fails to load with cryptic errors.
 		// A short file is a resumable prefix; a long one is junk.
@@ -1417,6 +1444,32 @@ mod resume_tests {
 			"nothing is appended when the range cannot be validated"
 		);
 		assert!(!dest.exists());
+	}
+}
+
+#[cfg(test)]
+mod out_of_space_tests {
+	use super::is_out_of_space;
+
+	#[test]
+	fn only_out_of_space_errors_classify_as_resumable() {
+		#[cfg(unix)]
+		let enospc = libc::ENOSPC;
+		#[cfg(windows)]
+		let enospc = 112;
+		assert!(
+			is_out_of_space(&std::io::Error::from_raw_os_error(enospc)),
+			"ENOSPC must keep the staged prefix resumable"
+		);
+		#[cfg(unix)]
+		assert!(!is_out_of_space(&std::io::Error::from_raw_os_error(
+			libc::EACCES
+		)));
+		assert!(!is_out_of_space(&std::io::Error::other("the disk melted")));
+		assert!(!is_out_of_space(&std::io::Error::new(
+			std::io::ErrorKind::WriteZero,
+			"write zero"
+		)));
 	}
 }
 

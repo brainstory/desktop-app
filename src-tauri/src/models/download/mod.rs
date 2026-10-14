@@ -14,6 +14,6 @@ pub use hub_cache::{
 	verified_snapshot_files, VerifiedSnapshotFiles,
 };
 pub use stream::{
-	download_model_file, download_model_file_with_pause, remove_staged_part,
+	download_model_file, download_model_file_with_pause, part_path, remove_staged_part,
 	sweep_stale_part_files, DOWNLOAD_CANCELLED, DOWNLOAD_PAUSED,
 };
