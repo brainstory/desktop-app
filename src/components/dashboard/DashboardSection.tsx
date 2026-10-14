@@ -1,7 +1,7 @@
 import type { IdeaListItem } from "@src/types";
 import { useState, useEffect } from "react";
 import { getAllIdeasApi } from "@helpers/api/user";
-import { importShareApi } from "@helpers/api/share";
+import { importShareApi, type ImportShareResult } from "@helpers/api/share";
 import { normalizeApiError } from "@helpers/helpers";
 import { setGettingStartedDone } from "@helpers/storage";
 import { isOwnIdea } from "@helpers/ideas";
@@ -20,6 +20,8 @@ import { useLibraryView } from "./LibraryToolbar";
 function DashboardSectionInner() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
 	const [isLoading, setIsLoading] = useState(true);
+	/** a post-import refresh is in flight: dim the grid, keep it mounted */
+	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [errorFound, setErrorFound] = useState(false);
 	const { openSnackbar, snackbars } = useSnackbar();
 
@@ -58,27 +60,53 @@ function DashboardSectionInner() {
 		}
 	}, [userIdeas, hasOwnIdea]);
 
+	/** Where an import's "Open" action leads: the idea itself, or the
+	 * feedback tab of its parent. */
+	const importedHref = (res: ImportShareResult): string | undefined => {
+		if (!res.id) return undefined;
+		if (res.kind === "feedback" && res.parent_id) {
+			return `/idea?id=${res.parent_id}&tab=feedback`;
+		}
+		return `/idea?id=${res.id}`;
+	};
+
+	const refreshAfterImport = () => {
+		// keep the grid mounted (its scroll and card state survive); only
+		// dim it while the fresh list arrives
+		setIsRefreshing(true);
+		getAllIdeasApi()
+			.then((ideas) => {
+				setUserIdeas(ideas);
+				setErrorFound(false);
+			})
+			.catch((err) => {
+				console.error("refresh after import failed", err);
+				setErrorFound(true);
+			})
+			.finally(() => setIsRefreshing(false));
+	};
+
 	const handleImport = () => {
 		importShareApi()
 			.then((res) => {
 				if (res.cancelled) return;
-				openSnackbar(
-					true,
-					res.kind === "feedback"
-						? `Imported feedback from ${res.author}`
-						: `Imported "${res.title}" from ${res.author}`
-				);
-				setIsLoading(true);
-				getAllIdeasApi()
-					.then((ideas) => {
-						setUserIdeas(ideas);
-						setErrorFound(false);
-					})
-					.catch((err) => {
-						console.error("refresh after import failed", err);
-						setErrorFound(true);
-					})
-					.finally(() => setIsLoading(false));
+				const href = importedHref(res);
+				if (res.duplicate) {
+					openSnackbar(
+						true,
+						"Already in your library",
+						href ? { label: "Open", href } : undefined
+					);
+				} else {
+					openSnackbar(
+						true,
+						res.kind === "feedback"
+							? `Imported feedback from ${res.author}`
+							: `Imported "${res.title}" from ${res.author}`,
+						href ? { label: "Open", href } : undefined
+					);
+				}
+				refreshAfterImport();
 			})
 			.catch((err) => {
 				openSnackbar(false, normalizeApiError(err));
@@ -167,7 +195,9 @@ function DashboardSectionInner() {
 							</Button>
 						</div>
 					) : (
-						<IdeaGrid userIdeas={library.visible} />
+						<div className={isRefreshing ? "opacity-50 transition-opacity" : undefined}>
+							<IdeaGrid userIdeas={library.visible} />
+						</div>
 					)}
 				</div>
 			)}

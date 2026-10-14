@@ -122,6 +122,32 @@ describe("DashboardSection", () => {
 				vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "get_all_ideas").length
 			).toBeGreaterThanOrEqual(2)
 		);
+		// the imported idea is one click away
+		expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/idea?id=imp2");
+	});
+
+	it("reports a duplicate import and links to what is already there", async () => {
+		const user = userEvent.setup();
+		mockBase({
+			import_share: () => ({
+				cancelled: false,
+				kind: "feedback",
+				duplicate: true,
+				id: "existing-feedback",
+				parent_id: "existing-parent",
+				author: "Ada"
+			})
+		});
+		render(<DashboardSection />);
+		await user.click(
+			await screen.findByRole("button", { name: "Import shared idea or feedback" })
+		);
+		expect(await screen.findByText("Already in your library")).toBeInTheDocument();
+		// feedback opens on its parent idea's feedback tab
+		expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute(
+			"href",
+			"/idea?id=existing-parent&tab=feedback"
+		);
 	});
 });
 

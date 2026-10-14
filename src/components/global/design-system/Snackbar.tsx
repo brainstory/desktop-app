@@ -17,9 +17,11 @@ interface SnackbarProps {
 	message: string;
 	/** Called when the snackbar is dismissed (button or auto-dismiss). */
 	onClose: () => void;
+	/** optional inline action, e.g. an "Open" link to what just happened */
+	action?: { label: string; href: string };
 }
 
-export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
+export function Snackbar({ isSuccess, message, onClose, action }: SnackbarProps) {
 	// Parents pass inline onClose arrows (new identity every render);
 	// read it through a ref so the auto-dismiss timer is keyed on the
 	// message only - a parent re-render must not restart the countdown.
@@ -43,7 +45,14 @@ export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
 			aria-live={isSuccess ? "polite" : "assertive"}
 			className={style}
 		>
-			<p className="text-white">{message}</p>
+			<p className="text-white inline">
+				{message}{" "}
+				{action && (
+					<a href={action.href} className="underline font-semibold whitespace-nowrap">
+						{action.label}
+					</a>
+				)}
+			</p>
 			<button
 				className="absolute top-1/2 right-2 -translate-y-1/2 text-white/70 hover:text-white text-lg font-bold px-2"
 				aria-label="Dismiss message"
@@ -65,19 +74,30 @@ export function Snackbar({ isSuccess, message, onClose }: SnackbarProps) {
  *   openSnackbar(false, "Could not save");
  */
 export function useSnackbar(): {
-	openSnackbar: (isSuccess: boolean, message: string) => void;
+	openSnackbar: (
+		isSuccess: boolean,
+		message: string,
+		action?: { label: string; href: string }
+	) => void;
 	snackbars: ReactNode;
 } {
 	const [successMessage, setSuccessMessage] = useState<string | null>(null);
+	const [successAction, setSuccessAction] = useState<{ label: string; href: string } | undefined>(
+		undefined
+	);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-	const openSnackbar = useCallback((isSuccess: boolean, message: string): void => {
-		if (isSuccess) {
-			setSuccessMessage(message);
-		} else {
-			setErrorMessage(message);
-		}
-	}, []);
+	const openSnackbar = useCallback(
+		(isSuccess: boolean, message: string, action?: { label: string; href: string }): void => {
+			if (isSuccess) {
+				setSuccessMessage(message);
+				setSuccessAction(action);
+			} else {
+				setErrorMessage(message);
+			}
+		},
+		[]
+	);
 
 	const snackbars = (
 		<>
@@ -85,7 +105,11 @@ export function useSnackbar(): {
 				<Snackbar
 					isSuccess={true}
 					message={successMessage}
-					onClose={() => setSuccessMessage(null)}
+					action={successAction}
+					onClose={() => {
+						setSuccessMessage(null);
+						setSuccessAction(undefined);
+					}}
 				/>
 			)}
 			{errorMessage !== null && (
