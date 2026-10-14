@@ -264,6 +264,9 @@ export function ChatSection({
 				saveError={session.resultSaveError}
 				onRetrySave={session.retrySaveResult}
 				droppedTurns={session.resultTruncated ? session.resultDroppedTurns : 0}
+				generationStopped={session.resultStoppedEarly}
+				onRetryGeneration={session.handleGetResult}
+				onKeepDraft={() => session.keepPartialResult(result)}
 			/>
 		);
 	} else if (fatalError === "draft-not-found") {

@@ -81,6 +81,9 @@ export interface ChatSessionState {
 	/** the model could only read part of the conversation (the oldest
 	 * turns were dropped to fit its context window) */
 	resultTruncated: boolean;
+	/** the summary stream failed partway: the partial text is kept for a
+	 * retry or a "keep this draft" decision */
+	resultStoppedEarly: boolean;
 	/** how many turns resultTruncated dropped */
 	resultDroppedTurns: number;
 	/** saving the finished summary failed (the summary is kept so the
@@ -117,6 +120,7 @@ export const initialChatSessionState: ChatSessionState = {
 	resultComplete: false,
 	resultTruncated: false,
 	resultDroppedTurns: 0,
+	resultStoppedEarly: false,
 	resultSaveError: null
 };
 
@@ -181,6 +185,7 @@ export function chatSessionReducer(
 				resultComplete: false,
 				resultTruncated: false,
 				resultDroppedTurns: 0,
+				resultStoppedEarly: false,
 				resultSaveError: null
 			};
 		case "resultStreamed":
@@ -192,7 +197,12 @@ export function chatSessionReducer(
 				resultDroppedTurns: event.droppedTurns
 			};
 		case "resultSaved":
-			return { ...state, readyToSave: true, resultSaveError: null };
+			return {
+				...state,
+				readyToSave: true,
+				resultSaveError: null,
+				resultStoppedEarly: false
+			};
 		case "resultSaveFailed":
 			return {
 				...state,
@@ -202,7 +212,12 @@ export function chatSessionReducer(
 		case "resultSaveRetried":
 			return { ...state, resultSaveError: null };
 		case "resultFailed":
-			return { ...state, conversationState: CONVERSATION_STATE.Idle, resultComplete: false };
+			return {
+				...state,
+				conversationState: CONVERSATION_STATE.Idle,
+				resultComplete: false,
+				resultStoppedEarly: true
+			};
 	}
 }
 
@@ -386,6 +401,18 @@ export function useChatSession(
 		}
 	};
 
+	/** Keep the partial summary as the session's result (the
+	 * stopped-early panel's "Keep this draft"). */
+	const keepPartialResult = (text: string) => {
+		if (!ideaId || !text.trim()) return;
+		void persistResult({
+			ideaId,
+			conversation: currConversation,
+			result: text,
+			structuredResult: null
+		});
+	};
+
 	/** Retry saving a generated summary after a failed save. */
 	const retrySaveResult = () => {
 		const job = unsavedResultRef.current;
@@ -434,10 +461,15 @@ export function useChatSession(
 			setResult,
 			resultFinishedCallbacks,
 			(err) => {
-				// drop any partial summary: while a result is set the
-				// finished-result view replaces the chat (and its banner)
-				setResult("");
-				if (!isGenerationCancelled(err)) {
+				if (isGenerationCancelled(err)) {
+					// the user asked to leave: drop the partial and return
+					// to the chat
+					setResult("");
+				} else {
+					// a failure keeps the partial text: minutes of streamed
+					// output are a usable draft, and the stopped-early
+					// panel offers the retry/keep decision (a retry or a
+					// save clears it)
 					onError(normalizeApiError(err));
 				}
 				dispatch({ type: "resultFailed" });
@@ -461,6 +493,7 @@ export function useChatSession(
 		dispatch,
 		handleGetResponse,
 		handleGetResult,
+		keepPartialResult,
 		retrySaveResult,
 		askADifferentQuestion,
 		canReviseLastAnswer,

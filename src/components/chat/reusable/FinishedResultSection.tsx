@@ -12,6 +12,10 @@ interface FinishedResultSectionProps {
 	onRetrySave?: () => void;
 	/** the model could only read the last part of the conversation */
 	droppedTurns?: number;
+	/** the stream stopped partway: offer retry / keep-draft */
+	generationStopped?: boolean;
+	onRetryGeneration?: () => void;
+	onKeepDraft?: () => void;
 }
 
 export default function FinishedResultSection({
@@ -21,7 +25,10 @@ export default function FinishedResultSection({
 	ideaId,
 	saveError,
 	onRetrySave,
-	droppedTurns
+	droppedTurns,
+	generationStopped,
+	onRetryGeneration,
+	onKeepDraft
 }: FinishedResultSectionProps) {
 	return (
 		<section>
@@ -37,6 +44,9 @@ export default function FinishedResultSection({
 				onRetrySave={onRetrySave}
 				droppedTurns={droppedTurns}
 				result={result}
+				generationStopped={generationStopped}
+				onRetryGeneration={onRetryGeneration}
+				onKeepDraft={onKeepDraft}
 			/>
 		</section>
 	);

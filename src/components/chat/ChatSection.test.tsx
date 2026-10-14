@@ -505,6 +505,60 @@ describe("ChatSection", () => {
 		});
 	});
 
+	it("keeps a partial summary when generation fails, and can save it", async () => {
+		let failStream!: (e: unknown) => void;
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" }),
+			generate_streaming_response: (args) =>
+				(args as { summarize?: boolean }).summarize
+					? new Promise((_res, rej) => {
+							failStream = rej;
+						})
+					: { response: "and then?" }
+		});
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("a calm day");
+		await userEvent.click(screen.getByRole("button", { name: "Generate Summary & Save" }));
+		// the coach turn + the summary generation both fired; the second
+		// one's channel carries the partial text
+		await waitFor(() =>
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "generate_streaming_response")
+			).toHaveLength(2)
+		);
+		const summaryCall = vi
+			.mocked(invoke)
+			.mock.calls.filter(([c]) => c === "generate_streaming_response")[1]![1] as {
+			onEvent: { onmessage: (event: unknown) => void };
+		};
+		act(() => {
+			summaryCall.onEvent.onmessage({ type: "chunk", content: "# Half a summary" });
+		});
+		await act(async () => {
+			failStream("endpoint did not return an SSE stream");
+			await Promise.resolve();
+		});
+
+		// the partial stays on screen with the stopped-early panel
+		expect(await screen.findByText("Generation stopped early")).toBeInTheDocument();
+		expect(screen.getByText(/Half a summary/)).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Keep this draft" }));
+		const save = vi
+			.mocked(invoke)
+			.mock.calls.filter(([c]) => c === "update_idea")
+			.at(-1)![1] as { result?: string };
+		expect(save.result).toBe("# Half a summary");
+		expect(await screen.findByText("Finished! Saved your summary")).toBeInTheDocument();
+	});
+
 	it("finishes the session with Cmd+Enter once the minimum is met", async () => {
 		mockChat({
 			create_idea: () => ({ id: "idea-1" }),

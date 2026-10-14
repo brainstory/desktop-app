@@ -300,7 +300,7 @@ describe("useChatSession", () => {
 			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
 		});
 
-		it("clears a partial summary on failure so the error banner is visible", async () => {
+		it("keeps a partial summary on failure for the retry/keep choice", async () => {
 			let rejectStream!: (e: unknown) => void;
 			mockInvoke({
 				generate_streaming_response: () =>
@@ -308,7 +308,8 @@ describe("useChatSession", () => {
 						rejectStream = rej;
 					})
 			});
-			const { result, opts } = renderSession([q1, a1]);
+			const saveResult = vi.fn(async () => {});
+			const { result, opts } = renderSession([q1, a1], { saveResult });
 			act(() => result.current.handleGetResult());
 			act(() => streamChannel().onmessage({ type: "chunk", content: "# partial" }));
 			await act(async () => {
@@ -316,8 +317,18 @@ describe("useChatSession", () => {
 				await Promise.resolve();
 			});
 			expect(opts.onError).toHaveBeenCalledTimes(1);
-			expect(opts.setResult).toHaveBeenLastCalledWith("");
-			expect(result.current.conversationState).toBe(CONVERSATION_STATE.Idle);
+			// the partial text survived...
+			expect(opts.setResult).toHaveBeenLastCalledWith("# partial");
+			expect(result.current.resultStoppedEarly).toBe(true);
+
+			// ...and "Keep this draft" persists it as the result
+			await act(async () => {
+				result.current.keepPartialResult("# partial");
+				await Promise.resolve();
+			});
+			expect(saveResult).toHaveBeenCalledWith("idea-1", [q1, a1], "# partial", null);
+			expect(result.current.resultStoppedEarly).toBe(false);
+			expect(result.current.readyToSave).toBe(true);
 		});
 	});
 

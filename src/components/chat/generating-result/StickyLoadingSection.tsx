@@ -14,6 +14,10 @@ interface StickyLoadingSectionProps {
 	droppedTurns?: number;
 	/** the finished text, for copying */
 	result?: string;
+	/** the stream stopped partway: offer retry / keep-draft */
+	generationStopped?: boolean;
+	onRetryGeneration?: () => void;
+	onKeepDraft?: () => void;
 }
 
 /** One-line amber notice: the conversation was longer than the model's
@@ -34,7 +38,10 @@ export default function StickyLoadingSection({
 	saveError = null,
 	onRetrySave,
 	droppedTurns = 0,
-	result = ""
+	result = "",
+	generationStopped = false,
+	onRetryGeneration,
+	onKeepDraft
 }: StickyLoadingSectionProps) {
 	const truncated = droppedTurns > 0;
 	return (
@@ -48,6 +55,22 @@ export default function StickyLoadingSection({
 					<div className="flex justify-center">
 						<Button variant="bordered" onClick={onRetrySave}>
 							Try saving again
+						</Button>
+					</div>
+				</div>
+			) : generationStopped ? (
+				<div role="alert" className="text-center">
+					<h1 className={headingStyle}>Generation stopped early</h1>
+					<p className="text-stone-700 mb-4">
+						The model stopped partway through writing your summary. Try again, or keep
+						what was written as your summary.
+					</p>
+					<div className="flex justify-center gap-2">
+						<Button variant="bordered" onClick={onRetryGeneration}>
+							Try again
+						</Button>
+						<Button variant="pink" onClick={onKeepDraft}>
+							Keep this draft
 						</Button>
 					</div>
 				</div>

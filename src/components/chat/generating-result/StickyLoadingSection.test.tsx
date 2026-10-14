@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import StickyLoadingSection from "./StickyLoadingSection";
 
@@ -14,6 +15,25 @@ describe("StickyLoadingSection", () => {
 	it("says nothing about truncation when the whole conversation fit", () => {
 		render(<StickyLoadingSection isFinishedGenerating={false} ideaId="i1" droppedTurns={0} />);
 		expect(screen.queryByText(/only read the last part/)).not.toBeInTheDocument();
+	});
+
+	it("offers retry and keep-draft when the generation stopped early", async () => {
+		const onRetryGeneration = vi.fn();
+		const onKeepDraft = vi.fn();
+		render(
+			<StickyLoadingSection
+				isFinishedGenerating={false}
+				ideaId="i1"
+				generationStopped
+				onRetryGeneration={onRetryGeneration}
+				onKeepDraft={onKeepDraft}
+			/>
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent("Generation stopped early");
+		await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+		expect(onRetryGeneration).toHaveBeenCalledTimes(1);
+		await userEvent.click(screen.getByRole("button", { name: "Keep this draft" }));
+		expect(onKeepDraft).toHaveBeenCalledTimes(1);
 	});
 
 	it("warns with the dropped turn count while generating and when finished", () => {
