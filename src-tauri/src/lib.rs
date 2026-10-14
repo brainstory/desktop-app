@@ -560,9 +560,31 @@ pub(crate) const QUICK_CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
 /// item and the global quick capture shortcut.
 fn open_new_idea(app: &AppHandle) {
 	show_main_window(app);
+	// An in-progress recording or generation must not be destroyed by
+	// the page load (a dead IPC channel cancels the generation): bring
+	// the window up and let the page explain instead of navigating.
+	let generating = app
+		.state::<AppState>()
+		.active_generations
+		.load(std::sync::atomic::Ordering::SeqCst)
+		> 0;
+	if crate::voice::is_capturing() || generating {
+		if let Err(e) = app.emit("quick-capture-blocked", ()) {
+			log::warn!("failed to announce the blocked quick capture: {e}");
+		}
+		return;
+	}
 	let Some(window) = app.get_webview_window("main") else {
 		return;
 	};
+	// Already on a fresh chat? The navigation would only remount the
+	// page (dropping, say, an unsent typed draft) for nothing.
+	let on_fresh_chat = window
+		.url()
+		.is_ok_and(|url| url.path() == "/chat" && !url.query_pairs().any(|(k, _)| k == "id"));
+	if on_fresh_chat {
+		return;
+	}
 	// A full navigation, like every other page change in the app (Astro
 	// pages are separate documents); an in-progress draft is flushed to
 	// the database by the page's own pagehide hook.

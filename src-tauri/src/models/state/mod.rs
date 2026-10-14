@@ -118,6 +118,11 @@ pub struct AppState {
 	/// guards so only one load per engine kind runs at a time
 	pub llm_loading: AtomicBool,
 	pub stt_loading: AtomicBool,
+	/// LLM generations started but not finished: a model switch waits
+	/// for this to drain instead of vacating memory a live generation
+	/// still maps, and the quick-capture shortcut refuses to navigate a
+	/// generation into the void
+	pub active_generations: std::sync::atomic::AtomicUsize,
 	/// when the tray icon is hidden, closing the window quits the app
 	/// (otherwise it would keep running with no way to reach it)
 	pub quit_on_close: AtomicBool,
@@ -253,6 +258,7 @@ impl AppState {
 			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
 			download_pauses: std::sync::Mutex::new(std::collections::HashMap::new()),
 			llm_loading: AtomicBool::new(false),
+			active_generations: std::sync::atomic::AtomicUsize::new(0),
 			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),
 		}

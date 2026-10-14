@@ -37,6 +37,22 @@ fn take_transcription_token(state: &AppState) -> Arc<AtomicBool> {
 	token
 }
 
+/// RAII counter for in-flight generations: a model switch (and the
+/// quick-capture shortcut) waits for these to drain instead of yanking
+/// the page or the engine's memory out from under a live generation.
+struct GenerationGuard<'a>(&'a AppState);
+
+impl Drop for GenerationGuard<'_> {
+	fn drop(&mut self) {
+		self.0.active_generations.fetch_sub(1, Ordering::SeqCst);
+	}
+}
+
+fn enter_generation(state: &AppState) -> GenerationGuard<'_> {
+	state.active_generations.fetch_add(1, Ordering::SeqCst);
+	GenerationGuard(state)
+}
+
 /// Cancel an in-flight transcription. The token is checked before the
 /// request and every 150 ms while it is in flight. The local whisper (and
 /// Apple Speech) inference itself cannot be interrupted: a cancelled one
@@ -594,6 +610,7 @@ async fn run_generation(
 	on_chunk: impl FnMut(String) + Send + 'static,
 	on_status: &(dyn Fn(&str) + Sync),
 ) -> Result<(String, usize, usize), String> {
+	let _generating = enter_generation(state.inner());
 	let max_tokens = if summarize {
 		crate::llm::MAX_NEW_TOKENS_RESULT
 	} else {

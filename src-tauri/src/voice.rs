@@ -80,6 +80,13 @@ const MAX_CAPTURE_SECS: usize = 300;
 
 /// Begin capturing from the default input device. Errors if already running
 /// or if macOS microphone permission has not been granted.
+/// True while a recording is in progress: callers that must not
+/// destroy it (the quick-capture shortcut navigating the page away)
+/// check this before acting.
+pub fn is_capturing() -> bool {
+	CAPTURE.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
 pub fn start_capture() -> Result<(), String> {
 	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
 	// Read under the CAPTURE lock so this cannot race abandon_capture
