@@ -12,11 +12,14 @@ const HEADINGS: Record<ChatErrorSource, string> = {
 export function ChatErrorBanner({
 	aiError,
 	source = "ai",
-	onDismiss
+	onDismiss,
+	onRetry
 }: {
 	aiError: string;
 	source?: ChatErrorSource;
 	onDismiss: () => void;
+	/** retry the failed save (save errors only) */
+	onRetry?: () => void;
 }) {
 	const described = describeError(aiError);
 	return (
@@ -29,6 +32,11 @@ export function ChatErrorBanner({
 				{described.action && <> {described.action}</>}
 			</span>
 			<span className="flex gap-2 shrink-0">
+				{source === "save" && onRetry && (
+					<button className="underline font-semibold whitespace-nowrap" onClick={onRetry}>
+						Try again
+					</button>
+				)}
 				{source === "ai" && (
 					<a
 						className="underline font-semibold whitespace-nowrap"

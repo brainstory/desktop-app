@@ -321,6 +321,9 @@ export function ChatSection({
 						aiError={chatError.message}
 						source={chatError.source}
 						onDismiss={() => setChatError(null)}
+						onRetry={
+							chatError.source === "save" ? persistence.retryAutosave : undefined
+						}
 					/>
 				)}
 				<ModelStatusNotice availability={modelAvailability} error={aiStatus.llm.error} />

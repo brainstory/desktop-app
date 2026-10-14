@@ -130,7 +130,10 @@ export function useIdeaPersistence(
 					setSaveState(CHAT_SAVE_STATE.SUCCESS);
 				}
 			} catch (e) {
-				if (pendingSaveRef.current) return;
+				// keep the failed job recoverable (a newer queued save
+				// supersedes it; ??= leaves that untouched)
+				pendingSaveRef.current ??= job;
+				if (pendingSaveRef.current !== job) return;
 				setSaveState(CHAT_SAVE_STATE.FAILED);
 				onErrorRef.current(`Autosave failed: ${normalizeApiError(e)}`);
 			} finally {
@@ -290,6 +293,18 @@ export function useIdeaPersistence(
 		[]
 	);
 
+	/** Re-send the transcript after a failed autosave. The latest
+	 * conversation wins: whatever failed, the retry persists the newest
+	 * state rather than the stale failed snapshot. */
+	const retryAutosave = useCallback(() => {
+		if (!ideaId) return;
+		pendingSaveRef.current = {
+			ideaId,
+			conversation: latestConversationRef.current
+		};
+		flushAutosave();
+	}, [ideaId, flushAutosave]);
+
 	/** Flush anything queued and resolve once every save has landed. */
 	const whenIdle = useCallback(async (): Promise<void> => {
 		flushAutosave();
@@ -310,6 +325,7 @@ export function useIdeaPersistence(
 		setSaveState,
 		readyToCreateIdea,
 		requestCreate,
+		retryAutosave,
 		hasUnsavedChanges,
 		whenIdle,
 		conversationLengthRef,

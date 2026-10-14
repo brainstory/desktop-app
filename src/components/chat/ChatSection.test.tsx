@@ -410,6 +410,41 @@ describe("ChatSection", () => {
 		}
 	});
 
+	it("retries a failed autosave from the banner", async () => {
+		let attempts = 0;
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => {
+				attempts += 1;
+				if (attempts === 1) throw "database is locked";
+				return { id: "idea-1" };
+			},
+			generate_response: () => ({ response: "and then?" })
+		});
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("a calm day");
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
+		const banner = await screen.findByRole("alert");
+		expect(banner).toHaveTextContent("Autosave failed");
+		expect(banner).toHaveTextContent("Try again");
+
+		await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(attempts).toBe(2));
+		// the retry re-sent the whole transcript
+		const retry = vi
+			.mocked(invoke)
+			.mock.calls.filter(([c]) => c === "update_idea")
+			.at(-1)![1] as { transcript: { content: string }[] };
+		expect(retry.transcript.map((m) => m.content)).toContain("a calm day");
+		expect(retry.transcript.map((m) => m.content)).toContain("and then?");
+	});
+
 	describe("feedback on an idea", () => {
 		async function sendFeedback(parent: Record<string, unknown>) {
 			mockChat({
