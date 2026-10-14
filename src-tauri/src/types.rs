@@ -1,5 +1,5 @@
 /// A single message in a conversation transcript.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ChatMessage {
 	pub role: String,
 	pub content: String,

@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::types::ChatMessage;
 
@@ -260,51 +260,78 @@ impl PromptRequest {
 	/// Build the user message list sent to the model.
 	pub fn user_messages(&self) -> Vec<ChatMessage> {
 		if self.summarize {
-			// Sanitize each message's content BEFORE serialization: running
-			// the sanitizer over the serialized JSON would insert the
-			// backslash into a JSON string, where it becomes an escape
-			// sequence and silently alters the transcript text.
-			let sanitized: Vec<ChatMessage> = self
-				.messages
-				.iter()
-				.map(|m| ChatMessage {
-					role: m.role.clone(),
-					content: sanitize_tag_content(&m.content, "t"),
-				})
-				.collect();
-			let transcript = serde_json::to_string(&sanitized).unwrap_or_else(|_| "[]".into());
-			let mut content = format!("<t>{transcript}</t>");
-			if self.chat_type == ChatType::Feedback {
-				if let Some(oid) = &self.react_to {
-					let author = sanitize_author(
-						&self
-							.react_to_author
-							.clone()
-							.unwrap_or_else(|| "the author".into()),
-					);
-					let is_current_user = if self.react_to_is_current_user {
-						"true"
-					} else {
-						"false"
-					};
-					content = format!(
-						"<oid oida=\"{}\" is_current_user=\"{}\">{}</oid>\n{}",
-						author,
-						is_current_user,
-						// the summaries react to the author's idea, not to the
-						// assistant's synthesis appendix: given those tidy bullet
-						// lists, a small model copies them into the feedback
-						sanitize_tag_content(idea_without_synthesis(oid), "oid"),
-						content
-					);
-				}
-			}
-			return vec![ChatMessage {
-				role: "user".into(),
-				content,
-			}];
+			return vec![self.summary_message(&self.messages)];
 		}
 		self.messages.clone()
+	}
+
+	/// The engine-call renderer for summary generations: `Some` exactly
+	/// when this request summarizes. Serializes the (fitted) turns into
+	/// the single message the model sees.
+	pub fn summary_renderer(&self) -> Option<crate::llm::SummaryRender> {
+		if !self.summarize {
+			return None;
+		}
+		let shape = PromptRequest {
+			chat_type: self.chat_type,
+			messages: Vec::new(),
+			summarize: true,
+			react_to: self.react_to.clone(),
+			react_to_author: self.react_to_author.clone(),
+			react_to_is_current_user: self.react_to_is_current_user,
+			structured_feedback: false,
+		};
+		Some(Arc::new(move |turns: &[ChatMessage]| {
+			shape.summary_message(turns).content
+		}))
+	}
+
+	/// The single user message a summary is rendered into for `turns`
+	/// (the whole conversation, or the fitted subset the model's context
+	/// can hold - see [`crate::llm::fit_summary_turns`]).
+	pub fn summary_message(&self, turns: &[ChatMessage]) -> ChatMessage {
+		// Sanitize each message's content BEFORE serialization: running
+		// the sanitizer over the serialized JSON would insert the
+		// backslash into a JSON string, where it becomes an escape
+		// sequence and silently alters the transcript text.
+		let sanitized: Vec<ChatMessage> = turns
+			.iter()
+			.map(|m| ChatMessage {
+				role: m.role.clone(),
+				content: sanitize_tag_content(&m.content, "t"),
+			})
+			.collect();
+		let transcript = serde_json::to_string(&sanitized).unwrap_or_else(|_| "[]".into());
+		let mut content = format!("<t>{transcript}</t>");
+		if self.chat_type == ChatType::Feedback {
+			if let Some(oid) = &self.react_to {
+				let author = sanitize_author(
+					&self
+						.react_to_author
+						.clone()
+						.unwrap_or_else(|| "the author".into()),
+				);
+				let is_current_user = if self.react_to_is_current_user {
+					"true"
+				} else {
+					"false"
+				};
+				content = format!(
+					"<oid oida=\"{}\" is_current_user=\"{}\">{}</oid>\n{}",
+					author,
+					is_current_user,
+					// the summaries react to the author's idea, not to the
+					// assistant's synthesis appendix: given those tidy bullet
+					// lists, a small model copies them into the feedback
+					sanitize_tag_content(idea_without_synthesis(oid), "oid"),
+					content
+				);
+			}
+		}
+		ChatMessage {
+			role: "user".into(),
+			content,
+		}
 	}
 }
 

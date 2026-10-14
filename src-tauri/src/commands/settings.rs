@@ -390,13 +390,14 @@ pub async fn test_llm_endpoint(
 	)?;
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let mut got_any = false;
-	let (output, _) = client
+	let (output, _, _) = client
 		.generate(
 			"You are a helpful assistant.",
 			&[crate::types::ChatMessage {
 				role: "user".into(),
 				content: "Say OK".into(),
 			}],
+			None,
 			&cancel,
 			16,
 			|_| got_any = true,

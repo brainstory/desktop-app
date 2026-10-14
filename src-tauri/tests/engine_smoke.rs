@@ -46,7 +46,7 @@ fn whisper_and_llama_coexist() {
 			role: "user".into(),
 			content: "Once upon a time".into(),
 		}],
-		false,
+		None,
 		&cancel,
 		|piece| {
 			chunks.push(piece);
@@ -56,7 +56,7 @@ fn whisper_and_llama_coexist() {
 		},
 	);
 	match result {
-		Ok((_, prompt_tokens)) => println!("prompt tokenized to {prompt_tokens} tokens"),
+		Ok((_, prompt_tokens, _)) => println!("prompt tokenized to {prompt_tokens} tokens"),
 		// our own stop after ENOUGH_PIECES
 		Err(e) if e == "generation cancelled" && chunks.len() >= ENOUGH_PIECES => {}
 		Err(e) => panic!("llama generation failed: {e:?}"),

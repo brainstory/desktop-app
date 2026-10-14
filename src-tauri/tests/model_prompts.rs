@@ -18,13 +18,19 @@ use std::sync::Arc;
 
 fn generate(llm: &LocalLlm, request: &PromptRequest) -> (String, String) {
 	let system = request.system_prompt();
-	let messages = request.user_messages();
+	let render = request.summary_renderer();
 	let cancel = Arc::new(AtomicBool::new(false));
 	let mut streamed = String::new();
-	let (returned, prompt_tokens) = llm
-		.generate(&system, &messages, request.summarize, &cancel, |chunk| {
-			streamed.push_str(&chunk);
-		})
+	let (returned, prompt_tokens, _) = llm
+		.generate(
+			&system,
+			&request.messages,
+			render.as_deref(),
+			&cancel,
+			|chunk| {
+				streamed.push_str(&chunk);
+			},
+		)
 		.expect("generation failed");
 	println!("[tokens] prompt: {prompt_tokens}");
 	(returned, streamed)
@@ -113,8 +119,8 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 		structured_feedback: false,
 	};
 	let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-	let (first, prompt_tokens) = llm
-		.generate("", &turn1.messages.clone(), false, &cancel, &mut |_| {})
+	let (first, prompt_tokens, _) = llm
+		.generate("", &turn1.messages.clone(), None, &cancel, &mut |_| {})
 		.expect("first generation");
 	assert!(prompt_tokens > 0, "prompt tokens counted");
 
@@ -127,8 +133,8 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 		role: "user".into(),
 		content: "What is the dragon's name?".into(),
 	});
-	let (second, _) = llm
-		.generate("", &extended, false, &cancel, &mut |_| {})
+	let (second, _, _) = llm
+		.generate("", &extended, None, &cancel, &mut |_| {})
 		.expect("second generation with restored KV");
 	assert!(
 		!second.trim().is_empty(),
@@ -137,14 +143,14 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 
 	// A divergent conversation (no shared prefix beyond the header) must
 	// also work: the restore is skipped, not required.
-	let (fresh, _) = llm
+	let (fresh, _, _) = llm
 		.generate(
 			"",
 			&[ChatMessage {
 				role: "user".into(),
 				content: "Something completely different: name three colors.".into(),
 			}],
-			false,
+			None,
 			&cancel,
 			&mut |_| {},
 		)
@@ -271,9 +277,8 @@ fn oversized_payload_fit_probes(llm: &LocalLlm) {
 	};
 	let cancel = Arc::new(AtomicBool::new(false));
 	let system = huge_idea.system_prompt();
-	let messages = huge_idea.user_messages();
 	let err = llm
-		.generate(&system, &messages, false, &cancel, &mut |_| {})
+		.generate(&system, &huge_idea.messages, None, &cancel, &mut |_| {})
 		.expect_err("a system payload past the window must fail, not hang or generate");
 	assert!(
 		err.contains("decode"),

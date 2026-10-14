@@ -10,6 +10,8 @@ interface FinishedResultSectionProps {
 	/** saving the summary failed: show the error and a retry */
 	saveError?: string | null;
 	onRetrySave?: () => void;
+	/** the model could only read the last part of the conversation */
+	droppedTurns?: number;
 }
 
 export default function FinishedResultSection({
@@ -18,7 +20,8 @@ export default function FinishedResultSection({
 	isComplete,
 	ideaId,
 	saveError,
-	onRetrySave
+	onRetrySave,
+	droppedTurns
 }: FinishedResultSectionProps) {
 	return (
 		<section>
@@ -32,6 +35,7 @@ export default function FinishedResultSection({
 				ideaId={ideaId}
 				saveError={saveError}
 				onRetrySave={onRetrySave}
+				droppedTurns={droppedTurns}
 			/>
 		</section>
 	);

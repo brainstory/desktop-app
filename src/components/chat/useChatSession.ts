@@ -18,7 +18,8 @@ import {
 	handleStreamResult,
 	addConversationMessage,
 	removeLastConversationMessage,
-	isGenerationCancelled
+	isGenerationCancelled,
+	type GenerationResult
 } from "@helpers/chat";
 import {
 	generateResponseApi,
@@ -77,6 +78,11 @@ export interface ChatSessionState {
 	readyToSave: boolean;
 	/** the summary stream finished: the result text is final */
 	resultComplete: boolean;
+	/** the model could only read part of the conversation (the oldest
+	 * turns were dropped to fit its context window) */
+	resultTruncated: boolean;
+	/** how many turns resultTruncated dropped */
+	resultDroppedTurns: number;
 	/** saving the finished summary failed (the summary is kept so the
 	 * save can be retried) */
 	resultSaveError: string | null;
@@ -95,6 +101,7 @@ export type ChatSessionEvent =
 	| { type: "userTurnRemoved" }
 	| { type: "resultRequested" }
 	| { type: "resultStreamed" }
+	| { type: "resultTruncated"; droppedTurns: number }
 	| { type: "resultSaved" }
 	| { type: "resultSaveFailed"; message?: string }
 	| { type: "resultSaveRetried" }
@@ -106,6 +113,8 @@ export const initialChatSessionState: ChatSessionState = {
 	inappropriateUserTranscript: null,
 	readyToSave: false,
 	resultComplete: false,
+	resultTruncated: false,
+	resultDroppedTurns: 0,
 	resultSaveError: null
 };
 
@@ -160,10 +169,18 @@ export function chatSessionReducer(
 				...state,
 				conversationState: CONVERSATION_STATE.FinishWithResult,
 				resultComplete: false,
+				resultTruncated: false,
+				resultDroppedTurns: 0,
 				resultSaveError: null
 			};
 		case "resultStreamed":
 			return { ...state, resultComplete: true };
+		case "resultTruncated":
+			return {
+				...state,
+				resultTruncated: true,
+				resultDroppedTurns: event.droppedTurns
+			};
 		case "resultSaved":
 			return { ...state, readyToSave: true, resultSaveError: null };
 		case "resultSaveFailed":
@@ -359,9 +376,16 @@ export function useChatSession(
 		dispatch({ type: "resultRequested" });
 		const resultFinishedCallbacks = async (
 			result: string,
-			structuredResult: unknown
+			structuredResult: unknown,
+			generation: GenerationResult | null
 		): Promise<void> => {
 			dispatch({ type: "resultStreamed" });
+			if (generation?.truncated) {
+				dispatch({
+					type: "resultTruncated",
+					droppedTurns: generation.dropped_turns ?? 0
+				});
+			}
 			await persistResult({
 				ideaId,
 				conversation: currConversation,

@@ -226,7 +226,6 @@ impl GenerateParams {
 async fn generate_and_respond<F>(
 	state: &State<'_, AppState>,
 	request: &PromptRequest,
-	user_messages: &[ChatMessage],
 	// second_pass: run the structured-JSON second pass (streaming only)
 	second_pass: bool,
 	// on_event returns false when the channel is dead: cancel generation
@@ -236,7 +235,8 @@ where
 	F: Fn(EmitKind, &str) -> bool + Send + Sync + Clone + 'static,
 {
 	let system = request.system_prompt();
-	let word_count: usize = user_messages
+	let word_count: usize = request
+		.messages
 		.iter()
 		.map(|m| m.content.split_whitespace().count())
 		.sum();
@@ -267,12 +267,17 @@ where
 			cancel_for_writer.store(true, Ordering::Relaxed);
 		}
 	};
-	let (output, prompt_tokens) = run_generation(
+	// Summary generations serialize the conversation inside the engine
+	// (the turns are fitted to its context first); chat generations take
+	// the turns as-is.
+	let render = request.summary_renderer();
+	let (output, prompt_tokens, dropped_turns) = run_generation(
 		state,
 		&settings,
 		system,
-		user_messages,
+		&request.messages,
 		request.summarize,
+		render.clone(),
 		cancel.clone(),
 		channel_writer,
 		&on_status,
@@ -297,15 +302,16 @@ where
 			state,
 			&settings,
 			json_system,
-			user_messages,
+			&request.messages,
 			true,
+			render.clone(),
 			cancel,
 			|_| {},
 			&on_status,
 		)
 		.await;
 		match json_output {
-			Ok((json_output, _)) => structured = extract_feedback_json(&json_output),
+			Ok((json_output, _, _)) => structured = extract_feedback_json(&json_output),
 			// log instead of swallowing: a silently missing structured
 			// document is invisible in support logs
 			Err(e) => log::error!("structured feedback pass failed: {e}"),
@@ -317,6 +323,9 @@ where
 		"request_message_tokens": prompt_tokens,
 		"request_word_count": word_count,
 		"structured_result": structured,
+		// how many transcript turns the summary fit had to leave out
+		"truncated": dropped_turns > 0,
+		"dropped_turns": dropped_turns,
 	}))
 }
 
@@ -342,8 +351,7 @@ pub async fn generate_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
-	let user_messages = request.user_messages();
-	generate_and_respond(&state, &request, &user_messages, false, |_, _| true).await
+	generate_and_respond(&state, &request, false, |_, _| true).await
 }
 
 #[tauri::command]
@@ -369,21 +377,14 @@ pub async fn generate_streaming_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
-	let user_messages = request.user_messages();
 	// channel events surface to the webview; a dead channel cancels
 	// generation instead of burning CPU on unseen output
 	let sender = on_event;
-	generate_and_respond(
-		&state,
-		&request,
-		&user_messages,
-		true,
-		move |kind, content| {
-			sender
-				.send(StreamEvent::new(kind.as_str(), content))
-				.is_ok()
-		},
-	)
+	generate_and_respond(&state, &request, true, move |kind, content| {
+		sender
+			.send(StreamEvent::new(kind.as_str(), content))
+			.is_ok()
+	})
 	.await
 }
 
@@ -567,8 +568,10 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 
 /// Run one LLM call on the configured backend (local llama.cpp or external
 /// OpenAI-compatible endpoint), streaming pieces through `on_chunk`.
-/// Returns the final text plus the prompt token count (0 when unknown, as
-/// with external endpoints).
+/// Returns the final text, the prompt token count (0 when unknown, as
+/// with external endpoints) and how many transcript turns a summary fit
+/// dropped. `render` (Some = summary generation) serializes the fitted
+/// turns into the single summary message inside the engine.
 #[allow(clippy::too_many_arguments)]
 async fn run_generation(
 	state: &State<'_, AppState>,
@@ -576,10 +579,11 @@ async fn run_generation(
 	system: String,
 	messages: &[ChatMessage],
 	summarize: bool,
+	render: Option<crate::llm::SummaryRender>,
 	cancel: Arc<AtomicBool>,
 	on_chunk: impl FnMut(String) + Send + 'static,
 	on_status: &(dyn Fn(&str) + Sync),
-) -> Result<(String, usize), String> {
+) -> Result<(String, usize, usize), String> {
 	let max_tokens = if summarize {
 		crate::llm::MAX_NEW_TOKENS_RESULT
 	} else {
@@ -587,17 +591,24 @@ async fn run_generation(
 	};
 	if settings.uses_external_llm() {
 		let client = external_llm(settings)?;
-		let (text, _prompt_tokens) = client
-			.generate(&system, messages, &cancel, max_tokens, on_chunk)
+		let (text, _prompt_tokens, dropped_turns) = client
+			.generate(
+				&system,
+				messages,
+				render.as_deref(),
+				&cancel,
+				max_tokens,
+				on_chunk,
+			)
 			.await?;
-		Ok((text, 0))
+		Ok((text, 0, dropped_turns))
 	} else {
 		// the slot may still be filling (startup load or a model
 		// switch): wait instead of reporting "not downloaded"
 		let engine = await_local_llm(state.inner(), on_status).await?;
 		let messages = messages.to_vec();
 		tauri::async_runtime::spawn_blocking(move || {
-			engine.generate(&system, &messages, summarize, &cancel, on_chunk)
+			engine.generate(&system, &messages, render.as_deref(), &cancel, on_chunk)
 		})
 		.await
 		.map_err(|e| e.to_string())?

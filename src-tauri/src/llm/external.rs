@@ -167,23 +167,49 @@ impl ExternalLlm {
 		}
 	}
 
+	/// [`Self::generate_with_limits`] with the summary fit applied first:
+	/// when `summary_render` is given, the conversation is fitted to
+	/// [`crate::llm::DEFAULT_EXT_CTX`] (external endpoints report no
+	/// tokenization of their own, so the estimator counts) and
+	/// serialized into the single summary message, so an oversized
+	/// session loses its oldest turns instead of the newest mid-JSON.
+	/// Returns the text, the prompt token count (None: endpoints don't
+	/// report one) and the number of dropped turns.
 	pub async fn generate(
 		&self,
 		system: &str,
 		messages: &[ChatMessage],
+		summary_render: Option<super::SummaryRenderRef<'_>>,
 		cancel: &AtomicBool,
 		max_tokens: u32,
 		on_chunk: impl FnMut(String) + Send,
-	) -> Result<(String, Option<usize>), String> {
-		self.generate_with_limits(
-			system,
-			messages,
-			cancel,
-			max_tokens,
-			on_chunk,
-			GenerationLimits::production(),
-		)
-		.await
+	) -> Result<(String, Option<usize>, usize), String> {
+		let (messages, dropped_turns) = match summary_render {
+			Some(render) => {
+				let budget = super::prompt_budget(super::DEFAULT_EXT_CTX, max_tokens);
+				let (fitted, dropped) =
+					super::fit_summary_turns(messages, budget, &super::approx_tokens, render);
+				(
+					vec![ChatMessage {
+						role: "user".into(),
+						content: render(&fitted),
+					}],
+					dropped,
+				)
+			}
+			None => (messages.to_vec(), 0),
+		};
+		let (text, prompt_tokens) = self
+			.generate_with_limits(
+				system,
+				&messages,
+				cancel,
+				max_tokens,
+				on_chunk,
+				GenerationLimits::production(),
+			)
+			.await?;
+		Ok((text, prompt_tokens, dropped_turns))
 	}
 
 	/// [`ExternalLlm::generate`] with injectable bounds, so tests can
@@ -748,8 +774,8 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "test-model").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut chunks = Vec::new();
-		let (output, prompt_tokens) = client
-			.generate("you are a test", &[], &cancel, 32, |c| chunks.push(c))
+		let (output, prompt_tokens, _) = client
+			.generate("you are a test", &[], None, &cancel, 32, |c| chunks.push(c))
 			.await
 			.expect("generate");
 		assert_eq!(output, "Hello");
@@ -772,7 +798,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("non-SSE must fail");
 		assert!(
@@ -793,8 +819,8 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut chunks = Vec::new();
-		let (output, _) = client
-			.generate("", &[], &cancel, 8, |c| chunks.push(c))
+		let (output, _, _) = client
+			.generate("", &[], None, &cancel, 8, |c| chunks.push(c))
 			.await
 			.expect("a plain JSON completion is a valid reply");
 		assert_eq!(output, "Hi there");
@@ -851,9 +877,9 @@ mod external_stream_tests {
 		for expected in ["one", "two"] {
 			// a fresh ExternalLlm per generation, as the command layer does
 			let client = ExternalLlm::new(&url, "", "m").expect("client");
-			let (output, _) = tokio::time::timeout(
+			let (output, _, _) = tokio::time::timeout(
 				std::time::Duration::from_secs(5),
-				client.generate("", &[], &cancel, 8, |_| {}),
+				client.generate("", &[], None, &cancel, 8, |_| {}),
 			)
 			.await
 			.expect("the second call must reuse the first call's connection")
@@ -868,7 +894,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("JSON without choices[0].message.content must fail");
 		assert!(err.contains("no completion"), "unexpected: {err}");
@@ -879,7 +905,7 @@ mod external_stream_tests {
 		);
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("an error object must surface");
 		assert!(err.contains("model not loaded"), "unexpected: {err}");
@@ -894,7 +920,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("an empty SSE body is not a completion");
 		assert!(err.contains("empty completion"), "unexpected: {err}");
@@ -906,7 +932,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("comments carry no completion");
 		assert!(err.contains("empty completion"), "unexpected: {err}");
@@ -918,7 +944,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("[DONE] without any content is not a completion");
 		assert!(err.contains("empty completion"), "unexpected: {err}");
@@ -933,7 +959,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("only unparseable events is not a completion");
 		assert!(err.contains("empty completion"), "unexpected: {err}");
@@ -949,7 +975,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("a provider error event must fail the generation");
 		assert!(err.contains("model overloaded"), "unexpected: {err}");
@@ -964,8 +990,8 @@ mod external_stream_tests {
 		]);
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let (output, _) = client
-			.generate("", &[], &cancel, 8, |_| {})
+		let (output, _, _) = client
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect("valid content ending at EOF is a completion");
 		assert_eq!(output, "tail");
@@ -980,7 +1006,7 @@ mod external_stream_tests {
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
-			.generate("", &[], &cancel, 8, |_| {})
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect_err("empty JSON content is not a completion");
 		assert!(err.contains("empty completion"), "unexpected: {err}");
@@ -1030,8 +1056,8 @@ mod external_stream_tests {
 		let url = format!("http://{addr}/v1");
 		let client = ExternalLlm::new(&url, "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let (output, _) = client
-			.generate("", &[], &cancel, 8, |_| {})
+		let (output, _, _) = client
+			.generate("", &[], None, &cancel, 8, |_| {})
 			.await
 			.expect("a character split across stream chunks must not corrupt decoding");
 		assert_eq!(output, "brain 🧠 story");
@@ -1167,10 +1193,10 @@ mod external_stream_tests {
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut streamed = 0usize;
 		let err = match client
-			.generate("", &[], &cancel, 8, |c| streamed += c.len())
+			.generate("", &[], None, &cancel, 8, |c: String| streamed += c.len())
 			.await
 		{
-			Ok((output, _)) => panic!(
+			Ok((output, _, _)) => panic!(
 				"output beyond the cap must fail: accepted {} bytes of completion",
 				output.len()
 			),
@@ -1226,8 +1252,8 @@ mod external_stream_tests {
 		});
 		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let err = match client.generate("", &[], &cancel, 8, |_| {}).await {
-			Ok((output, _)) => panic!(
+		let err = match client.generate("", &[], None, &cancel, 8, |_| {}).await {
+			Ok((output, _, _)) => panic!(
 				"a single huge delimited event must fail: accepted {} bytes of completion",
 				output.len()
 			),
@@ -1287,7 +1313,7 @@ mod external_stream_tests {
 		let started = std::time::Instant::now();
 		let result = tokio::time::timeout(
 			std::time::Duration::from_secs(2),
-			client.generate("", &[], &cancel, 8, |_| {}),
+			client.generate("", &[], None, &cancel, 8, |_| {}),
 		)
 		.await
 		.expect("cancel must return well before the idle timeout");

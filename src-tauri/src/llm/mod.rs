@@ -53,12 +53,221 @@ pub fn neutralize_turn_markers(content: &str) -> String {
 		.replace("|>", "\\|>")
 }
 
+/// Context window assumed for an external endpoint until the user
+/// configures one (see the AI settings): a sane default for local
+/// OpenAI-compatible servers (Ollama, LM Studio).
+pub const DEFAULT_EXT_CTX: u32 = 8192;
+
+/// Serializes the (fitted) transcript turns into the single summary
+/// message the model sees. Owned form (crosses into blocking tasks).
+pub type SummaryRender = Arc<dyn Fn(&[ChatMessage]) -> String + Send + Sync>;
+
+/// Borrowed form of [`SummaryRender`].
+pub type SummaryRenderRef<'a> = &'a (dyn Fn(&[ChatMessage]) -> String + Send + Sync);
+
+/// Token estimate for engines that cannot tokenize (external endpoints):
+/// ~3 chars per token plus a small constant, deliberately conservative
+/// (overestimating trims a little early, which is safe).
+pub fn approx_tokens(text: &str) -> usize {
+	text.chars().count() / 3 + 8
+}
+
+/// Fit a conversation for summary generation: summaries serialize the
+/// whole transcript into ONE user message, so a raw byte-truncation of
+/// that message would cut off the END - the newest turns, where the
+/// conclusions are - and leave unclosed JSON. Instead, drop the oldest
+/// user+assistant pair(s) after the opening message (always keeping the
+/// last 4 messages), marking the first drop with a single
+/// `[earlier turns omitted]` placeholder. If even the minimal subset
+/// overflows (one giant paste), shrink the longest turn's content at a
+/// char boundary - the JSON around the transcript stays well-formed.
+///
+/// Pure and deterministic: `count` measures a rendered prompt's tokens,
+/// `render` serializes a subset of turns into the message the model
+/// sees. Returns the fitted turns plus how many were dropped.
+pub fn fit_summary_turns(
+	turns: &[ChatMessage],
+	budget_tokens: usize,
+	count: &dyn Fn(&str) -> usize,
+	render: &dyn Fn(&[ChatMessage]) -> String,
+) -> (Vec<ChatMessage>, usize) {
+	let mut fitted: Vec<ChatMessage> = turns.to_vec();
+	let mut dropped = 0usize;
+	let mut marker_inserted = false;
+
+	loop {
+		let current = count(&render(&fitted));
+		if current <= budget_tokens {
+			break;
+		}
+		if fitted.len() >= 6 {
+			// Drop the oldest pairs after the opener, never eating into
+			// the last 4 messages. The step size is estimated from the
+			// real overshoot (aiming ~10% under the budget) so a long
+			// transcript converges in a few re-renders instead of one
+			// pair per full render; the loop condition re-verifies with
+			// the real count, so a bad estimate only costs a step.
+			let per_message = (current as f64 / fitted.len() as f64).max(1.0);
+			let target_tokens = (budget_tokens as f64 * 0.9).max(1.0);
+			let excess = ((current as f64 - target_tokens) / per_message).ceil() as usize;
+			let droppable = fitted.len() - 4;
+			let pairs = (excess / 2).clamp(1, droppable / 2);
+			fitted.drain(1..1 + pairs * 2);
+			dropped += pairs * 2;
+			if !marker_inserted {
+				fitted.insert(
+					1,
+					ChatMessage {
+						role: "assistant".into(),
+						content: "[earlier turns omitted]".into(),
+					},
+				);
+				marker_inserted = true;
+			}
+			continue;
+		}
+		// Even the minimal subset can overflow. Shrink the longest
+		// turn's content (the JSON around it stays intact, so the model
+		// still sees a closed <t>[...]</t> and the newest turns).
+		let Some(idx) = fitted
+			.iter()
+			.enumerate()
+			.max_by_key(|(_, m)| m.content.len())
+			.map(|(i, _)| i)
+		else {
+			break;
+		};
+		let original = fitted[idx].content.len();
+		let target = original / 2;
+		let shrunk = external::truncate_at_boundary(&fitted[idx].content, target).to_string();
+		if shrunk.len() >= original {
+			break; // cannot shrink the longest turn any further
+		}
+		fitted[idx].content = shrunk;
+	}
+
+	(fitted, dropped)
+}
+
 mod external;
 mod local;
 
+use std::sync::Arc;
+
+use crate::types::ChatMessage;
 pub(crate) use external::read_body_capped;
 pub use external::{ExternalLlm, MODERATION_ERROR};
 pub use local::LocalLlm;
+
+#[cfg(test)]
+mod fit_summary_tests {
+	use super::{approx_tokens, fit_summary_turns};
+	use crate::types::ChatMessage;
+
+	fn turns(count: usize) -> Vec<ChatMessage> {
+		let mut all = vec![ChatMessage {
+			role: "assistant".into(),
+			content: "Tell me about what you've been meaning to start.".into(),
+		}];
+		for i in 0..count {
+			all.push(ChatMessage {
+				role: "user".into(),
+				content: format!("answer number {i} with some words to count"),
+			});
+			all.push(ChatMessage {
+				role: "assistant".into(),
+				content: format!("question {i}: and what then?"),
+			});
+		}
+		all
+	}
+
+	/// The plan's fake counter: chars / 4.
+	fn fake_count(s: &str) -> usize {
+		s.chars().count() / 4
+	}
+
+	/// The plan's fake renderer: the summary shape, simplified - JSON
+	/// inside <t>...</t> so tests can assert the output stays parseable.
+	fn render(turns: &[ChatMessage]) -> String {
+		let json = serde_json::to_string(turns).unwrap_or_else(|_| "[]".into());
+		format!("<t>{json}</t>")
+	}
+
+	#[test]
+	fn a_short_transcript_passes_through_unchanged() {
+		let input = turns(2);
+		let (fitted, dropped) = fit_summary_turns(&input, usize::MAX, &fake_count, &render);
+		assert_eq!(dropped, 0);
+		assert_eq!(fitted, input);
+	}
+
+	#[test]
+	fn an_oversized_transcript_keeps_the_opener_and_the_newest_turns() {
+		// ~10k answers: far beyond a 20k-"token" budget under chars/4
+		let mut input = turns(10_000);
+		let last_user = format!("the final answer {}", 9_999);
+		input.last_mut().unwrap().content = last_user.clone();
+		let opener = input[0].content.clone();
+
+		let (fitted, dropped) = fit_summary_turns(&input, 20_000, &fake_count, &render);
+		assert!(dropped > 0, "an oversized transcript must drop turns");
+
+		let rendered = render(&fitted);
+		// well-formed: the JSON inside <t></t> parses, the newest user
+		// message and the opener survive
+		let inner = rendered
+			.strip_prefix("<t>")
+			.and_then(|s| s.strip_suffix("</t>"))
+			.expect("closed <t>...</t>");
+		let parsed: Vec<ChatMessage> =
+			serde_json::from_str(inner).expect("the transcript JSON stays parseable");
+		assert!(parsed.iter().any(|m| m.content == last_user));
+		assert!(parsed.iter().any(|m| m.content == opener));
+		// the single omission marker, at most once, right after the opener
+		let markers = parsed
+			.iter()
+			.filter(|m| m.content == "[earlier turns omitted]")
+			.count();
+		assert!(markers <= 1, "at most one omission marker");
+		if markers == 1 {
+			assert_eq!(parsed[1].content, "[earlier turns omitted]");
+			assert_eq!(parsed[1].role, "assistant");
+		}
+		// the fit respects the budget
+		assert!(fake_count(&rendered) <= 20_000);
+		// determinism: the same input fits to the same output
+		let again = fit_summary_turns(&input, 20_000, &fake_count, &render);
+		assert_eq!(again.0, fitted);
+		assert_eq!(again.1, dropped);
+	}
+
+	#[test]
+	fn a_single_giant_message_is_shrunk_at_a_char_boundary_not_the_json() {
+		// 4 turns only (nothing droppable) with one giant paste
+		let mut input = turns(1);
+		input[1].content = "x".repeat(400_000);
+		let (fitted, dropped) = fit_summary_turns(&input, 1_000, &fake_count, &render);
+		assert_eq!(dropped, 0, "nothing was dropped - only shrunk");
+		let rendered = render(&fitted);
+		let inner = rendered
+			.strip_prefix("<t>")
+			.and_then(|s| s.strip_suffix("</t>"))
+			.expect("closed <t>...</t>");
+		serde_json::from_str::<Vec<ChatMessage>>(inner).expect("JSON stays parseable");
+		assert!(
+			fake_count(&rendered) <= 1_000,
+			"the shrunk render fits the budget"
+		);
+	}
+
+	#[test]
+	fn approx_tokens_is_conservative() {
+		assert_eq!(approx_tokens(""), 8);
+		// 300 chars -> ~100 tokens + 8
+		assert_eq!(approx_tokens(&"a".repeat(300)), 108);
+	}
+}
 
 #[cfg(test)]
 mod tests {

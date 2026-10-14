@@ -16,8 +16,8 @@ use llama_cpp_2::SeqState;
 
 use super::external::truncate_at_boundary;
 use super::{
-	effective_ctx_for, neutralize_turn_markers, prompt_budget, MAX_NEW_TOKENS_RESPONSE,
-	MAX_NEW_TOKENS_RESULT,
+	approx_tokens, effective_ctx_for, neutralize_turn_markers, prompt_budget,
+	MAX_NEW_TOKENS_RESPONSE, MAX_NEW_TOKENS_RESULT,
 };
 use crate::types::ChatMessage;
 
@@ -334,21 +334,45 @@ impl LocalLlm {
 	}
 
 	/// Run generation, streaming pieces through `on_chunk`. Blocking and
-	/// CPU/GPU heavy; run on a dedicated thread. Returns the final text
-	/// together with the prompt token count (for the telemetry fields the
-	/// command layer reports).
+	/// CPU/GPU heavy; run on a dedicated thread. Returns the final text,
+	/// the prompt token count (for the telemetry fields the command layer
+	/// reports) and how many transcript turns a summary fit had to drop
+	/// (0 for chat turns).
+	///
+	/// `summary_render` (Some = this is a summary generation) serializes the
+	/// fitted conversation into the single summary message: the turns are
+	/// fitted to this engine's context BEFORE serialization (see
+	/// [`crate::llm::fit_summary_turns`]), so an oversized session loses
+	/// its oldest turns instead of having the newest cut off mid-JSON.
 	pub fn generate(
 		&self,
 		system: &str,
 		messages: &[ChatMessage],
-		summarize: bool,
+		summary_render: Option<super::SummaryRenderRef<'_>>,
 		cancel: &AtomicBool,
 		mut on_chunk: impl FnMut(String),
-	) -> Result<(String, usize), String> {
+	) -> Result<(String, usize, usize), String> {
+		let summarize = summary_render.is_some();
 		let max_new = if summarize {
 			MAX_NEW_TOKENS_RESULT
 		} else {
 			MAX_NEW_TOKENS_RESPONSE
+		};
+		let (messages, dropped_turns) = match summary_render {
+			Some(render) => {
+				let budget = prompt_budget(self.built_ctx, max_new);
+				let count = |s: &str| self.count_tokens(s).unwrap_or_else(|_| approx_tokens(s));
+				let (fitted, dropped) =
+					crate::llm::fit_summary_turns(messages, budget, &count, render);
+				(
+					vec![ChatMessage {
+						role: "user".into(),
+						content: render(&fitted),
+					}],
+					dropped,
+				)
+			}
+			None => (messages.to_vec(), 0),
 		};
 		// User/imported content must never tokenize into control tokens:
 		// the pinned llama-cpp-2 tokenizes with parse_special=true and has
@@ -551,7 +575,7 @@ impl LocalLlm {
 			});
 		}
 
-		Ok((output, n_prompt))
+		Ok((output, n_prompt, dropped_turns))
 	}
 }
 

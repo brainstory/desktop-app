@@ -94,10 +94,19 @@ export interface GenerationResult {
 	request_message_tokens?: number;
 	request_word_count?: number;
 	structured_result?: unknown;
+	/** the conversation was longer than the model's context: the oldest
+	 * turns were left out of the summary generation */
+	truncated?: boolean;
+	/** how many transcript turns the summary fit dropped */
+	dropped_turns?: number;
 }
 
 type UpdateMessage = (message: string) => void;
-type SuccessCallbacks = (message: string, structuredResult: unknown) => void | Promise<void>;
+type SuccessCallbacks = (
+	message: string,
+	structuredResult: unknown,
+	result: GenerationResult | null
+) => void | Promise<void>;
 
 interface StreamHandle {
 	channel: { onmessage: (event: StreamChunk) => void };
@@ -128,7 +137,7 @@ export const handleStreamResult = async (
 			message = result.response;
 			updateMessage(message);
 		}
-		await successCallbacks(message, result?.structured_result ?? null);
+		await successCallbacks(message, result?.structured_result ?? null, result ?? null);
 	} catch (err) {
 		console.error("streaming result failed", err);
 		if (onError) {

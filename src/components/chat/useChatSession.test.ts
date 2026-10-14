@@ -175,6 +175,36 @@ describe("useChatSession", () => {
 			expect(result.current.readyToSave).toBe(true);
 		});
 
+		it("records when the summary was generated from a truncated transcript", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			const { result } = renderSession([q1, a1]);
+			act(() => result.current.handleGetResult());
+			expect(result.current.resultTruncated).toBe(false);
+
+			await act(async () => {
+				finish({
+					response: "# Summary",
+					structured_result: null,
+					truncated: true,
+					dropped_turns: 14
+				});
+				await Promise.resolve();
+			});
+			expect(result.current.resultTruncated).toBe(true);
+			expect(result.current.resultDroppedTurns).toBe(14);
+
+			// a fresh generation clears the old flag
+			mockInvoke({
+				generate_streaming_response: () => new Promise((res) => (finish = res))
+			});
+			act(() => result.current.handleGetResult());
+			expect(result.current.resultTruncated).toBe(false);
+			expect(result.current.resultDroppedTurns).toBe(0);
+		});
+
 		it("keeps the summary after a failed save and lets the user retry it", async () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
