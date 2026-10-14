@@ -344,12 +344,14 @@ impl LocalLlm {
 	/// fitted to this engine's context BEFORE serialization (see
 	/// [`crate::llm::fit_summary_turns`]), so an oversized session loses
 	/// its oldest turns instead of having the newest cut off mid-JSON.
+	#[allow(clippy::too_many_arguments)]
 	pub fn generate(
 		&self,
 		system: &str,
 		messages: &[ChatMessage],
 		summary_render: Option<super::SummaryRenderRef<'_>>,
 		cancel: &AtomicBool,
+		temperature_override: Option<f32>,
 		mut on_chunk: impl FnMut(String),
 	) -> Result<(String, usize, usize), String> {
 		let summarize = summary_render.is_some();
@@ -500,8 +502,9 @@ impl LocalLlm {
 		}
 
 		// Gemma-recommended sampling: top_k 64, top_p 0.95. Summaries use a
-		// lower temperature for more deterministic structure.
-		let temperature = if summarize { 0.35 } else { 0.7 };
+		// lower temperature for more deterministic structure; an override
+		// (the malformed-summary retry) wins.
+		let temperature = temperature_override.unwrap_or(if summarize { 0.35 } else { 0.7 });
 		let seed = std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.map(|d| d.subsec_nanos())

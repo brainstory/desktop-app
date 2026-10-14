@@ -420,6 +420,7 @@ pub async fn test_llm_endpoint(
 			None,
 			&cancel,
 			16,
+			None,
 			|_| got_any = true,
 		)
 		.await?;

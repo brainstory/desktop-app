@@ -300,6 +300,7 @@ where
 		request.summarize,
 		render.clone(),
 		cancel.clone(),
+		None,
 		channel_writer,
 		&on_status,
 	)
@@ -312,6 +313,42 @@ where
 		if trimmed != output {
 			log::warn!("chat reply carried multiple question lines; trimmed to the first");
 			output = trimmed;
+		}
+	} else {
+		// small models wrap their summaries in fences and preambles or
+		// forget the title: normalize before storing, retrying once with
+		// a deterministic nudge when nothing can be salvaged
+		match normalize_result_markdown(&output) {
+			Ok(normalized) => output = normalized,
+			Err(reason) => {
+				log::warn!("summary output unusable ({reason}); retrying");
+				on_event(EmitKind::Status, "Rewriting the summary...");
+				let retry_messages = {
+					let mut with_nudge = request.messages.clone();
+					with_nudge.push(crate::types::ChatMessage {
+						role: "user".into(),
+						content: "Return only the markdown document, starting with a `#` title."
+							.into(),
+					});
+					with_nudge
+				};
+				let (retry, _, _) = run_generation(
+					state,
+					&settings,
+					request.system_prompt(),
+					&retry_messages,
+					true,
+					render.clone(),
+					cancel.clone(),
+					Some(0.2),
+					|_| {},
+					&on_status,
+				)
+				.await?;
+				output = normalize_result_markdown(&retry).map_err(|_| {
+					"The model did not produce a usable summary. Try again.".to_string()
+				})?;
+			}
 		}
 	}
 
@@ -337,6 +374,7 @@ where
 			true,
 			render.clone(),
 			cancel,
+			None,
 			|_| {},
 			&on_status,
 		)
@@ -614,6 +652,7 @@ async fn run_generation(
 	summarize: bool,
 	render: Option<crate::llm::SummaryRender>,
 	cancel: Arc<AtomicBool>,
+	temperature: Option<f32>,
 	on_chunk: impl FnMut(String) + Send + 'static,
 	on_status: &(dyn Fn(&str) + Sync),
 ) -> Result<(String, usize, usize), String> {
@@ -632,6 +671,7 @@ async fn run_generation(
 				render.as_deref(),
 				&cancel,
 				max_tokens,
+				temperature,
 				on_chunk,
 			)
 			.await?;
@@ -642,11 +682,65 @@ async fn run_generation(
 		let engine = await_local_llm(state.inner(), on_status).await?;
 		let messages = messages.to_vec();
 		tauri::async_runtime::spawn_blocking(move || {
-			engine.generate(&system, &messages, render.as_deref(), &cancel, on_chunk)
+			engine.generate(
+				&system,
+				&messages,
+				render.as_deref(),
+				&cancel,
+				temperature,
+				on_chunk,
+			)
 		})
 		.await
 		.map_err(|e| e.to_string())?
 	}
+}
+
+/// Clean up a model-produced summary document before it is stored:
+/// trim BOM/whitespace, strip a wrapping code fence, drop a short
+/// preamble ("Here's your document:"), synthesize a `# ` title when the
+/// model forgot it. Err(< 20 words) marks output nothing can be done
+/// with - the caller retries once.
+fn normalize_result_markdown(raw: &str) -> Result<String, String> {
+	let mut text = raw.trim_start_matches('\u{feff}').trim().to_string();
+	// a wrapping ``` / ```markdown fence
+	let lines: Vec<&str> = text.lines().collect();
+	if let Some(first) = lines.first() {
+		let fence = first.trim();
+		if fence == "```" || fence == "```markdown" || fence == "```md" {
+			let close = lines
+				.iter()
+				.rposition(|l| l.trim() == "```")
+				.unwrap_or(lines.len());
+			text = lines[1..close].join("\n").trim().to_string();
+		}
+	}
+	// drop up to two preamble lines before the first `#` heading
+	// ("Here's your document:", a blank line); a longer lead-in is the
+	// model's actual content and stays
+	let mut lines: Vec<&str> = text.lines().collect();
+	if let Some(first_heading) = lines.iter().position(|l| l.trim_start().starts_with('#')) {
+		if first_heading > 0 && first_heading <= 2 {
+			lines = lines[first_heading..].to_vec();
+		}
+	}
+	let joined = lines.join("\n").trim().to_string();
+	let word_count = joined.split_whitespace().count();
+	if word_count < 20 {
+		return Err("too short for a usable document".into());
+	}
+	// a `# ` title: keep the text as is
+	if joined.lines().any(|l| l.trim_start().starts_with("# ")) {
+		return Ok(joined);
+	}
+	// synthesize a title from the first sentence (max 80 chars), keeping
+	// ## sections as they are
+	let first_sentence = joined.split(['.', '!', '?']).next().unwrap_or("").trim();
+	let mut title: String = first_sentence.chars().take(80).collect();
+	if title.is_empty() {
+		title = "My idea".into();
+	}
+	Ok(format!("# {title}\n\n{joined}"))
 }
 
 /// Keep a chat reply up to and including the first line that ends in a
@@ -773,6 +867,59 @@ mod tests {
 		// first '{' to last '}' spans two objects: the slice is not valid
 		// JSON, so the contract is a clean None, never a panic
 		assert!(extract_json("a {\"x\": 1} b {\"y\": 2}").is_none());
+	}
+}
+
+#[cfg(test)]
+mod normalize_result_tests {
+	use super::normalize_result_markdown;
+
+	#[test]
+	fn strips_bom_whitespace_and_fences() {
+		let raw = "\u{feff}\n```markdown\n# Title\n\nBody text with plenty of words to clear the twenty word floor easily, plus a few more for safety.\n```\n";
+		let out = normalize_result_markdown(raw).expect("usable");
+		assert_eq!(
+			out,
+			"# Title\n\nBody text with plenty of words to clear the twenty word floor easily, plus a few more for safety."
+		);
+	}
+
+	#[test]
+	fn drops_a_short_preamble() {
+		let raw = "Here is your document:\n\n# Plan\n\nMore than twenty words of real content follow here so the check passes without any trouble at all, really and truly.";
+		let out = normalize_result_markdown(raw).expect("usable");
+		assert!(out.starts_with("# Plan\n"), "{out}");
+	}
+
+	#[test]
+	fn synthesizes_a_title_when_missing() {
+		let raw = "Shipping the redesign matters a lot this quarter. More content words to reach the required minimum count for a document.";
+		let out = normalize_result_markdown(raw).expect("usable");
+		assert!(
+			out.starts_with("# Shipping the redesign matters a lot this quarter\n\n"),
+			"{out}"
+		);
+		assert!(out.contains("Shipping the redesign matters a lot this quarter."));
+	}
+
+	#[test]
+	fn synthesizes_a_title_from_a_fenced_body_without_one() {
+		let raw = "```\nI want to organize the garage this weekend and finally sort the tools. There are boxes that have not been opened since we moved in.\n```";
+		let out = normalize_result_markdown(raw).expect("usable");
+		assert!(out.starts_with("# I want to organize the garage"), "{out}");
+	}
+
+	#[test]
+	fn too_short_output_is_rejected() {
+		assert!(normalize_result_markdown("# Tiny\n\nToo short.").is_err());
+		assert!(normalize_result_markdown("").is_err());
+		assert!(normalize_result_markdown("   ").is_err());
+	}
+
+	#[test]
+	fn a_good_document_passes_through_unchanged() {
+		let good = "# Title\n\n## Section\n\nBody text with plenty of words to clear the twenty word floor easily and then some.";
+		assert_eq!(normalize_result_markdown(good).expect("usable"), good);
 	}
 }
 

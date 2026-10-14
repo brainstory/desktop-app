@@ -48,6 +48,7 @@ fn whisper_and_llama_coexist() {
 		}],
 		None,
 		&cancel,
+		None,
 		|piece| {
 			chunks.push(piece);
 			if chunks.len() >= ENOUGH_PIECES {

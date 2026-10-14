@@ -27,6 +27,7 @@ fn generate(llm: &LocalLlm, request: &PromptRequest) -> (String, String) {
 			&request.messages,
 			render.as_deref(),
 			&cancel,
+			None,
 			|chunk| {
 				streamed.push_str(&chunk);
 			},
@@ -120,7 +121,14 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 	};
 	let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let (first, prompt_tokens, _) = llm
-		.generate("", &turn1.messages.clone(), None, &cancel, &mut |_| {})
+		.generate(
+			"",
+			&turn1.messages.clone(),
+			None,
+			&cancel,
+			None,
+			&mut |_| {},
+		)
 		.expect("first generation");
 	assert!(prompt_tokens > 0, "prompt tokens counted");
 
@@ -134,7 +142,7 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 		content: "What is the dragon's name?".into(),
 	});
 	let (second, _, _) = llm
-		.generate("", &extended, None, &cancel, &mut |_| {})
+		.generate("", &extended, None, &cancel, None, &mut |_| {})
 		.expect("second generation with restored KV");
 	assert!(
 		!second.trim().is_empty(),
@@ -152,6 +160,7 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 			}],
 			None,
 			&cancel,
+			None,
 			&mut |_| {},
 		)
 		.expect("generation after divergence");
@@ -278,7 +287,14 @@ fn oversized_payload_fit_probes(llm: &LocalLlm) {
 	let cancel = Arc::new(AtomicBool::new(false));
 	let system = huge_idea.system_prompt();
 	let err = llm
-		.generate(&system, &huge_idea.messages, None, &cancel, &mut |_| {})
+		.generate(
+			&system,
+			&huge_idea.messages,
+			None,
+			&cancel,
+			None,
+			&mut |_| {},
+		)
 		.expect_err("a system payload past the window must fail, not hang or generate");
 	assert!(
 		err.contains("decode"),
