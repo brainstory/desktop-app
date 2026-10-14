@@ -168,6 +168,11 @@ pub async fn transcribe(
 	let language = settings.stt_language.clone();
 	let outcome = tauri::async_runtime::spawn_blocking(move || {
 		let samples = stt::wav_to_samples(&bytes)?;
+		// near-digital-silence (muted mic, bumped cable): whisper would
+		// only hallucinate over it; report nothing was heard
+		if stt::is_silent(&samples) {
+			return Ok(String::new());
+		}
 		engine.transcribe(&samples, &language)
 	})
 	.await

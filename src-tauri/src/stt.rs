@@ -38,23 +38,31 @@ impl SttEngine {
 		params.set_print_special(false);
 		params.set_print_realtime(false);
 		params.set_print_timestamps(false);
+		// suppress "non-speech tokens": the classic training-data
+		// hallucinations ("Thank you for watching!", subtitles credits)
+		// that whisper emits on silence and noise
+		params.set_suppress_nst(true);
 
 		state
 			.full(params, samples)
 			.map_err(|e| format!("transcription failed: {e}"))?;
 
 		let n_segments = state.full_n_segments();
-		let mut transcript = String::new();
+		let mut segments: Vec<String> = Vec::new();
 		for i in 0..n_segments {
 			if let Some(segment) = state.get_segment(i) {
 				if let Ok(text) = segment.to_str_lossy() {
 					if is_speech(&text, segment.no_speech_probability()) {
-						transcript.push_str(&text);
+						segments.push(text.trim().to_string());
 					}
 				}
 			}
 		}
-		Ok(transcript.trim().to_string())
+		// whisper stutters on marginal audio: the same segment twice in
+		// a row collapses
+		Ok(dedupe_segments(
+			&segments.iter().map(String::as_str).collect::<Vec<_>>(),
+		))
 	}
 }
 
@@ -67,7 +75,65 @@ const NO_SPEECH_DROP: f32 = 0.6;
 /// Whether a whisper segment is the user's words rather than what
 /// whisper makes of silence or noise.
 fn is_speech(segment: &str, no_speech_probability: f32) -> bool {
-	no_speech_probability <= NO_SPEECH_DROP && !is_non_speech_annotation(segment)
+	no_speech_probability <= NO_SPEECH_DROP
+		&& !is_non_speech_annotation(segment)
+		&& !is_hallucination(segment, no_speech_probability)
+}
+
+/// RMS below -55 dBFS (0.00178 full-scale): digital silence, a muted
+/// mic or a bumped cable. Whisper would only hallucinate over it, so
+/// the transcription short-circuits to "" (the UI already says "no
+/// speech was heard"). Pure, for tests.
+pub(crate) fn is_silent(samples: &[f32]) -> bool {
+	if samples.is_empty() {
+		return true;
+	}
+	const NEG_55_DBFS: f32 = 0.0017783;
+	let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+	rms < NEG_55_DBFS
+}
+
+/// Phrases whisper's training data leaks on silence and noise, whose
+/// no-speech probability is high (but below the hard drop): nobody
+/// says these to their brainstorming app, while whisper repeats them
+/// over quiet room tone.
+const HALLUCINATION_PHRASES: &[&str] = &[
+	"thank you.",
+	"thanks for watching.",
+	"subtitles by the amara.org community",
+	"you",
+];
+
+/// Whether a segment is one of the known hallucinations; only applies
+/// when whisper itself is unsure the audio was speech.
+fn is_hallucination(segment: &str, no_speech_probability: f32) -> bool {
+	no_speech_probability > 0.3 && {
+		let normalized = segment.trim().to_lowercase();
+		HALLUCINATION_PHRASES
+			.iter()
+			.any(|phrase| normalized == *phrase)
+	}
+}
+
+/// Collapse whisper's stutter: on marginal audio it emits the same
+/// segment text twice in a row. Only case-insensitive immediate
+/// repeats collapse - a repeat after other text in between is real
+/// speech and stays. Pure, for tests.
+pub(crate) fn dedupe_segments(segments: &[&str]) -> String {
+	let mut kept: Vec<&str> = Vec::new();
+	for segment in segments {
+		let trimmed = segment.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		let is_repeat = kept
+			.last()
+			.is_some_and(|last| last.eq_ignore_ascii_case(trimmed));
+		if !is_repeat {
+			kept.push(trimmed);
+		}
+	}
+	kept.join(" ")
 }
 
 /// Whisper writes what it hears in silence or noise as a bracketed
@@ -390,8 +456,9 @@ pub async fn transcribe_external(
 #[cfg(test)]
 mod tests {
 	use super::{
-		checked_resample_len, is_non_speech_annotation, is_speech, resample_to_16k,
-		transcribe_external, wav_to_samples, whisper_language, TRANSCRIPTION_CANCELLED,
+		checked_resample_len, dedupe_segments, is_non_speech_annotation, is_silent, is_speech,
+		resample_to_16k, transcribe_external, wav_to_samples, whisper_language,
+		TRANSCRIPTION_CANCELLED,
 	};
 
 	#[tokio::test]
@@ -456,6 +523,49 @@ mod tests {
 		assert!(!is_speech(" [BLANK_AUDIO]", 0.0));
 		assert!(is_speech(" I'm testing the BrainStory app.", 0.01));
 		assert!(is_speech(" Yes.", 0.09));
+	}
+
+	#[test]
+	fn near_digital_silence_is_detected_by_rms() {
+		// full-scale signal is loud
+		assert!(!is_silent(&[0.5, -0.5, 0.5]));
+		// quiet but real speech (-40 dBFS) passes
+		assert!(!is_silent(&[0.01; 1000]));
+		// -60 dBFS: effectively silence
+		assert!(is_silent(&[0.001; 1000]));
+		assert!(is_silent(&[0.0; 1000]));
+		assert!(is_silent(&[]));
+	}
+
+	#[test]
+	fn known_hallucinations_are_dropped_only_when_whisper_is_unsure() {
+		// the classic leaks, with whisper itself rating them mostly
+		// not-speech (0.3-0.6): dropped
+		assert!(!is_speech(" Thank you.", 0.4));
+		assert!(!is_speech("Thanks for watching.", 0.5));
+		assert!(!is_speech(" Subtitles by the Amara.org community", 0.45));
+		assert!(!is_speech(" you", 0.35));
+		// the same words said FOR REAL (whisper is confident): kept
+		assert!(is_speech(" Thank you.", 0.02));
+		assert!(is_speech(" You know what I mean?", 0.05));
+		// a phrase containing, not equal to, a hallucination: kept
+		assert!(is_speech(" Thank you for having me on the podcast", 0.05));
+	}
+
+	#[test]
+	fn repeated_segments_collapse() {
+		assert_eq!(
+			dedupe_segments(&[" you know", " you know", " what I mean"]),
+			"you know what I mean"
+		);
+		// case/whitespace-insensitive immediate repeats collapse
+		assert_eq!(dedupe_segments(&[" Yes.", "yes.", "  Yes."]), "Yes.");
+		// a repeat after other text in between is real and stays
+		assert_eq!(
+			dedupe_segments(&[" so yes.", " maybe.", "yes."]),
+			"so yes. maybe. yes."
+		);
+		assert_eq!(dedupe_segments(&[]), "");
 	}
 
 	#[test]
