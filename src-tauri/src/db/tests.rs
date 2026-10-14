@@ -25,6 +25,22 @@ fn survey_does_not_complete_the_daily_intent() {
 }
 
 #[test]
+fn toggle_setting_bool_flips_from_stored_or_default() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	// absent: starts from the default (false) -> true
+	assert!(db.toggle_setting_bool("k1", false).unwrap());
+	assert_eq!(db.get_setting("k1").as_deref(), Some("true"));
+	// stored: flips the stored value
+	assert!(!db.toggle_setting_bool("k1", false).unwrap());
+	assert_eq!(db.get_setting("k1").as_deref(), Some("false"));
+	// an unrelated stored string is not "true"
+	db.set_setting("k2", "junk").unwrap();
+	assert!(db.toggle_setting_bool("k2", false).unwrap());
+	assert_eq!(db.get_setting("k2").as_deref(), Some("true"));
+}
+
+#[test]
 fn link_idea_log_attaches_and_relinks_a_daily_intent() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");

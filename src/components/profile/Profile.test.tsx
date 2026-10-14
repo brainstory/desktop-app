@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import Profile from "./Profile";
@@ -221,9 +222,9 @@ describe("Profile", () => {
 		render(<Profile />);
 		const nameInput = await screen.findByRole("textbox", { name: "Your name" });
 		// two "Save" buttons live on this tab: General's, then Notifications'
-		const [generalSave, notificationsSave] = await screen.findAllByRole("button", {
-			name: "Save"
-		});
+		const saveButtons = await screen.findAllByRole("button", { name: "Save" });
+		const generalSave = saveButtons[0]!;
+		const notificationsSave = saveButtons[1]!;
 		await user.clear(nameInput);
 		await user.type(nameInput, "Bob");
 
@@ -244,6 +245,58 @@ describe("Profile", () => {
 		expect(reminderToggle).toHaveAttribute("aria-checked", "true");
 		expect(notificationsSave).toBeEnabled();
 		expect(saves).toBe(1);
+	});
+
+	it("follows a reminder toggle made from the tray menu", async () => {
+		mockInvoke({
+			get_user_settings: () => ({
+				...userSettings,
+				notifications: [
+					{
+						title: "Daily intention reminder",
+						description: "A daily reminder.",
+						value: "09:00",
+						value_type: "time",
+						enabled: false
+					}
+				]
+			})
+		});
+		// capture the backend event handlers Profile subscribes to
+		const handlers: Record<string, EventCallback<unknown>[]> = {};
+		vi.mocked(listen).mockImplementation(async (event, handler) => {
+			(handlers[event] ??= []).push(handler);
+			return () => {};
+		});
+		try {
+			render(<Profile />);
+			const toggle = await screen.findByRole("switch", {
+				name: /daily intention reminder/i
+			});
+			expect(toggle).toHaveAttribute("aria-checked", "false");
+
+			// the tray checkbox flipped the setting behind the cached page
+			act(() => {
+				for (const handler of handlers["user-settings-changed"] ?? []) {
+					handler({
+						event: "user-settings-changed",
+						id: 0,
+						payload: { reminderEnabled: true }
+					});
+				}
+			});
+			expect(toggle).toHaveAttribute("aria-checked", "true");
+			// no settings reload and no save were triggered by the event
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "get_user_settings")
+			).toHaveLength(1);
+			expect(
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "save_user_settings")
+			).toHaveLength(0);
+		} finally {
+			vi.mocked(listen).mockReset();
+			vi.mocked(listen).mockImplementation(async () => () => {});
+		}
 	});
 
 	it("resolves the daily log save with false and reports the error, then true on retry", async () => {

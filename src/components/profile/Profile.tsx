@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useStore } from "@nanostores/react";
 import { $userState } from "@components/global/userStore";
 
@@ -89,6 +90,24 @@ function ProfileInner() {
 	useEffect(() => {
 		loadSettings();
 	}, [loadSettings]);
+
+	// The tray's reminder checkbox writes the setting directly; this
+	// page caches get_user_settings, so the backend announces the change
+	// and the cached list follows (unsaved edits in the card survive:
+	// it only adopts fresh data when not dirty).
+	useEffect(() => {
+		let unlisten: (() => void) | undefined;
+		void listen<{ reminderEnabled?: boolean }>("user-settings-changed", (event) => {
+			const enabled = event.payload?.reminderEnabled;
+			if (typeof enabled !== "boolean") return;
+			setNotifications((prev) =>
+				prev.map((entry, index) => (index === 0 ? { ...entry, enabled } : entry))
+			);
+		}).then((fn) => {
+			unlisten = fn;
+		});
+		return () => unlisten?.();
+	}, []);
 
 	const handleUserSettingsSave = (newName: string, newTimezone: string): Promise<boolean> =>
 		saveUserSettingsApi({ name: newName, timezone: newTimezone })

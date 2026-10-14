@@ -431,22 +431,34 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 			"new_idea" => open_new_idea(app),
 			"open" => show_main_window(app),
 			"reminder" => {
-				let state = app.state::<AppState>();
-				let enabled = !state
-					.db
-					.get_setting(keys::setting::REMINDER_ENABLED)
-					.map(|v| v == "true")
-					.unwrap_or(false);
-				if let Err(e) = state.db.set_setting(
-					keys::setting::REMINDER_ENABLED,
-					if enabled { "true" } else { "false" },
-				) {
-					log::error!("failed to save reminder setting: {e}");
-				}
-				// keep the native checkmark and the setting in lockstep
-				sync_tray_reminder_check(enabled);
-				// wake the scheduler so the toggle applies immediately
-				reminders::notify_settings_changed();
+				let app = app.clone();
+				// the DB work stays off the main thread (the menu event
+				// runs there); the flip itself is one transaction
+				tauri::async_runtime::spawn_blocking(move || {
+					let state = app.state::<AppState>();
+					let enabled = match state
+						.db
+						.toggle_setting_bool(keys::setting::REMINDER_ENABLED, false)
+					{
+						Ok(enabled) => enabled,
+						Err(e) => {
+							log::error!("failed to save reminder setting: {e}");
+							return;
+						}
+					};
+					// keep the native checkmark and the setting in lockstep
+					sync_tray_reminder_check(enabled);
+					// the settings page caches get_user_settings: tell it
+					// the reminder moved so its toggle follows
+					if let Err(e) = app.emit(
+						"user-settings-changed",
+						serde_json::json!({ "reminderEnabled": enabled }),
+					) {
+						log::warn!("failed to broadcast the reminder change: {e}");
+					}
+					// wake the scheduler so the toggle applies immediately
+					reminders::notify_settings_changed();
+				});
 			}
 			"quit" => {
 				crate::force_exit();

@@ -299,6 +299,31 @@ impl Db {
 		}
 	}
 
+	/// Atomically flip a boolean setting (stored as "true"/"false") and
+	/// return the new value: the tray reminder toggle's read-modify-write
+	/// cannot be split by, or race, a concurrent settings save.
+	pub fn toggle_setting_bool(&self, key: &str, default: bool) -> Result<bool, String> {
+		let mut conn = self.lock();
+		let tx = conn.transaction().map_err(|e| e.to_string())?;
+		let current: Option<String> = tx
+			.query_row(
+				"SELECT value FROM settings WHERE key = ?1",
+				params![key],
+				|row| row.get(0),
+			)
+			.optional()
+			.map_err(|e| format!("failed to read setting '{key}': {e}"))?;
+		let next = !current.as_deref().map(|v| v == "true").unwrap_or(default);
+		tx.execute(
+			"INSERT INTO settings (key, value) VALUES (?1, ?2)
+			 ON CONFLICT(key) DO UPDATE SET value = ?2",
+			params![key, if next { "true" } else { "false" }],
+		)
+		.map_err(|e| format!("failed to save setting '{key}': {e}"))?;
+		tx.commit().map_err(|e| e.to_string())?;
+		Ok(next)
+	}
+
 	pub fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
 		self.lock()
 			.execute(
