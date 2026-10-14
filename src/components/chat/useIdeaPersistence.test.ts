@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { createElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import type { ChatMessage } from "@src/types";
-import { useIdeaPersistence, type IdeaPersistenceOptions } from "./useIdeaPersistence";
+import {
+	useDraftLoader,
+	useIdeaPersistence,
+	type IdeaPersistenceOptions
+} from "./useIdeaPersistence";
 
 const q1: ChatMessage = { role: "assistant", content: "q1" };
 const a1: ChatMessage = { role: "user", content: "a1" };
@@ -130,6 +135,92 @@ describe("useIdeaPersistence", () => {
 		// a pushed entry would make Back land on /chat with no id - a
 		// brand-new session instead of the page the user came from
 		expect(window.history.length).toBe(historyLengthBefore);
+	});
+
+	describe("draft loading", () => {
+		it("keeps messages the user added while the draft was loading", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({
+				get_idea: () => new Promise((res) => (finish = res)),
+				update_idea: () => ({ id: "draft-1" })
+			});
+			// a host that owns the conversation like ChatSection does
+			const markPersisted = vi.fn();
+			const onDraftRestored = vi.fn();
+			const conversationRef: { current: ChatMessage[] } = { current: [] };
+			const lengthRef: React.RefObject<number> = { current: 0 };
+			function Host({ conversation }: { conversation: ChatMessage[] }) {
+				conversationRef.current = conversation;
+				lengthRef.current = conversation.length;
+				const status = useDraftLoader("draft-1", null, {
+					conversationLengthRef: lengthRef,
+					fetchedParentRef: { current: null },
+					createdIdeaIdRef: { current: null },
+					setIdeaId: () => {},
+					setCurrConversation: (next) => (conversationRef.current = next),
+					markPersisted,
+					onDraftRestored,
+					onParentIdea: () => {},
+					onFatalError: () => {}
+				});
+				return createElement("p", { "data-testid": "status" }, status);
+			}
+			const initial: ChatMessage[] = [q1];
+			const { rerender } = render(createElement(Host, { conversation: initial }));
+			expect(await screen.findByText("loading")).toBeInTheDocument();
+
+			// the user's fresh exchange lands while get_idea is in flight
+			const withAnswer = [q1, a1, q2];
+			rerender(createElement(Host, { conversation: withAnswer }));
+
+			// the saved transcript is longer than the mount snapshot:
+			// adopting it would discard the fresh answer
+			await act(async () => {
+				finish({
+					id: "draft-1",
+					transcript: [q1, a1, q2, a2, q3]
+				});
+				await Promise.resolve();
+			});
+			expect(conversationRef.current).toBe(withAnswer);
+			expect(onDraftRestored).not.toHaveBeenCalled();
+			expect(markPersisted).toHaveBeenCalledWith([q1, a1, q2, a2, q3]);
+			expect(screen.getByTestId("status")).toHaveTextContent("ready");
+		});
+
+		it("adopts an equally long saved transcript instead of rewriting it", async () => {
+			let finish!: (v: unknown) => void;
+			mockInvoke({ get_idea: () => new Promise((res) => (finish = res)) });
+			const markPersisted = vi.fn();
+			const onDraftRestored = vi.fn();
+			const conversationRef: { current: ChatMessage[] } = { current: [q1, a1] };
+			const lengthRef: React.RefObject<number> = { current: 2 };
+			function Host() {
+				const status = useDraftLoader("draft-1", null, {
+					conversationLengthRef: lengthRef,
+					fetchedParentRef: { current: null },
+					createdIdeaIdRef: { current: null },
+					setIdeaId: () => {},
+					setCurrConversation: (next) => (conversationRef.current = next),
+					markPersisted,
+					onDraftRestored,
+					onParentIdea: () => {},
+					onFatalError: () => {}
+				});
+				return createElement("p", { "data-testid": "status" }, status);
+			}
+			render(createElement(Host));
+			expect(await screen.findByText("loading")).toBeInTheDocument();
+
+			const saved: ChatMessage[] = [q1, a1];
+			await act(async () => {
+				finish({ id: "draft-1", transcript: saved });
+				await Promise.resolve();
+			});
+			expect(conversationRef.current).toEqual(saved);
+			expect(onDraftRestored).toHaveBeenCalledWith("user");
+			expect(markPersisted).toHaveBeenCalledWith(saved);
+		});
 	});
 
 	describe("create completion handoff", () => {

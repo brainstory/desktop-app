@@ -290,6 +290,8 @@ export function useIdeaPersistence(
 }
 
 /** Draft + parent idea loading, split from the autosave (different deps). */
+export type DraftStatus = "idle" | "loading" | "ready" | "failed";
+
 export function useDraftLoader(
 	ideaId: string | undefined,
 	parentIdParam: string | null,
@@ -307,7 +309,7 @@ export function useDraftLoader(
 		onParentIdea: (parentId: string) => void;
 		onFatalError: (error: ChatFatalError) => void;
 	}
-) {
+): DraftStatus {
 	const {
 		conversationLengthRef,
 		fetchedParentRef,
@@ -319,9 +321,22 @@ export function useDraftLoader(
 		onFatalError
 	} = hooks;
 
+	/** how the load of the CURRENT ideaId ended (state is only ever set
+	 * asynchronously, from the fetch callbacks) */
+	const [settled, setSettled] = useState<{ id: string; value: "ready" | "failed" } | null>(null);
+	/** the conversation length when loading started: anything that grew
+	 * past it was added locally and must never be clobbered by the saved
+	 * transcript arriving late */
+	const mountLengthRef = useRef<number | null>(null);
+
 	useEffect(() => {
+		if (mountLengthRef.current === null) {
+			mountLengthRef.current = conversationLengthRef.current;
+		}
 		if (ideaId && ideaId === createdIdeaIdRef.current) {
-			// just created from the conversation on screen: nothing to load
+			// just created from the conversation on screen: nothing to
+			// load - settle the derived status without a fetch
+			void Promise.resolve().then(() => setSettled({ id: ideaId, value: "ready" }));
 			return;
 		}
 		if (ideaId) {
@@ -333,15 +348,24 @@ export function useDraftLoader(
 						return;
 					}
 					const savedConversation = [...(res.transcript ?? [])];
-					// Only adopt the saved transcript if it has more messages
-					// than what we hold locally (via the ref: this closure
-					// sees the mount-time conversation): restores a resumed
-					// draft, but never clobbers newer messages.
-					if (savedConversation.length > conversationLengthRef.current) {
+					// Only adopt the saved transcript while nothing was
+					// added locally since mount (the mic and Send are
+					// locked while the draft loads; this guard covers what
+					// slips past that, e.g. an in-flight coach answer).
+					// >= so an equally long saved transcript is adopted too
+					// (marking it persisted avoids writing it straight
+					// back); a shorter one only needs its persisted mark.
+					if (
+						conversationLengthRef.current === mountLengthRef.current &&
+						savedConversation.length >= conversationLengthRef.current
+					) {
 						markPersisted(savedConversation);
 						setCurrConversation(savedConversation);
 						onDraftRestored(savedConversation.at(-1)?.role);
+					} else {
+						markPersisted(savedConversation);
 					}
+					setSettled({ id: ideaId, value: "ready" });
 
 					const parentIdData = res.parentIdea?.id;
 					if (parentIdData && fetchedParentRef.current !== parentIdData) {
@@ -351,6 +375,7 @@ export function useDraftLoader(
 				})
 				.catch((err) => {
 					console.error("idea not found with ID", ideaId, err);
+					setSettled({ id: ideaId, value: "failed" });
 					onFatalError("draft-not-found");
 				});
 		} else if (parentIdParam && fetchedParentRef.current !== parentIdParam) {
@@ -362,4 +387,10 @@ export function useDraftLoader(
 		// re-running on their identity would re-fetch the draft
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ideaId, parentIdParam]);
+
+	// loading is derived (never set synchronously in the effect): a
+	// defined id that has not settled yet is being fetched
+	const status: DraftStatus =
+		ideaId === undefined ? "idle" : settled?.id === ideaId ? settled.value : "loading";
+	return status;
 }

@@ -77,6 +77,41 @@ describe("ChatSection", () => {
 		vi.mocked(console.error).mockRestore();
 	});
 
+	it("locks the input while a saved draft is being restored", async () => {
+		let finish!: (v: unknown) => void;
+		mockChat({
+			get_idea: () => new Promise((res) => (finish = res))
+		});
+		setUrl("?id=draft-1");
+		render(<ChatSection draftId="draft-1" conversationEndCallbacks={() => {}} />);
+
+		// while the draft loads the mic and Send wait, with a status line
+		const mentions = await screen.findAllByText("Restoring your draft…");
+		expect(mentions.some((el) => el.getAttribute("role") === "status")).toBe(true);
+		const mic = screen.getByRole("button", { name: "Start recording" });
+		expect(mic).toHaveAttribute("aria-disabled", "true");
+		expect(screen.getAllByText("Restoring your draft…").length).toBeGreaterThan(0);
+
+		await act(async () => {
+			finish({
+				id: "draft-1",
+				transcript: [
+					{ role: "assistant", content: "q1" },
+					{ role: "user", content: "a1" },
+					{ role: "assistant", content: "q2" }
+				]
+			});
+			await Promise.resolve();
+		});
+		// the draft arrived: the restored question shows and input opens
+		expect(await screen.findByText("q2")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Start recording" })).not.toHaveAttribute(
+			"aria-disabled",
+			"true"
+		);
+		expect(screen.queryAllByText("Restoring your draft…")).toHaveLength(0);
+	});
+
 	it("does not write a freshly loaded draft straight back to the database", async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		setUrl("?id=draft-1");

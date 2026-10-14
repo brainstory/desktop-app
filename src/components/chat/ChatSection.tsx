@@ -89,12 +89,7 @@ export function ChatSection({
 	// (no status yet) never blocks. "Loading" keeps its dedicated copy.
 	const llmBlocked = modelAvailability === "missing" || modelAvailability === "error";
 	const sttBlocked = speechAvailability === "missing" || speechAvailability === "error";
-	const micBlockedReason = llmBlocked
-		? "Set up AI to begin"
-		: sttBlocked
-			? "Speech model needed"
-			: undefined;
-	const sendBlockedReason = llmBlocked ? "Set up AI to reply" : undefined;
+
 	const firstPrompt = getFirstPrompt(chatType);
 	const [currConversation, setCurrConversation] = useState<ChatMessage[]>([
 		{ role: "assistant", content: firstPrompt }
@@ -148,7 +143,7 @@ export function ChatSection({
 	});
 	const { dispatch } = session;
 
-	useDraftLoader(persistence.ideaId, parentIdParam, {
+	const draftStatus = useDraftLoader(persistence.ideaId, parentIdParam, {
 		conversationLengthRef: persistence.conversationLengthRef,
 		fetchedParentRef: persistence.fetchedParentRef,
 		createdIdeaIdRef: persistence.createdIdeaIdRef,
@@ -161,6 +156,21 @@ export function ChatSection({
 	});
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
+
+	// after the draft loader: its status decides whether input waits
+	const restoringDraft = draftStatus === "loading";
+	const micBlockedReason = restoringDraft
+		? "Restoring your draft…"
+		: llmBlocked
+			? "Set up AI to begin"
+			: sttBlocked
+				? "Speech model needed"
+				: undefined;
+	const sendBlockedReason = restoringDraft
+		? "Restoring your draft…"
+		: llmBlocked
+			? "Set up AI to reply"
+			: undefined;
 
 	/** Wrap up the session and generate its summary. The summary needs
 	 * the idea to exist, so a session without one is created first; the
@@ -261,6 +271,11 @@ export function ChatSection({
 
 		return (
 			<section>
+				{restoringDraft && (
+					<p role="status" className="text-sm text-stone-500 text-center pt-4">
+						Restoring your draft…
+					</p>
+				)}
 				{chatError && (
 					<ChatErrorBanner
 						aiError={chatError.message}
