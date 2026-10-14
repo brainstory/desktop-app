@@ -138,7 +138,27 @@ fn persist_user_settings(
 	enabled_log_question_ids: Option<&[i64]>,
 	notifications: Option<&[serde_json::Value]>,
 ) -> Result<UserSettingsUpdate, String> {
-	let update = collect_user_settings(user, enabled_log_question_ids, notifications)?;
+	let mut update = collect_user_settings(user, enabled_log_question_ids, notifications)?;
+	// Enabling the reminder after today's time already passed must not
+	// fire a notification the moment the toggle lands: mark today as
+	// handled, in the same transaction as the enable itself.
+	if update.reminder_enabled_after == Some(true) {
+		let was_enabled = db
+			.get_setting(keys::setting::REMINDER_ENABLED)
+			.map(|v| v == "true")
+			.unwrap_or(false);
+		if !was_enabled {
+			let time_in_batch = update
+				.kv
+				.iter()
+				.find(|(key, _)| *key == keys::setting::REMINDER_TIME)
+				.map(|(_, value)| value.as_str());
+			if let Some(today) = crate::reminders::initial_last_fired_for_enable(db, time_in_batch)
+			{
+				update.kv.push((keys::setting::REMINDER_LAST_FIRED, today));
+			}
+		}
+	}
 	if !update.kv.is_empty() {
 		db.set_settings(&update.kv)?;
 	}

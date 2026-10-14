@@ -124,8 +124,37 @@ fn is_due(now: chrono::NaiveTime, hour: u32, minute: u32) -> bool {
 	(now.hour(), now.minute()) >= (hour, minute)
 }
 
+/// When a reminder is (re-)enabled after today's reminder time already
+/// passed, the loop must treat today as handled instead of firing at
+/// once: Some(today's date string) marks it done, None leaves the
+/// natural schedule alone.
+pub(crate) fn decide_initial_last_fired(
+	now: NaiveDateTime,
+	hour: u32,
+	minute: u32,
+) -> Option<String> {
+	is_due(now.time(), hour, minute).then(|| now.format("%Y-%m-%d").to_string())
+}
+
+/// The decision for a reminder enabled just now, reading the effective
+/// time from `time_override` (a reminder time arriving in the same
+/// save) or the stored setting, in the database's active zone.
+pub(crate) fn initial_last_fired_for_enable(
+	db: &crate::db::Db,
+	time_override: Option<&str>,
+) -> Option<String> {
+	let time_str = time_override
+		.map(|s| s.to_string())
+		.or_else(|| db.get_setting(keys::setting::REMINDER_TIME))
+		.filter(|s| !s.is_empty())
+		.unwrap_or_else(|| "09:00".into());
+	let (hour, minute) = parse_time(&time_str);
+	let now = Utc::now();
+	decide_initial_last_fired(wall_clock(db.active_zone(), &now), hour, minute)
+}
+
 /// The wall-clock time an instant reads as in the active zone.
-fn wall_clock(zone: Option<Tz>, now: &DateTime<Utc>) -> NaiveDateTime {
+pub(crate) fn wall_clock(zone: Option<Tz>, now: &DateTime<Utc>) -> NaiveDateTime {
 	match zone {
 		Some(tz) => now.with_timezone(&tz).naive_local(),
 		None => now.with_timezone(&chrono::Local).naive_local(),
@@ -305,6 +334,29 @@ mod tests {
 			3600,
 			"fold -> earliest of the two instants"
 		);
+	}
+
+	#[test]
+	fn enabling_after_the_time_marks_today_handled() {
+		let at = |h, m| {
+			chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+				.unwrap()
+				.and_hms_opt(h, m, 0)
+				.unwrap()
+		};
+		// enabling at 15:00 with a 09:00 time: today is already done
+		assert_eq!(
+			super::decide_initial_last_fired(at(15, 0), 9, 0).as_deref(),
+			Some("2026-09-30")
+		);
+		// exactly on the minute counts as passed too (>= is due)
+		assert_eq!(
+			super::decide_initial_last_fired(at(9, 0), 9, 0).as_deref(),
+			Some("2026-09-30")
+		);
+		// enabling before the time: the natural schedule stands
+		assert_eq!(super::decide_initial_last_fired(at(8, 59), 9, 0), None);
+		assert_eq!(super::decide_initial_last_fired(at(0, 0), 23, 59), None);
 	}
 
 	#[test]

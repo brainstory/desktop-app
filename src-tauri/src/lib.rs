@@ -446,6 +446,20 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 							return;
 						}
 					};
+					// enabling after today's time must not fire at once:
+					// mark today as handled before waking the scheduler
+					if enabled {
+						if let Some(today) =
+							reminders::initial_last_fired_for_enable(&state.db, None)
+						{
+							if let Err(e) = state
+								.db
+								.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
+							{
+								log::warn!("failed to record reminder state: {e}");
+							}
+						}
+					}
 					// keep the native checkmark and the setting in lockstep
 					sync_tray_reminder_check(enabled);
 					// the settings page caches get_user_settings: tell it
