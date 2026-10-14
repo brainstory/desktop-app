@@ -38,16 +38,20 @@ export function NotificationsCard({
 	const [notificationFields, setNotificationFields] =
 		useState<NotificationSetting[]>(notificationsData);
 	const titleIdBase = useId();
-	// reset local edits whenever the parent passes fresh data (the
-	// documented "adjust state when props change" render-time pattern)
-	const [prevData, setPrevData] = useState(notificationsData);
-	if (prevData !== notificationsData) {
-		setPrevData(notificationsData);
-		setNotificationFields(notificationsData);
-	}
 	// dirty is derived from the last confirmed-saved list: edits made
 	// while a save was pending stay dirty, a failed save stays retryable
 	const { isSaving, isDirty, save } = useDirtySave(notificationsData, notificationsEqual);
+	// fresh data from the parent replaces local state only when nothing
+	// was edited (the documented "adjust state when props change"
+	// render-time pattern): a reload triggered by saving ANOTHER card
+	// must not wipe unsaved edits here
+	const [prevData, setPrevData] = useState(notificationsData);
+	if (prevData !== notificationsData) {
+		setPrevData(notificationsData);
+		if (!isDirty(notificationFields)) {
+			setNotificationFields(notificationsData);
+		}
+	}
 	const hasChanged = isDirty(notificationFields);
 
 	const handleSaveClick = () => {

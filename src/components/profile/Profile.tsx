@@ -93,7 +93,11 @@ function ProfileInner() {
 	const handleUserSettingsSave = (newName: string, newTimezone: string): Promise<boolean> =>
 		saveUserSettingsApi({ name: newName, timezone: newTimezone })
 			.then(() => {
-				loadSettings();
+				// update only the fields this card owns: a full reload would
+				// hand the other cards fresh data and wipe their unsaved
+				// edits (notifications, daily log questions)
+				setUserName(newName);
+				setUserTimezone(newTimezone);
 				openSnackbar(true, SUCCESS_COPY.SAVE);
 				return true;
 			})

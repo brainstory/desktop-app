@@ -191,36 +191,59 @@ describe("Profile", () => {
 		expect(saveButton).toBeDisabled();
 	});
 
-	it("preserves edits typed during a pending General save when reloaded settings arrive", async () => {
+	it("saves the General card without reloading settings or clobbering other cards' edits", async () => {
 		const user = userEvent.setup();
 		// an earlier test's tab click left ?tab= in the shared jsdom URL
 		window.history.replaceState(null, "", "/");
-		const save = deferred<{ id: string }>();
-		let loadCount = 0;
+		let loads = 0;
+		let saves = 0;
 		mockInvoke({
 			get_user_settings: () => {
-				loadCount += 1;
-				return loadCount === 1
-					? userSettings
-					: { ...userSettings, user: { name: "Bob", timezone: "Europe/Berlin" } };
+				loads += 1;
+				return {
+					...userSettings,
+					notifications: [
+						{
+							title: "Daily intention reminder",
+							description: "A nudge to sit down and think",
+							enabled: false,
+							value: "09:00:00",
+							value_type: "time"
+						}
+					]
+				};
 			},
-			save_user_settings: () => save.promise
+			save_user_settings: () => {
+				saves += 1;
+				return { id: "settings" };
+			}
 		});
 		render(<Profile />);
 		const nameInput = await screen.findByRole("textbox", { name: "Your name" });
-		const saveButton = screen.getByRole("button", { name: /save/i });
-
+		// two "Save" buttons live on this tab: General's, then Notifications'
+		const [generalSave, notificationsSave] = await screen.findAllByRole("button", {
+			name: "Save"
+		});
 		await user.clear(nameInput);
 		await user.type(nameInput, "Bob");
-		await user.click(saveButton);
-		await user.clear(nameInput);
-		await user.type(nameInput, "Carol"); // typed while the save was in flight
-		await act(async () => save.resolve({ id: "settings" }));
 
-		// two loads + one save; the reload delivered the saved props
-		await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledTimes(3));
-		expect(nameInput).toHaveValue("Carol"); // not clobbered by "Bob"
-		expect(saveButton).toBeEnabled(); // "Carol" is still unsaved
+		// an unsaved edit in the Notifications card
+		const reminderToggle = await screen.findByRole("switch", {
+			name: /daily intention reminder/i
+		});
+		await user.click(reminderToggle);
+
+		await user.click(generalSave);
+		expect(await screen.findByText("Changes Saved!")).toBeInTheDocument();
+		expect(nameInput).toHaveValue("Bob");
+
+		// no settings reload after the save (it would hand the other
+		// cards fresh data and wipe their unsaved edits)...
+		expect(loads).toBe(1);
+		// ...and the notification edit survived
+		expect(reminderToggle).toHaveAttribute("aria-checked", "true");
+		expect(notificationsSave).toBeEnabled();
+		expect(saves).toBe(1);
 	});
 
 	it("resolves the daily log save with false and reports the error, then true on retry", async () => {
