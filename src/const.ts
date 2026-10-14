@@ -7,12 +7,12 @@ export interface Topic {
 export const TOPICS: Topic[] = [
 	{
 		topic: "Find motivation to start something",
-		prompt: "You're on the right track! Tell me about what you've been meaning to start.",
+		prompt: "Tell me about what you've been meaning to start.",
 		iconName: "rocket-outline"
 	},
 	{
 		topic: "Outline a project or meeting",
-		prompt: "That sounds like a great plan. What's the main goal or purpose?",
+		prompt: "What's the main goal or purpose of it?",
 		iconName: "document-text-outline"
 	},
 	{
@@ -22,12 +22,12 @@ export const TOPICS: Topic[] = [
 	},
 	{
 		topic: "Develop a new habit or change an old one",
-		prompt: "That's a great initiative! Do you have a new habit you're trying to form? Or a bad one you're trying to break?",
+		prompt: "Do you have a new habit you're trying to form, or one you're trying to break?",
 		iconName: "construct-outline"
 	},
 	{
 		topic: "Talk about something new or interesting you learned",
-		prompt: "Sounds interesting! Share what you learned. Did you enjoy the learning process?",
+		prompt: "Share what you learned. How did the learning go?",
 		iconName: "library-outline"
 	},
 	{

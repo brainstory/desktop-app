@@ -43,6 +43,15 @@ describe("getFirstPrompt", () => {
 		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "0" })).toBe(guide(0));
 	});
 
+	it("keeps every topic opener free of praise", () => {
+		// the interview prompt forbids affirmations; openers that praise
+		// ("great", "interesting", ...) teach the model to do the same
+		const praise = /great|interesting|right track|sounds like/i;
+		for (const topic of TOPICS) {
+			expect(praise.test(topic.prompt)).toBe(false);
+		}
+	});
+
 	it("falls back to the greeting for an out-of-range index", () => {
 		expect(getFirstPrompt(CHAT_TYPE.ORIGINAL, { qotd: null, topic: "99" })).toBe(
 			"Hi, how's it going? What's on your mind?"
