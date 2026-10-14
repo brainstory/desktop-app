@@ -68,6 +68,8 @@ pub fn run() {
 		.plugin(tauri_plugin_dialog::init())
 		.plugin(tauri_plugin_updater::Builder::new().build())
 		.plugin(tauri_plugin_process::init())
+		// remember the window's size and position across launches
+		.plugin(tauri_plugin_window_state::Builder::default().build())
 		.plugin(
 			// Quick capture: the shortcut handler fires even while the
 			// window is hidden in the tray, so an idea can be started
