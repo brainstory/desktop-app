@@ -776,6 +776,20 @@ fn reconcile_model_state(
 	reconcile_llm_slot(state, events, &plan, generation, slot_wait, llm_load);
 }
 
+/// The published status for a plan decided by something other than
+/// whisper's own load (the external endpoint or the Apple Speech
+/// setting).
+fn stt_status_for(plan: SttStatusPlan) -> models::EngineStatus {
+	match plan {
+		SttStatusPlan::External => models::EngineStatus::external(),
+		SttStatusPlan::AppleReady => models::EngineStatus::ready(Some("apple-speech")),
+		SttStatusPlan::AppleUnsupported => models::EngineStatus::error(
+			Some("apple-speech"),
+			"Apple Speech requires macOS 26+ - using whisper instead",
+		),
+	}
+}
+
 /// The whisper slot's share of one reconciliation run.
 fn reconcile_whisper_slot(
 	state: &AppState,
@@ -795,9 +809,39 @@ fn reconcile_whisper_slot(
 				Some(claim) => {
 					if !settings_stale(state, generation) {
 						claim.release();
+						let mut loaded = false;
 						if let Some(spec) = models::find_model(id, ModelKind::Stt) {
-							if let Err(e) = stt_load(spec) {
-								log::error!("startup STT load failed: {e}");
+							match stt_load(spec) {
+								Ok(()) => loaded = true,
+								Err(e) => log::error!("startup STT load failed: {e}"),
+							}
+						}
+						// The load path leaves the slot reporting
+						// whisper itself ("ready: whisper-..."). When
+						// another engine actually transcribes (Apple
+						// Speech standing in front of, or instead of,
+						// whisper), that status is wrong: re-publish the
+						// plan's status under a fresh claim, so a
+						// settings save that landed mid-load still wins.
+						if loaded {
+							if let Some(status) = plan.stt_status {
+								match models::EngineSlotClaim::acquire(
+									&state.stt_loading,
+									slot_wait,
+								) {
+									Some(_claim) => {
+										if !settings_stale(state, generation) {
+											*state
+												.stt_status
+												.lock()
+												.unwrap_or_else(|e| e.into_inner()) = stt_status_for(status);
+											state.emit_stt_status_events(events);
+										}
+									}
+									None => log::warn!(
+										"stt slot still busy after {slot_wait:?}; keeping the whisper load's status"
+									),
+								}
 							}
 						}
 					}
@@ -827,16 +871,7 @@ fn reconcile_whisper_slot(
 						}
 						if let Some(status) = plan.stt_status {
 							*state.stt_status.lock().unwrap_or_else(|e| e.into_inner()) =
-								match status {
-									SttStatusPlan::External => models::EngineStatus::external(),
-									SttStatusPlan::AppleReady => {
-										models::EngineStatus::ready(Some("apple-speech"))
-									}
-									SttStatusPlan::AppleUnsupported => models::EngineStatus::error(
-										Some("apple-speech"),
-										"Apple Speech requires macOS 26+ - using whisper instead",
-									),
-								};
+								stt_status_for(status);
 							state.emit_stt_status_events(events);
 						}
 					}
@@ -1374,6 +1409,105 @@ mod loader_reconcile_tests {
 				"stt:External:None".to_string(),
 				"llm:Missing:None".to_string(),
 			]
+		);
+	}
+
+	#[test]
+	fn auto_apple_with_a_whisper_fallback_reports_apple_as_the_engine() {
+		// macOS 26 default: Auto + Apple Speech available + whisper
+		// downloaded as the fallback. The whisper load leaves the slot
+		// reporting whisper; the run must publish Apple Speech as what
+		// actually transcribes.
+		let (state, _dir) = loader_state("auto-apple");
+		mark_downloaded(&state, "whisper-small-en", ModelKind::Stt);
+		let (captured, generation) = state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Auto;
+				s.stt_model = "whisper-small-en".into();
+				Ok(())
+			})
+			.expect("commit auto engine");
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&captured,
+			generation,
+			SHORT_WAIT,
+			true,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		assert_eq!(stt_loads.requests(), vec!["whisper-small-en".to_string()]);
+		let stt_events: Vec<String> = events
+			.snapshot()
+			.into_iter()
+			.filter(|e| e.starts_with("stt:"))
+			.collect();
+		assert_eq!(
+			stt_events.last().map(String::as_str),
+			Some("stt:Ready:Some(\"apple-speech\")"),
+			"the last published STT status must say Apple Speech transcribes: {stt_events:?}"
+		);
+		assert_eq!(
+			*state.stt_status.lock().unwrap(),
+			models::EngineStatus::ready(Some("apple-speech"))
+		);
+	}
+
+	#[test]
+	fn explicit_apple_on_an_old_macos_publishes_the_whisper_fallback_notice() {
+		// explicit Apple Speech on a system without it: whisper stands
+		// in, and the status must explain that (not report whisper as
+		// the chosen engine).
+		let (state, _dir) = loader_state("apple-unsupported");
+		mark_downloaded(&state, "whisper-small-en", ModelKind::Stt);
+		let (captured, generation) = state
+			.mutate_ai_settings(|s| {
+				s.stt_engine = SpeechEngine::Apple;
+				s.stt_mode = SttMode::Local;
+				s.stt_model = "whisper-small-en".into();
+				s.ext_stt_base_url = String::new();
+				Ok(())
+			})
+			.expect("commit apple engine");
+
+		let events = RecordingEvents::new();
+		let stt_loads = Arc::new(LoadRecorder::default());
+		let llm_loads = Arc::new(LoadRecorder::default());
+		let stt_runner = |spec: &models::ModelSpec| stt_loads.record(spec);
+		let llm_runner = |spec: &models::ModelSpec| llm_loads.record(spec);
+		reconcile_model_state(
+			&state,
+			&*events,
+			&captured,
+			generation,
+			SHORT_WAIT,
+			false,
+			&stt_runner,
+			&llm_runner,
+		);
+
+		assert_eq!(stt_loads.requests(), vec!["whisper-small-en".to_string()]);
+		let snapshot = events.snapshot();
+		assert!(
+			snapshot
+				.iter()
+				.any(|e| e == "stt:Error:Some(\"apple-speech\")"),
+			"the error status must be published: {snapshot:?}"
+		);
+		assert_eq!(
+			*state.stt_status.lock().unwrap(),
+			models::EngineStatus::error(
+				Some("apple-speech"),
+				"Apple Speech requires macOS 26+ - using whisper instead",
+			)
 		);
 	}
 }
