@@ -16,6 +16,7 @@ import IdeaGrid from "./IdeaGrid";
 import FeedbackGrid from "./FeedbackGrid";
 import AiSetupNeeded from "./AiSetupNeeded";
 import { useLibraryView } from "./LibraryToolbar";
+import Icon from "@ds/Icon";
 
 function DashboardSectionInner() {
 	const [userIdeas, setUserIdeas] = useState<IdeaListItem[] | undefined>(undefined);
@@ -170,11 +171,7 @@ function DashboardSectionInner() {
 					>
 						<div className="w-56 p-6 flex flex-col items-center gap-2">
 							{/* decorative: the button's text names the action */}
-							<ion-icon
-								class="hydrated w-16 h-16"
-								name="mic-outline"
-								aria-hidden="true"
-							></ion-icon>
+							<Icon name="mic-outline" className="w-16 h-16" ariaHidden />
 							<p>Find a quiet place</p>
 							<p className="text-xl font-bold">Start your first Brainstory!</p>
 						</div>

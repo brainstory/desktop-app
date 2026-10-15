@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
 import Button from "@ds/Button";
+import Icon from "@ds/Icon";
 
 /**
  * The daily intent streak: consecutive days the daily intent flow was
@@ -158,10 +159,7 @@ export default function DailyStreakSection() {
 			<section className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg">
 				<div className="text-start">
 					<div className="flex gap-1 items-center">
-						<ion-icon
-							class="w-6 h-6 hydrated pointer-events-none fill-stone-400"
-							name="flame"
-						></ion-icon>
+						<Icon name="flame" className="w-6 h-6 pointer-events-none fill-stone-400" />
 						<p className="font-bold tracking-wide text-xl text-nowrap text-stone-400">
 							—
 						</p>
@@ -186,10 +184,7 @@ export default function DailyStreakSection() {
 		<section className="flex flex-wrap lg:flex-nowrap gap-4 lg:gap-0 justify-evenly items-center p-5 rounded-t-lg">
 			<div className="text-start">
 				<div className="flex gap-1 items-center">
-					<ion-icon
-						class="w-6 h-6 hydrated pointer-events-none fill-red-500"
-						name="flame"
-					></ion-icon>
+					<Icon name="flame" className="w-6 h-6 pointer-events-none fill-red-500" />
 					<p className="font-bold tracking-wide text-xl text-nowrap">
 						{streakCount} {streakCount === 1 ? "day" : "days"}
 					</p>

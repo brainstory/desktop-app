@@ -1,6 +1,7 @@
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
 import { CancelGenerationButton } from "@components/chat/reusable/ChatStateNotification";
+import Icon from "@ds/Icon";
 
 const headingStyle = "mb-4 lg:mb-5 font-bold text-stone-900 text-center text-xl lg:text-2xl";
 
@@ -97,12 +98,11 @@ export default function StickyLoadingSection({
 			) : isFinishedGenerating ? (
 				<>
 					<h2 className={headingStyle}>
-						<ion-icon
+						<Icon
 							name="checkmark-circle"
-							class="hydrated w-6 h-6 mr-2 align-middle text-green-600"
-							role="img"
-							aria-label="Saved"
-						></ion-icon>
+							className="w-6 h-6 mr-2 align-middle text-green-600"
+							label="Saved"
+						/>
 						Finished! Saved your summary
 					</h2>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}

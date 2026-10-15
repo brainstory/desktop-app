@@ -6,6 +6,7 @@ import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import { useAppContext } from "@components/chat/reusable/AppWrapper";
 
 import TextsFadeIn from "./reusable/TextsFadeIn";
+import Icon from "@ds/Icon";
 
 // lazy: the Rive WASM bundle is only needed for the pencil, which is
 // only mounted on wide viewports
@@ -82,7 +83,7 @@ export default function GetStartedIntro() {
 							className="p-6 font-semibold flex flex-col gap-3 justify-center items-center animate-appear block w-72 bg-white border border-stone-200 text-center cursor-pointer rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform min-h-[144px]"
 							href={`/chat?topic=${index}`}
 						>
-							<ion-icon name={topic.iconName} class="hydrated w-8 h-8" />
+							<Icon name={topic.iconName} className="w-8 h-8" />
 							{topic.topic}
 						</a>
 					))}

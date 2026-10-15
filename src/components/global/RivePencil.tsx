@@ -5,6 +5,12 @@ import { useRive, RuntimeLoader } from "@rive-app/react-canvas";
 RuntimeLoader.setWasmUrl("/vendor/rive/rive.wasm");
 RuntimeLoader.setWasmFallbackUrl("/vendor/rive/rive_fallback.wasm");
 
+/**
+ * The pencil mascot. Both animations mount ONCE and stay mounted; the
+ * active one plays and the other pauses, so switching (every mic
+ * click) never re-initializes the Rive state machines - it just
+ * toggles play/pause on already-loaded instances.
+ */
 export default function RivePencil({
 	type = "wave",
 	small = false
@@ -13,32 +19,54 @@ export default function RivePencil({
 	small?: boolean;
 }) {
 	return (
-		<div className={small ? `w-24 h-28` : `w-20 h-32 md:w-36 md:h-44`}>
-			{type === "wave" && <Wave />}
-			{type === "jump" && <Jump />}
+		<div className={small ? `w-24 h-28 relative` : `w-20 h-32 md:w-36 md:h-44 relative`}>
+			<Wave active={type === "wave"} />
+			<Jump active={type === "jump"} />
 		</div>
 	);
 }
 
-function Wave() {
+function Wave({ active }: { active: boolean }) {
 	const { rive, RiveComponent } = useRive({
 		src: "/rive/pencilwave_375_460.riv",
 		autoplay: true
 	});
 
+	if (rive) {
+		if (active) {
+			rive.play();
+		} else {
+			rive.pause();
+		}
+	}
+
 	return (
-		<RiveComponent
-			onMouseEnter={() => rive && rive.play()}
-			onMouseLeave={() => rive && rive.pause()}
-		/>
+		<div className={active ? "" : "hidden"}>
+			<RiveComponent
+				onMouseEnter={() => rive && rive.play()}
+				onMouseLeave={() => rive && rive.pause()}
+			/>
+		</div>
 	);
 }
 
-function Jump() {
-	const { RiveComponent } = useRive({
+function Jump({ active }: { active: boolean }) {
+	const { rive, RiveComponent } = useRive({
 		src: "/rive/penciljump.riv",
 		autoplay: true
 	});
 
-	return <RiveComponent />;
+	if (rive) {
+		if (active) {
+			rive.play();
+		} else {
+			rive.pause();
+		}
+	}
+
+	return (
+		<div className={active ? "" : "hidden"}>
+			<RiveComponent />
+		</div>
+	);
 }

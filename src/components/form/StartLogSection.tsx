@@ -2,6 +2,7 @@ import LogEntry from "./LogEntryInput";
 
 import type { LogFormAnswer } from "@helpers/api/forms";
 import type { Dispatch, SetStateAction } from "react";
+import Icon from "@ds/Icon";
 
 interface StartLogSectionProps {
 	logItems?: LogFormAnswer[];
@@ -36,7 +37,7 @@ export default function StartLogSection({
 				];
 			})}
 			<div className="p-5 mt-4 md:flex-col bg-stone-100 text-center flex text-sm items-center text-stone-600 gap-1 rounded-lg">
-				<ion-icon name="bulb-outline" class="w-5 h-5 hydrated mr-3 lg:mr-1" />
+				<Icon name="bulb-outline" className="w-5 h-5 mr-3 lg:mr-1" />
 				<div>
 					<p className="text-left md:text-center">
 						You can customize your questions in{" "}

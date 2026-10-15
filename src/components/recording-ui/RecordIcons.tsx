@@ -1,17 +1,9 @@
+import Icon from "@ds/Icon";
 export const ICON = {
 	// square
-	Recording: <ion-icon class="w-8 h-8 md hydrated" name="square" role="img" aria-label="stop" />,
+	Recording: <Icon name="square" className="w-8 h-8 md" label="stop" />,
 	// microphone
-	ReadyToRecord: (
-		<ion-icon class="w-6 h-8 md hydrated" name="mic" role="img" aria-label="record mic" />
-	),
+	ReadyToRecord: <Icon name="mic" className="w-6 h-8 md" label="record mic" />,
 	// mic off
-	MicOff: (
-		<ion-icon
-			class="w-6 h-8 md hydrated"
-			name="mic-off"
-			role="img"
-			aria-label="microphone unavailable"
-		/>
-	)
+	MicOff: <Icon name="mic-off" className="w-6 h-8 md" label="microphone unavailable" />
 };

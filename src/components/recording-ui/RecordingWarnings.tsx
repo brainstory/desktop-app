@@ -1,6 +1,7 @@
 /** Text input mode + warning banners, extracted from RecordButton. */
 
 import { useState } from "react";
+import Icon from "@ds/Icon";
 
 export function TextComposer({
 	value,
@@ -56,7 +57,7 @@ export function TextComposer({
 				aria-disabled={!canSend}
 				onClick={send}
 			>
-				<ion-icon class="w-8 h-8 hydrated" name="send" aria-hidden="true"></ion-icon>
+				<Icon name="send" className="w-8 h-8" ariaHidden />
 			</button>
 		</div>
 	);

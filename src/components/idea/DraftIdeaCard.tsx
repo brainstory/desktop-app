@@ -4,6 +4,7 @@ import { $userState } from "@components/global/userStore";
 import { deleteIdeaApi } from "@helpers/api/idea";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick } from "@src/hooks/useTimeout";
 import { useSnackbar } from "@ds/Snackbar";
+import Icon from "@ds/Icon";
 
 interface DraftIdeaCardProps {
 	id: string;
@@ -56,12 +57,7 @@ export default function DraftIdeaCard({
 			<a href={href} className="block">
 				<div className="float-left">
 					<span className="flex items-center justify-center mt-1 mr-2 w-6 h-6 bg-pink-100 text-pink-600 rounded-full -left-4 ring-8 ring-white">
-						<ion-icon
-							class="md hydrated"
-							name="ellipsis-horizontal"
-							role="img"
-							aria-label="draft"
-						></ion-icon>
+						<Icon name="ellipsis-horizontal" className="md" label="draft" />
 					</span>
 				</div>
 				<h3 className="mb-2 text-xl font-semibold tracking-tight text-stone-900">
@@ -97,7 +93,7 @@ export default function DraftIdeaCard({
 				{confirmingDelete ? (
 					<span>Really delete? ({secondsLeft ?? 0}s)</span>
 				) : (
-					<ion-icon class="w-4 h-4 hydrated" name="trash-outline" role="img"></ion-icon>
+					<Icon name="trash-outline" className="w-4 h-4" />
 				)}
 			</button>
 			{/* Announced once when armed - outside the button (its aria-label

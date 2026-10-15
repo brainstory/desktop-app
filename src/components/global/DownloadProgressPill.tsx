@@ -1,6 +1,7 @@
 import { useStore } from "@nanostores/react";
 import { useEffect } from "react";
 import { $downloads, clearDownloadFailure, subscribeDownloads } from "./downloadStore";
+import Icon from "@ds/Icon";
 
 /**
  * Sidebar shortcut to whatever download is in flight (or failed), so
@@ -59,7 +60,7 @@ export default function DownloadProgressPill() {
 					: "border-stone-200 bg-white text-stone-700 hover:bg-stone-100"
 			}`}
 		>
-			<ion-icon name={icon} class="hydrated h-5 w-5 shrink-0" aria-hidden="true" />
+			<Icon name={icon} className="h-5 w-5 shrink-0" ariaHidden />
 			<span className="min-w-0 flex-1 text-left">
 				<span className="block truncate text-xs font-medium">{title}</span>
 				{detail && <span className="block text-[11px] text-stone-500">{detail}</span>}

@@ -3,6 +3,7 @@ import { formatISO8601ToHumanReadable } from "@helpers/helpers";
 import { cardSummaryPreview, finishedFeedback } from "@helpers/ideas";
 import { $userState } from "@components/global/userStore";
 import type { IdeaListItem } from "@src/types";
+import Icon from "@ds/Icon";
 
 interface IdeaCardProps {
 	id: string;
@@ -165,12 +166,7 @@ function PinkIcon({ shared }: { shared?: boolean }) {
 	// floats and would push the icon onto its own line above the title.
 	return (
 		<span className="inline-flex items-center justify-center align-middle mr-2 w-6 h-6 shrink-0 bg-pink-100 text-pink-600 rounded-full ring-4 ring-white">
-			<ion-icon
-				class="w-4 hydrated"
-				name={icon}
-				role="img"
-				aria-label={shared ? "feedback message" : "idea highlight"}
-			></ion-icon>
+			<Icon name={icon} className="w-4" />
 		</span>
 	);
 }

@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@helpers/cn";
+import Icon from "./Icon";
 
 /** Colour schemes (formerly PinkButton / BlackButton / BorderedButton /
  * TransparentButton). Without a variant the button is uncoloured. */
@@ -61,10 +62,7 @@ export default function Button({
 						children !== undefined ? "w-4 mr-2" : "justify-center w-6 h-6"
 					} ${iconClasses}`}
 				>
-					<ion-icon
-						class={`hydrated ${children !== undefined ? "" : "w-6 h-6"}`}
-						name={icon}
-					/>
+					<Icon name={icon} />
 				</span>
 			)}
 			<span className="sr-only">{sr}</span>

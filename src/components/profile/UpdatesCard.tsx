@@ -5,6 +5,7 @@ import { Card } from "./ProfileCards";
 import Button from "@ds/Button";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { setUpdatesEnabledApi } from "@helpers/api/settings";
+import Icon from "@ds/Icon";
 
 /**
  * The "check for updates automatically" setting, owned by the settings
@@ -91,11 +92,7 @@ export function UpdatesDisabledWarning({ enabled, onTurnOn }: UpdatesDisabledWar
 		<div role="status" className="w-full">
 			{!enabled && (
 				<div className="mb-6 flex w-full items-center gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg px-5 py-4">
-					<ion-icon
-						class="w-6 h-6 shrink-0 hydrated"
-						name="warning-outline"
-						aria-hidden="true"
-					></ion-icon>
+					<Icon name="warning-outline" className="w-6 h-6 shrink-0" ariaHidden />
 					<p className="flex-1 text-sm">
 						<span className="font-semibold">Automatic update checks are off.</span> You
 						could be missing new features, bug fixes and security fixes.

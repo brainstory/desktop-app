@@ -5,6 +5,7 @@ import type { ParentIdea } from "@components/chat/types";
 
 import Button from "@ds/Button";
 import ChatIntroText from "@components/chat/ChatIntroText";
+import Icon from "@ds/Icon";
 
 interface ChatTopBarProps {
 	parentIdea?: ParentIdea | null;
@@ -55,10 +56,7 @@ export default function ChatTopBar({
 				)}
 				{saveIconName && (
 					<div role="status" className="flex items-center flex-nowrap gap-1 text-sm">
-						<ion-icon
-							name={saveIconName}
-							class="hydrated w-5 h-5 text-stone-500"
-						></ion-icon>
+						<Icon name={saveIconName} className="w-5 h-5 text-stone-500" />
 						<p className="text-stone-500">{saveState}</p>
 					</div>
 				)}

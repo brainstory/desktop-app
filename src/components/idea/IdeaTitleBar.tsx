@@ -6,6 +6,7 @@ import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/h
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
 import NoteModal from "./NoteModal";
+import Icon from "@ds/Icon";
 
 interface IdeaTitleBarProps {
 	idea: IdeaDetail;
@@ -305,10 +306,10 @@ export default function IdeaTitleBar({
 							className="flex mt-1 h-min"
 							title="Go back to original idea"
 						>
-							<ion-icon
-								class="w-5 h-5 hydrated pointer-events-none"
+							<Icon
 								name="arrow-back-outline"
-							></ion-icon>
+								className="w-5 h-5 pointer-events-none"
+							/>
 						</a>
 					)}
 					<div className="flex flex-col">
@@ -321,11 +322,10 @@ export default function IdeaTitleBar({
 										aria-label="Rename idea"
 										className="disabled:text-stone-400 hover:bg-stone-200 self-center p-1 leading-none rounded-full"
 									>
-										<ion-icon
-											class="w-4 h-4 hydrated pointer-events-none"
+										<Icon
 											name="create-outline"
-											role="img"
-										></ion-icon>
+											className="w-4 h-4 pointer-events-none"
+										/>
 									</button>
 								</div>
 							)}
@@ -346,11 +346,10 @@ export default function IdeaTitleBar({
 										className="disabled:text-stone-400 hover:bg-stone-200 p-1 leading-none rounded-full"
 										aria-label="Finish editing"
 									>
-										<ion-icon
-											class="w-4 h-4 hydrated pointer-events-none"
+										<Icon
 											name="checkmark-outline"
-											role="img"
-										></ion-icon>
+											className="w-4 h-4 pointer-events-none"
+										/>
 									</button>
 								</div>
 							)}
