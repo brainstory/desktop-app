@@ -39,6 +39,7 @@ pub mod setting {
 	/// HuggingFace download endpoint override (mirror); empty = env/default
 	pub const HF_ENDPOINT: &str = "hf_endpoint";
 	pub const EXT_LLM_BASE_URL: &str = "ext_llm_base_url";
+	pub const EXT_LLM_CTX_TOKENS: &str = "ext_llm_ctx_tokens";
 	pub const EXT_LLM_MODEL: &str = "ext_llm_model";
 	pub const EXT_STT_BASE_URL: &str = "ext_stt_base_url";
 	pub const EXT_STT_MODEL: &str = "ext_stt_model";

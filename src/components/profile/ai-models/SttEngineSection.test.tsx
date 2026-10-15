@@ -10,6 +10,7 @@ const settings: AiSettingsResponse = {
 	llmMode: "local",
 	llmModel: "gemma-4-E2B-qat",
 	llmCtxTokens: 0,
+	extLlmCtxTokens: 0,
 	sttModel: "whisper-base-en",
 	sttMode: "local",
 	sttEngine: "whisper",

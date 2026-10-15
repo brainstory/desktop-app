@@ -40,6 +40,7 @@ export interface AiSettingsResponse {
 	/** Requested local context window: 0 = app default (16k); else a
 	 * multiple of 1024 in 8192..=131072. Changing it reloads the model. */
 	llmCtxTokens: number;
+	extLlmCtxTokens: number;
 	sttModel: string;
 	/** "local" or "external": whether transcription uses the external endpoint */
 	sttMode: string;

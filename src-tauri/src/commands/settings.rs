@@ -312,6 +312,7 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 			"llmMode": s.llm_mode.as_str(),
 			"llmModel": s.llm_model,
 			"llmCtxTokens": s.llm_ctx_tokens,
+			"extLlmCtxTokens": s.ext_llm_ctx_tokens,
 			"sttModel": s.stt_model,
 			"sttMode": s.stt_mode.as_str(),
 			"sttEngine": s.stt_engine.as_str(),
@@ -406,6 +407,11 @@ pub async fn test_llm_endpoint(
 			"default"
 		} else {
 			&settings.ext_llm_model
+		},
+		if settings.ext_llm_ctx_tokens == 0 {
+			crate::llm::DEFAULT_EXT_CTX
+		} else {
+			settings.ext_llm_ctx_tokens
 		},
 	)?;
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

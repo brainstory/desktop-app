@@ -37,6 +37,16 @@ const KINDS = {
 
 export type EndpointKind = keyof typeof KINDS;
 
+/** Context windows offered for an external endpoint (0 = 8k default). */
+const EXT_CTX_OPTIONS = [
+	{ value: 0, label: "Default (8k)" },
+	{ value: 8192, label: "8k" },
+	{ value: 16384, label: "16k" },
+	{ value: 32768, label: "32k" },
+	{ value: 65536, label: "64k" },
+	{ value: 131072, label: "128k" }
+] as const;
+
 interface ExternalEndpointFieldsProps {
 	kind: EndpointKind;
 	settings: AiSettingsResponse;
@@ -69,6 +79,8 @@ export function ExternalEndpointFields({
 }: ExternalEndpointFieldsProps) {
 	const k = KINDS[kind];
 	const fieldKeys = [k.urlKey, k.modelKey] as const;
+	// the LLM endpoint also carries the context window the server allows
+	const ctxKey = kind === "llm" ? ("extLlmCtxTokens" as const) : null;
 	const fields = [
 		{ key: k.urlKey, label: `${k.name} base URL`, placeholder: k.urlPlaceholder },
 		{ key: k.modelKey, label: `${k.name} model`, placeholder: k.modelPlaceholder }
@@ -81,7 +93,7 @@ export function ExternalEndpointFields({
 	// every key it receives, so re-sending an untouched stale value would
 	// fail the whole save
 	const changed = Object.fromEntries(
-		fieldKeys
+		[...fieldKeys, ...(ctxKey ? [ctxKey] : [])]
 			.filter((key) => (settings[key] ?? "") !== (savedSettings?.[key] ?? ""))
 			.map((key) => [key, settings[key]])
 	) as Partial<AiSettingsResponse>;
@@ -139,6 +151,33 @@ export function ExternalEndpointFields({
 					</div>
 				))}
 			</div>
+			{ctxKey && (
+				<div className="max-w-xs">
+					<label
+						htmlFor={`endpoint-${ctxKey}`}
+						className="block mb-1 text-sm font-medium text-stone-900"
+					>
+						Context window the server allows
+					</label>
+					<select
+						id={`endpoint-${ctxKey}`}
+						value={settings[ctxKey]}
+						onChange={(e) =>
+							setSettings({ ...settings, [ctxKey]: Number(e.target.value) })
+						}
+						className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
+					>
+						{EXT_CTX_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
+					<p className="text-sm text-stone-500 mt-1">
+						Long conversations are trimmed to fit this before being sent.
+					</p>
+				</div>
+			)}
 			<div className="flex flex-wrap gap-3">
 				<Button
 					variant="pink"

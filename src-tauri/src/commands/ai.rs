@@ -44,7 +44,12 @@ fn take_transcription_token(state: &AppState) -> Arc<AtomicBool> {
 /// idea-document cap).
 fn context_budget_tokens(settings: &AiSettings) -> u32 {
 	if settings.uses_external_llm() {
-		crate::llm::DEFAULT_EXT_CTX
+		// 0 = the default; validated to sane multiples when saved
+		if settings.ext_llm_ctx_tokens == 0 {
+			crate::llm::DEFAULT_EXT_CTX
+		} else {
+			settings.ext_llm_ctx_tokens
+		}
 	} else {
 		crate::llm::effective_ctx_for(settings.llm_ctx_tokens, None)
 	}
@@ -755,6 +760,11 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 	if settings.ext_llm_base_url.is_empty() {
 		return Err("external LLM endpoint is not configured".into());
 	}
+	let ctx = if settings.ext_llm_ctx_tokens == 0 {
+		crate::llm::DEFAULT_EXT_CTX
+	} else {
+		settings.ext_llm_ctx_tokens
+	};
 	ExternalLlm::new(
 		&settings.ext_llm_base_url,
 		&settings.ext_llm_api_key,
@@ -763,6 +773,7 @@ fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
 		} else {
 			&settings.ext_llm_model
 		},
+		ctx,
 	)
 }
 

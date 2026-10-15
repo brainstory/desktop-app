@@ -128,6 +128,10 @@ pub struct AiSettings {
 	/// ([`crate::llm::DEFAULT_N_CTX`]); explicit values are multiples of
 	/// 1024 within 8192..=131072 (validated in [`Self::apply_updates`]).
 	pub llm_ctx_tokens: u32,
+	/// The context window the external LLM endpoint allows, when known
+	/// (0 = the default, 8192). Drives the same prompt fitting the
+	/// local engine does.
+	pub ext_llm_ctx_tokens: u32,
 	pub stt_model: String,
 	/// Local or external transcription (see [`Self::uses_external_stt`]).
 	pub stt_mode: SttMode,
@@ -316,6 +320,11 @@ impl AiSettings {
 				.parse::<u32>()
 				.ok()
 				.filter(|v| valid_llm_ctx(*v))
+				.unwrap_or(0),
+			ext_llm_ctx_tokens: get(setting::EXT_LLM_CTX_TOKENS)
+				.parse::<u32>()
+				.ok()
+				.filter(|v| valid_llm_ctx(*v))
 				// a hand-edited invalid row degrades to the app default,
 				// the same rule apply_updates applies to new values
 				.unwrap_or(0),
@@ -401,6 +410,22 @@ impl AiSettings {
 				return Err(format!("unknown llmModel '{v}'"));
 			}
 			self.llm_model = v;
+		}
+		if let Some(value) = ai.get("extLlmCtxTokens") {
+			// 0 = the default; absent/null keeps the stored value
+			if !value.is_null() {
+				self.ext_llm_ctx_tokens = value
+					.as_u64()
+					.filter(|v| *v <= u32::MAX as u64)
+					.map(|v| v as u32)
+					.filter(|v| valid_llm_ctx(*v))
+					.ok_or_else(|| {
+						format!(
+							"invalid extLlmCtxTokens {value} (expected 0 or a multiple of \
+							 1024 between 8192 and 131072)"
+						)
+					})?;
+			}
 		}
 		if let Some(value) = ai.get("llmCtxTokens") {
 			// 0 = the app default; absent/null keeps the stored value
@@ -514,6 +539,10 @@ impl AiSettings {
 			(setting::AI_LLM_MODE, self.llm_mode.as_str().to_string()),
 			(setting::AI_LLM_MODEL, self.llm_model.clone()),
 			(setting::AI_LLM_CTX_TOKENS, self.llm_ctx_tokens.to_string()),
+			(
+				setting::EXT_LLM_CTX_TOKENS,
+				self.ext_llm_ctx_tokens.to_string(),
+			),
 			(setting::AI_STT_MODEL, self.stt_model.clone()),
 			(setting::AI_STT_MODE, self.stt_mode.as_str().to_string()),
 			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),

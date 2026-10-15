@@ -116,6 +116,9 @@ pub struct ExternalLlm {
 	pub base_url: String,
 	pub api_key: String,
 	pub model: String,
+	/// the context window the endpoint allows (drives prompt fitting
+	/// with the estimator, since the endpoint reports no token counts)
+	pub ctx_tokens: u32,
 	client: reqwest::Client,
 }
 
@@ -128,7 +131,12 @@ impl ExternalLlm {
 	/// server has already generated it when the headers arrive).
 	const JSON_BODY_TIMEOUT_SECS: u64 = 120;
 
-	pub fn new(base_url: &str, api_key: &str, model: &str) -> Result<Self, String> {
+	pub fn new(
+		base_url: &str,
+		api_key: &str,
+		model: &str,
+		ctx_tokens: u32,
+	) -> Result<Self, String> {
 		// re-vet at use time, not only at save time: the setting can also
 		// arrive from an environment override or an older build
 		crate::models::validate_endpoint_url(base_url)?;
@@ -136,6 +144,7 @@ impl ExternalLlm {
 			base_url: base_url.trim_end_matches('/').to_string(),
 			api_key: api_key.to_string(),
 			model: model.to_string(),
+			ctx_tokens,
 			client: Self::shared_client()?,
 		})
 	}
@@ -184,11 +193,61 @@ impl ExternalLlm {
 		cancel: &AtomicBool,
 		max_tokens: u32,
 		temperature_override: Option<f32>,
-		on_chunk: impl FnMut(String) + Send,
+		mut on_chunk: impl FnMut(String) + Send,
 	) -> Result<(String, Option<usize>, usize), String> {
+		// First attempt at the configured window; a 400 that names the
+		// context (Ollama, LM Studio and friends) retries once with the
+		// budget halved and the older turns dropped.
+		match self
+			.generate_attempt(
+				system,
+				messages,
+				summary_render,
+				cancel,
+				max_tokens,
+				temperature_override,
+				self.ctx_tokens,
+				&mut on_chunk,
+			)
+			.await
+		{
+			Ok(out) => Ok(out),
+			Err(e) if is_context_overflow(&e) => {
+				log::warn!("endpoint rejected the prompt as too long; retrying with half the context budget");
+				self.generate_attempt(
+					system,
+					messages,
+					summary_render,
+					cancel,
+					max_tokens,
+					temperature_override,
+					(self.ctx_tokens / 2).max(1_024),
+					&mut on_chunk,
+				)
+				.await
+			}
+			Err(e) => Err(e),
+		}
+	}
+
+	/// One fitted attempt at `ctx_tokens`: fit the conversation to that
+	/// window (pairs for a chat, the whole-transcript render for a
+	/// summary), then run the transfer.
+	#[allow(clippy::too_many_arguments)]
+	async fn generate_attempt(
+		&self,
+		system: &str,
+		messages: &[ChatMessage],
+		summary_render: Option<super::SummaryRenderRef<'_>>,
+		cancel: &AtomicBool,
+		max_tokens: u32,
+		temperature_override: Option<f32>,
+		ctx_tokens: u32,
+		on_chunk: &mut (impl FnMut(String) + Send),
+	) -> Result<(String, Option<usize>, usize), String> {
+		let budget = super::prompt_budget(ctx_tokens, max_tokens);
 		let (messages, dropped_turns) = match summary_render {
 			Some(render) => {
-				let budget = super::prompt_budget(super::DEFAULT_EXT_CTX, max_tokens);
 				let (fitted, dropped) =
 					super::fit_summary_turns(messages, budget, &super::approx_tokens, render);
 				(
@@ -199,9 +258,20 @@ impl ExternalLlm {
 					dropped,
 				)
 			}
-			None => (messages.to_vec(), 0),
+			None => {
+				// chat turns are fitted too: an endpoint with a small
+				// window would otherwise 400 mid-interview
+				let render = |msgs: &[ChatMessage]| -> String {
+					msgs.iter()
+						.map(|m| format!("[{}] {}\n", m.role, m.content))
+						.collect::<String>()
+				};
+				let (fitted, _) =
+					super::fit_chat_turns(messages, budget, &super::approx_tokens, &render);
+				(fitted, 0)
+			}
 		};
-		let (text, prompt_tokens) = self
+		let text_and_tokens = self
 			.generate_with_limits(
 				system,
 				&messages,
@@ -212,7 +282,7 @@ impl ExternalLlm {
 				GenerationLimits::production(),
 			)
 			.await?;
-		Ok((text, prompt_tokens, dropped_turns))
+		Ok((text_and_tokens.0, text_and_tokens.1, dropped_turns))
 	}
 
 	/// [`ExternalLlm::generate`] with injectable bounds, so tests can
@@ -618,6 +688,16 @@ fn find_event_end(buffer: &[u8]) -> Option<usize> {
 pub const MODERATION_ERROR: &str = "moderation: the AI provider flagged this message";
 
 /// Map provider errors onto the error kinds the frontend understands.
+/// A 400 whose body blames the context/token budget: the one failure
+/// a smaller prompt can fix, so [`ExternalLlm::generate`] retries with
+/// half the window before surfacing it.
+fn is_context_overflow(error: &str) -> bool {
+	let lower = error.to_lowercase();
+	// the mapped form is "external endpoint error (400): <body>"
+	lower.contains("(400):")
+		&& (lower.contains("context") || lower.contains("token") || lower.contains("length"))
+}
+
 fn map_provider_error(status: u16, body: &str) -> String {
 	let lower = body.to_lowercase();
 	if status == 400 && (lower.contains("content_filter") || lower.contains("content_policy")) {
@@ -771,13 +851,99 @@ mod external_stream_tests {
 	}
 
 	#[tokio::test]
+	async fn a_context_overflow_400_retries_once_with_a_smaller_prompt() {
+		// serves 400 (context) first, then a valid SSE stream; records
+		// both request bodies so the retry's smaller prompt is provable
+		use std::io::{Read, Write};
+		let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+		let addr = listener.local_addr().expect("addr");
+		let (tx, rx) = std::sync::mpsc::channel::<String>();
+		std::thread::spawn(move || {
+			for first in [true, false] {
+				let Ok((mut sock, _)) = listener.accept() else {
+					return;
+				};
+				let mut request = String::new();
+				loop {
+					let mut byte = [0u8; 1];
+					if sock.read(&mut byte).unwrap_or(0) == 0 {
+						break;
+					}
+					request.push(byte[0] as char);
+					if request.ends_with("\r\n\r\n") {
+						break;
+					}
+				}
+				// drain the JSON body per Content-Length
+				let len: usize = request
+					.split("\r\n")
+					.find_map(|l| {
+						let lower = l.to_ascii_lowercase();
+						lower
+							.strip_prefix("content-length: ")
+							.map(|v| v.trim().to_string())
+					})
+					.and_then(|v| v.parse().ok())
+					.unwrap_or(0);
+				let mut body = vec![0u8; len];
+				let _ = sock.read_exact(&mut body);
+				let _ = tx.send(String::from_utf8_lossy(&body).to_string());
+				let response = if first {
+					let body = "{\"error\":{\"message\":\"context length exceeded\"}}";
+					format!(
+						"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+						body.len(),
+						body
+					)
+				} else {
+					let body = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+					format!(
+						"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
+						body.len(),
+						body
+					)
+				};
+				let _ = sock.write_all(response.as_bytes());
+				let _ = sock.flush();
+				std::thread::sleep(std::time::Duration::from_millis(300));
+			}
+		});
+
+		// a conversation far beyond a tiny configured window
+		let conversation: Vec<crate::types::ChatMessage> = (0..200)
+			.map(|i| crate::types::ChatMessage {
+				role: if i % 2 == 0 { "assistant" } else { "user" }.into(),
+				content: format!("message number {i} with a decent amount of text"),
+			})
+			.collect();
+		let client =
+			ExternalLlm::new(&format!("http://{addr}/v1"), "", "m", 2_048).expect("client");
+		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let (output, _, _) = client
+			.generate("", &conversation, None, &cancel, 32, None, |_| {})
+			.await
+			.expect("the retry succeeds");
+		assert_eq!(output, "ok");
+
+		let first = rx.recv().expect("first body");
+		let second = rx.recv().expect("retry body");
+		let count = |body: &str| body.matches("\"role\"").count();
+		assert!(
+			count(&second) < count(&first),
+			"the retry must carry fewer messages ({} -> {})",
+			count(&first),
+			count(&second)
+		);
+	}
+
+	#[tokio::test]
 	async fn external_generate_streams_from_loopback_sse_server() {
 		let url = serve_sse(vec![
 			"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n".into(),
 			"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n".into(),
 			"data: [DONE]\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "test-model").expect("client");
+		let client = ExternalLlm::new(&url, "", "test-model", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut chunks = Vec::new();
 		let (output, prompt_tokens, _) = client
@@ -803,7 +969,7 @@ mod external_stream_tests {
 			"text/html; charset=utf-8",
 			"<html><body>Bad gateway</body></html>".into(),
 		);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -824,7 +990,7 @@ mod external_stream_tests {
 			"application/json; charset=utf-8",
 			r#"{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi there"}}]}"#.into(),
 		);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut chunks = Vec::new();
 		let (output, _, _) = client
@@ -884,7 +1050,7 @@ mod external_stream_tests {
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		for expected in ["one", "two"] {
 			// a fresh ExternalLlm per generation, as the command layer does
-			let client = ExternalLlm::new(&url, "", "m").expect("client");
+			let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 			let (output, _, _) = tokio::time::timeout(
 				std::time::Duration::from_secs(5),
 				client.generate("", &[], None, &cancel, 8, None, |_| {}),
@@ -899,7 +1065,7 @@ mod external_stream_tests {
 	#[tokio::test]
 	async fn external_generate_rejects_json_without_a_completion() {
 		let url = serve_typed("application/json", r#"{"not":"a completion"}"#.into());
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -911,7 +1077,7 @@ mod external_stream_tests {
 			"application/json",
 			r#"{"error":{"message":"model not loaded"}}"#.into(),
 		);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
 			.await
@@ -925,7 +1091,7 @@ mod external_stream_tests {
 		// Ok(("", None)), so the command layer treated an unusable
 		// completion as a success.
 		let url = serve_sse(vec![]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -937,7 +1103,7 @@ mod external_stream_tests {
 	#[tokio::test]
 	async fn external_generate_rejects_a_stream_of_only_comments_and_keepalives() {
 		let url = serve_sse(vec![": keepalive\n\n".into(), ": ping\n\n".into()]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -949,7 +1115,7 @@ mod external_stream_tests {
 	#[tokio::test]
 	async fn external_generate_rejects_an_empty_done_marker_without_content() {
 		let url = serve_sse(vec!["data: [DONE]\n\n".into()]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -964,7 +1130,7 @@ mod external_stream_tests {
 			"data: {not json\n\n".into(),
 			"data: \"also broken\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -980,7 +1146,7 @@ mod external_stream_tests {
 			"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n".into(),
 			"data: {\"error\":{\"message\":\"model overloaded\"}}\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -996,7 +1162,7 @@ mod external_stream_tests {
 		let url = serve_sse(vec![
 			"data: {\"choices\":[{\"delta\":{\"content\":\"tail\"}}]}".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let (output, _, _) = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -1011,7 +1177,7 @@ mod external_stream_tests {
 			"application/json",
 			r#"{"choices":[{"index":0,"message":{"role":"assistant","content":""}}]}"#.into(),
 		);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -1062,7 +1228,7 @@ mod external_stream_tests {
 			}
 		});
 		let url = format!("http://{addr}/v1");
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let (output, _, _) = client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -1137,7 +1303,7 @@ mod external_stream_tests {
 		// indefinitely. The (tiny, test-injected) overall budget must
 		// end it on its own; production uses the documented 15 minutes.
 		let url = serve_trickle_sse(25);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let started = std::time::Instant::now();
 		let limits = GenerationLimits {
@@ -1197,7 +1363,8 @@ mod external_stream_tests {
 				std::thread::sleep(std::time::Duration::from_millis(300));
 			}
 		});
-		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		let client =
+			ExternalLlm::new(&format!("http://{addr}/v1"), "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let mut streamed = 0usize;
 		let err = match client
@@ -1260,7 +1427,8 @@ mod external_stream_tests {
 				std::thread::sleep(std::time::Duration::from_millis(300));
 			}
 		});
-		let client = ExternalLlm::new(&format!("http://{addr}/v1"), "", "m").expect("client");
+		let client =
+			ExternalLlm::new(&format!("http://{addr}/v1"), "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let err = match client
 			.generate("", &[], None, &cancel, 8, None, |_| {})
@@ -1316,7 +1484,7 @@ mod external_stream_tests {
 	/// "generation cancelled" within the ~150 ms cancel tick, not wait
 	/// out the 90 s idle timeout.
 	async fn assert_generation_cancels_promptly(url: String) {
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let flag = cancel.clone();
 		tokio::spawn(async move {
@@ -1386,7 +1554,7 @@ mod external_stream_tests {
 		let event = mk_event(n);
 		assert_eq!(event.len(), cap, "fixture sizes the event exactly");
 		let url = serve_sse(vec![event, "data: [DONE]\n\n".into()]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let limits = GenerationLimits {
 			max_event_bytes: cap,
@@ -1408,7 +1576,7 @@ mod external_stream_tests {
 			"data: {\"choices\":[{\"delta\":{\"content\":\"cd\"}}]}\n\n".into(),
 			"data: [DONE]\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let limits = GenerationLimits {
 			max_output_bytes: 8,
@@ -1431,7 +1599,7 @@ mod external_stream_tests {
 			"data: {\"choices\":[{\"delta\":{\"content\":\"🧠\"}}]}\n\n".into(),
 			"data: [DONE]\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let at_limit = GenerationLimits {
 			max_output_bytes: 6, // "ab" (2) + "🧠" (4)
@@ -1449,7 +1617,7 @@ mod external_stream_tests {
 			"data: {\"choices\":[{\"delta\":{\"content\":\"🧠\"}}]}\n\n".into(),
 			"data: [DONE]\n\n".into(),
 		]);
-		let client = ExternalLlm::new(&url, "", "m").expect("client");
+		let client = ExternalLlm::new(&url, "", "m", 32_768).expect("client");
 		let one_past = GenerationLimits {
 			max_output_bytes: 5, // "ab" fits, "🧠" would make 6
 			..GenerationLimits::production()
