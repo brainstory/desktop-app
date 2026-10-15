@@ -70,7 +70,7 @@ export function MicrophoneCard({
 	};
 
 	return (
-		<Card columns={2} title="Microphone">
+		<Card columns={3} title="Microphone">
 			<div className="flex flex-col gap-3">
 				<label htmlFor="mic-select" className="text-sm font-medium text-stone-900">
 					Recording device

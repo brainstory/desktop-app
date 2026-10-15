@@ -53,7 +53,7 @@ export function AboutCard({ openSnackbar }: AboutCardProps) {
 	};
 
 	return (
-		<Card columns={2} title="About">
+		<Card columns={3} title="Diagnostics">
 			<div className="flex flex-col gap-3">
 				<p className="text-sm text-stone-700">
 					Brainstory {version ?? "…"} — everything stays on this device.

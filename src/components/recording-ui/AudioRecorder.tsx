@@ -81,7 +81,10 @@ const AudioRecorder = ({
 
 	return (
 		<div className="w-full text-center">
-			<div key="state-renderer w-full">
+			{/* the gap classes below live on the composer's own wrapper,
+			 * so this block needs its own bottom margin or the Cancel
+			 * button sits flush on the textarea */}
+			<div key="state-renderer w-full" className="mb-4">
 				<ChatStateNotification conversationState={conversationState} />
 			</div>
 			<div
