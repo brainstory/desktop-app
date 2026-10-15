@@ -20,7 +20,6 @@ import IdeaNotes from "./IdeaNotes";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 import { finishedFeedback, isOwnIdea, parseHeadingIndex, stripNotesSection } from "@helpers/ideas";
-import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
 import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
@@ -46,9 +45,10 @@ function IdeaResultContentInner() {
 	const [headingIdxToComments, setHeadingIdxToComments] = useState<
 		Record<number, FeedbackComment[]>
 	>({});
-	// one matchMedia listener that only fires when the 768px boundary is
-	// crossed (not a re-render on every resize event)
-	const isMdSizeOrLess = useMediaQuery("(max-width: 768px)");
+	// NOTE: there is deliberately no max-width layout branch any more:
+	// the window's minWidth is 940px (tauri.conf.json), so a 768px
+	// variant that dropped sections and reactions could never render.
+	// useMediaQuery stays for reduced-motion checks elsewhere.
 	const [isUnread, setIsUnread] = useState(false);
 	const { openSnackbar } = useSnackbar();
 	// manual summary editing
@@ -304,7 +304,9 @@ function IdeaResultContentInner() {
 		tooltipText?: string;
 		disabled?: boolean;
 	}[] =
-		isMdSizeOrLess || parentIdea
+		// feedback pages use the compact two-pane layout; regular ideas
+		// the sectioned three-pane one
+		parentIdea
 			? [
 					{
 						label: "Summary",

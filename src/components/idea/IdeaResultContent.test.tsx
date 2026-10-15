@@ -327,17 +327,17 @@ describe("IdeaResultContent layout", () => {
 		});
 	});
 
-	it("uses the document + sidebar view above 768px and the plain summary at or below", async () => {
+	it("keeps the document + sidebar view at any width (the window cannot go below 940px)", async () => {
 		const viewport = mockViewport(1024);
 		render(<IdeaResultContent />);
 		expect(await screen.findByText("All Feedback Comments")).toBeInTheDocument();
 
+		// the old max-width variant dropped sections and reactions; the
+		// window's minWidth (tauri.conf.json) makes it unreachable, so
+		// even a narrow media query keeps the full layout
 		act(() => viewport.setWidth(768));
-		expect(screen.queryByText("All Feedback Comments")).not.toBeInTheDocument();
-		expect(screen.getByText("alpha body")).toBeInTheDocument();
-
-		act(() => viewport.setWidth(1200));
 		expect(screen.getByText("All Feedback Comments")).toBeInTheDocument();
+		expect(screen.getByText("alpha body")).toBeInTheDocument();
 	});
 
 	it("does not listen to every window resize", async () => {
