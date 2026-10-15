@@ -75,6 +75,40 @@ pub fn approx_tokens(text: &str) -> usize {
 	text.chars().count() / 3 + 8
 }
 
+/// Fit an interview (chat) prompt into the context: drop the OLDEST
+/// user+assistant pair after the opening message - one pair at a time,
+/// so roles keep alternating and the chat template keeps applying -
+/// with hysteresis (once trimming starts, trim to 85% of the budget so
+/// several following turns fit without re-trimming, and the KV prefix
+/// stays reusable). Pure; `count` measures a rendered prompt, `render`
+/// applies the chat template to a message list.
+pub fn fit_chat_turns(
+	turns: &[ChatMessage],
+	budget_tokens: usize,
+	count: &dyn Fn(&str) -> usize,
+	render: &dyn Fn(&[ChatMessage]) -> String,
+) -> (Vec<ChatMessage>, usize) {
+	let mut fitted: Vec<ChatMessage> = turns.to_vec();
+	let mut dropped = 0usize;
+	let hysteresis_target = budget_tokens.saturating_mul(85) / 100;
+	let mut trimming = false;
+	loop {
+		let n_tokens = count(&render(&fitted));
+		let limit = if trimming {
+			hysteresis_target
+		} else {
+			budget_tokens
+		};
+		if n_tokens <= limit || fitted.len() <= 3 {
+			break;
+		}
+		fitted.drain(1..3);
+		dropped += 2;
+		trimming = true;
+	}
+	(fitted, dropped)
+}
+
 /// Fit a conversation for summary generation: summaries serialize the
 /// whole transcript into ONE user message, so a raw byte-truncation of
 /// that message would cut off the END - the newest turns, where the
@@ -161,6 +195,74 @@ use crate::types::ChatMessage;
 pub(crate) use external::read_body_capped;
 pub use external::{ExternalLlm, MODERATION_ERROR};
 pub use local::LocalLlm;
+
+#[cfg(test)]
+mod fit_chat_tests {
+	use super::fit_chat_turns;
+	use crate::types::ChatMessage;
+
+	fn alternating(pairs: usize) -> Vec<ChatMessage> {
+		let mut all = vec![ChatMessage {
+			role: "assistant".into(),
+			content: "opener question".into(),
+		}];
+		for i in 0..pairs {
+			all.push(ChatMessage {
+				role: "user".into(),
+				content: format!("answer {i} {}", "words ".repeat(50)),
+			});
+			all.push(ChatMessage {
+				role: "assistant".into(),
+				content: format!("question {i} {}", "more ".repeat(50)),
+			});
+		}
+		all
+	}
+
+	fn fake_count(s: &str) -> usize {
+		s.chars().count() / 4
+	}
+
+	fn render(msgs: &[ChatMessage]) -> String {
+		msgs.iter()
+			.map(|m| format!("[{}] {}\n", m.role, m.content))
+			.collect()
+	}
+
+	#[test]
+	fn a_short_chat_passes_through_unchanged() {
+		let input = alternating(2);
+		let (fitted, dropped) = fit_chat_turns(&input, usize::MAX, &fake_count, &render);
+		assert_eq!(dropped, 0);
+		assert_eq!(fitted, input);
+	}
+
+	#[test]
+	fn trimming_keeps_alternation_the_opener_and_hysteresis() {
+		let input = alternating(200);
+		let budget = 2_000;
+		let (fitted, dropped) = fit_chat_turns(&input, budget, &fake_count, &render);
+		assert!(dropped > 0);
+		assert!(dropped % 2 == 0, "pairs are dropped, never single messages");
+		// the opener survives
+		assert_eq!(fitted[0].content, "opener question");
+		// roles strictly alternate
+		for pair in fitted.windows(2) {
+			assert_ne!(pair[0].role, pair[1].role, "roles must keep alternating");
+		}
+		// hysteresis: the result lands at or under 85% of the budget
+		let n = fake_count(&render(&fitted));
+		assert!(n <= budget * 85 / 100, "{n} vs {}", budget * 85 / 100);
+	}
+
+	#[test]
+	fn the_last_three_messages_are_never_dropped() {
+		let input = alternating(300);
+		let (fitted, dropped) = fit_chat_turns(&input, 1, &fake_count, &render);
+		assert!(dropped > 0);
+		assert_eq!(fitted.len(), 3, "opener plus the final pair");
+	}
+}
 
 #[cfg(test)]
 mod fit_summary_tests {

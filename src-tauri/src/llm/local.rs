@@ -285,17 +285,30 @@ impl LocalLlm {
 		max_new_tokens: u32,
 	) -> Result<String, String> {
 		let budget = prompt_budget(self.built_ctx, max_new_tokens);
-		let mut msgs: Vec<ChatMessage> = messages.to_vec();
+		// An oversized system prompt (a huge feedback idea) can never be
+		// trimmed by dropping turns: say so instead of failing inside the
+		// decoder with a cryptic error.
+		if self.count_tokens(system)? > budget {
+			return Err(
+				"This idea is too long for the current context window. Raise it under Settings > AI Models."
+					.into(),
+			);
+		}
+		// Drop the oldest user+assistant pair after the opener (never a
+		// single message: roles must keep alternating so the chat template
+		// keeps applying, and pair-sized steps keep the KV prefix
+		// reusable), with hysteresis so following turns fit untrimmed.
+		let count = |s: &str| self.count_tokens(s).unwrap_or_else(|_| approx_tokens(s));
+		let render = |msgs: &[ChatMessage]| -> String {
+			self.apply_template(system, msgs).unwrap_or_default()
+		};
+		let (fitted, dropped) = crate::llm::fit_chat_turns(messages, budget, &count, &render);
+		if dropped > 0 {
+			log::info!("dropped {dropped} older turns to fit the context");
+		}
+		let mut msgs: Vec<ChatMessage> = fitted;
 		let mut prompt = self.apply_template(system, &msgs)?;
 		let mut n_tokens = self.count_tokens(&prompt)?;
-
-		// Drop the second-oldest message repeatedly (keeps the opening
-		// assistant framing and the most recent context).
-		while n_tokens > budget && msgs.len() > 2 {
-			msgs.remove(1);
-			prompt = self.apply_template(system, &msgs)?;
-			n_tokens = self.count_tokens(&prompt)?;
-		}
 
 		// Even with only the opening + final message left, one oversized
 		// paste can exceed the budget. Hard-truncate the final message
