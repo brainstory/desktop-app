@@ -32,6 +32,8 @@ export interface EngineStatus {
 	state: "ready" | "loading" | "missing" | "error" | "external";
 	model_id?: string;
 	error?: string;
+	/** load progress 0..1 while state === "loading" (absent = unknown) */
+	progress?: number;
 }
 
 export interface AiSettingsResponse {

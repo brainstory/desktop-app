@@ -350,7 +350,11 @@ export function ChatSection({
 						}
 					/>
 				)}
-				<ModelStatusNotice availability={modelAvailability} error={aiStatus.llm.error} />
+				<ModelStatusNotice
+					availability={modelAvailability}
+					error={aiStatus.llm.error}
+					progress={aiStatus.llm.progress}
+				/>
 				<ChatTopBar
 					parentIdea={parentIdea}
 					showTranscript={showTranscript}

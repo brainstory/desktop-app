@@ -318,6 +318,19 @@ fn unregister_download(state: &AppState, model_id: &str) {
 	}
 }
 
+/// Cancel the in-flight model load (the load's progress callback
+/// aborts). Safe when no load is running: the flag is consumed by the
+/// next load's completion check.
+#[tauri::command]
+pub fn cancel_model_load(app: tauri::AppHandle) -> Result<(), String> {
+	use tauri::Manager;
+	let state = app.state::<AppState>();
+	state
+		.llm_load_cancel
+		.store(true, std::sync::atomic::Ordering::Relaxed);
+	Ok(())
+}
+
 #[tauri::command]
 pub async fn download_model(
 	app: tauri::AppHandle,

@@ -43,13 +43,17 @@ pub enum EngineState {
 	External,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EngineStatus {
 	pub state: EngineState,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub model_id: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub error: Option<String>,
+	/// load progress in 0..=1 while `state == Loading` (absent when the
+	/// backend reports none)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub progress: Option<f32>,
 }
 
 impl EngineStatus {
@@ -58,6 +62,7 @@ impl EngineStatus {
 			state,
 			model_id: model_id.map(|s| s.into()),
 			error: error.map(|s| s.into()),
+			progress: None,
 		}
 	}
 
@@ -117,6 +122,10 @@ pub struct AppState {
 	pub download_pauses: std::sync::Mutex<std::collections::HashMap<String, PauseEntry>>,
 	/// guards so only one load per engine kind runs at a time
 	pub llm_loading: AtomicBool,
+	/// set by the cancel_model_load command; the model-load progress
+	/// callback checks it (it holds a clone) and aborts the load when
+	/// set
+	pub llm_load_cancel: std::sync::Arc<AtomicBool>,
 	pub stt_loading: AtomicBool,
 	/// LLM generations started but not finished: a model switch waits
 	/// for this to drain instead of vacating memory a live generation
@@ -261,6 +270,7 @@ impl AppState {
 			download_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
 			download_pauses: std::sync::Mutex::new(std::collections::HashMap::new()),
 			llm_loading: AtomicBool::new(false),
+			llm_load_cancel: std::sync::Arc::new(AtomicBool::new(false)),
 			active_generations: std::sync::atomic::AtomicUsize::new(0),
 			stt_loading: AtomicBool::new(false),
 			quit_on_close: AtomicBool::new(false),

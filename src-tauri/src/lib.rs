@@ -138,6 +138,7 @@ pub fn run() {
 			commands::models_cmd::get_runtime_status,
 			commands::models_cmd::get_apple_stt_status,
 			commands::models_cmd::get_free_disk_space,
+			commands::models_cmd::cancel_model_load,
 			commands::models_cmd::download_model,
 			commands::models_cmd::cancel_download,
 			commands::models_cmd::pause_download,
@@ -671,6 +672,11 @@ fn register_quick_capture_shortcut(app: &AppHandle) {
 pub(crate) trait StatusEvents {
 	fn llm_status(&self, status: &models::EngineStatus);
 	fn stt_status(&self, status: &models::EngineStatus);
+	/// An owned emitter for live model-load progress (0..=1); None when
+	/// the sink has no event channel (tests).
+	fn llm_progress_emitter(&self) -> Option<std::sync::Arc<dyn Fn(f32) + Send + Sync>> {
+		None
+	}
 }
 
 /// Production event sink: the app's Tauri channels.
@@ -681,6 +687,21 @@ impl StatusEvents for AppStatusEvents<'_> {
 		if let Err(e) = self.0.emit("llm-status", status) {
 			log::warn!("failed to emit llm-status: {e}");
 		}
+	}
+	fn llm_progress_emitter(&self) -> Option<std::sync::Arc<dyn Fn(f32) + Send + Sync>> {
+		let app = self.0.clone();
+		Some(std::sync::Arc::new(move |progress: f32| {
+			// the loading status re-emitted with its progress field
+			let status = models::EngineStatus {
+				state: models::EngineState::Loading,
+				model_id: None,
+				error: None,
+				progress: Some(progress),
+			};
+			if let Err(e) = app.emit("llm-status", &status) {
+				log::warn!("failed to emit llm-status progress: {e}");
+			}
+		}))
 	}
 	fn stt_status(&self, status: &models::EngineStatus) {
 		if let Err(e) = self.0.emit("stt-status", status) {

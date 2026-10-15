@@ -130,9 +130,25 @@ impl LocalLlm {
 		model_id: &str,
 		requested_ctx: u32,
 	) -> Result<Self, String> {
+		Self::load_with_progress(backend, path, model_id, requested_ctx, None)
+	}
+
+	/// [`Self::load`] with a load-progress observer: called with
+	/// progress in 0..=1; returning `false` from it aborts the load
+	/// (llama.cpp fails the load with an error).
+	pub fn load_with_progress(
+		backend: Arc<LlamaBackend>,
+		path: &Path,
+		model_id: &str,
+		requested_ctx: u32,
+		on_progress: Option<Box<dyn FnMut(f32) -> bool + Send>>,
+	) -> Result<Self, String> {
 		// Offload every layer to the GPU when a backend (Metal/Vulkan) exists;
 		// llama.cpp falls back to CPU compute automatically otherwise.
-		let params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
+		let mut params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
+		if let Some(on_progress) = on_progress {
+			params = params.with_progress_callback(on_progress);
+		}
 		let model = LlamaModel::load_from_file(&backend, path, &params)
 			.map_err(|e| format!("failed to load model {path:?}: {e}"))?;
 		let architecture = model

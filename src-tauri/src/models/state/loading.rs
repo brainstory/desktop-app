@@ -120,7 +120,35 @@ impl AppState {
 				// save that landed while an older plan was loading still
 				// builds the newest window (and the fresh() check retires
 				// the stale outcome before it installs).
-				LocalLlm::load(backend, path, spec.id, self.ai_settings().llm_ctx_tokens)
+				//
+				// The progress callback publishes loading progress and
+				// aborts the load when cancel_model_load set the flag
+				// (llama.cpp then fails the load, which rolls back).
+				// owned, Send + 'static progress emitter; the cancel
+				// flag is shared through an Arc clone so the callback
+				// (which must be 'static) can poll it live
+				let emit_progress = events.llm_progress_emitter();
+				let cancel = std::sync::Arc::clone(&self.llm_load_cancel);
+				let on_progress = move |progress: f32| -> bool {
+					if cancel.load(Ordering::Relaxed) {
+						return false;
+					}
+					if let Some(emit) = emit_progress.as_ref() {
+						emit(progress);
+					}
+					true
+				};
+				let result = LocalLlm::load_with_progress(
+					backend,
+					path,
+					spec.id,
+					self.ai_settings().llm_ctx_tokens,
+					Some(Box::new(on_progress)),
+				);
+				if self.llm_load_cancel.swap(false, Ordering::Relaxed) {
+					return Err("model load cancelled".into());
+				}
+				result
 			},
 			|prev| self.reload_llm(prev),
 			LLM_ROLLBACK_ON_SAME,

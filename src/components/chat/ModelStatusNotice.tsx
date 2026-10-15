@@ -3,25 +3,45 @@ import type { LlmAvailability } from "@components/global/aiStatusStore";
 import { $downloads } from "@components/global/downloadStore";
 
 import { aiSettingsHref } from "@helpers/helpers";
+import { invokeCommand } from "@src/tauri/invoke";
 import { describeError } from "@helpers/describeError";
 
 /** One-line chat notice for a language model that can't answer (yet). */
 export function ModelStatusNotice({
 	availability,
-	error
+	error,
+	progress
 }: {
 	availability: LlmAvailability;
 	/** the backend's load error, for the "error" state */
 	error?: string;
+	/** the load progress 0..1, while loading */
+	progress?: number;
 }) {
 	// live download progress: "no model" is not the whole story while a
 	// model is on its way in
 	const downloads = Object.values(useStore($downloads).active);
 	const boxStyle = "mx-4 mt-2 text-sm rounded-lg px-4 py-2";
 	if (availability === "loading") {
+		const pct =
+			typeof progress === "number" && progress >= 0
+				? ` ${Math.min(100, Math.floor(progress * 100))}%`
+				: "";
 		return (
 			<p role="status" className={`${boxStyle} text-stone-500 bg-stone-100`}>
-				Loading the AI model&hellip; you can type already, sending unlocks when it is ready.
+				Loading the AI model{pct}&hellip; you can type already, sending unlocks when it is
+				ready.{" "}
+				<button
+					type="button"
+					className="underline"
+					onClick={() => {
+						invokeCommand("cancelModelLoad").catch((err) =>
+							console.error("failed to cancel the model load", err)
+						);
+					}}
+				>
+					Cancel
+				</button>
 			</p>
 		);
 	}
