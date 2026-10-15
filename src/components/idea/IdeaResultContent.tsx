@@ -79,21 +79,26 @@ function IdeaResultContentInner() {
 				isCurrent = false;
 			};
 		}
-		getIdeaApi(id)
-			.then((res) => {
+		// the idea and its children load in parallel: the children only
+		// need the idea's sections for comment mapping, which runs after
+		// both arrive
+		Promise.all([
+			getIdeaApi(id),
+			getIdeaChildrenApi(id).catch((err) => {
+				// feedback children are auxiliary: the page still renders
+				// without them
+				console.error("failed to load feedback for idea", id, err);
+				return [];
+			})
+		])
+			.then(([res, children]) => {
 				if (isCurrent) {
-					fetchIdeaChildrenData(id, res.resultJson ?? [])
-						.then(([updateIdeaChildren, updateOidHeadingToFeedbackComments]) => {
-							if (!isCurrent) return;
-							setIdeaChildren(updateIdeaChildren);
-							setHeadingIdxToComments(updateOidHeadingToFeedbackComments);
-						})
-						.catch((err) => {
-							// feedback children are auxiliary: the page still
-							// renders without them
-							console.error("failed to load feedback for idea", id, err);
-							if (isCurrent) setIdeaChildren([]);
-						});
+					const [updateIdeaChildren, updateOidHeadingToFeedbackComments] = mapComments(
+						children,
+						res.resultJson ?? []
+					);
+					setIdeaChildren(updateIdeaChildren);
+					setHeadingIdxToComments(updateOidHeadingToFeedbackComments);
 
 					setIsUnread(res.isUnread ?? false);
 					const ideaContent: IdeaDetail = {
@@ -426,12 +431,12 @@ function IdeaResultContentInner() {
 	}
 }
 
-async function fetchIdeaChildrenData(
-	ideaId: string,
+function mapComments(
+	res: IdeaFeedbackItem[],
 	sections: { heading?: string | null }[]
-): Promise<[IdeaFeedbackItem[], Record<number, FeedbackComment[]>]> {
-	const result = await getIdeaChildrenApi(ideaId).then(
-		(res): [IdeaFeedbackItem[], Record<number, FeedbackComment[]>] => {
+): [IdeaFeedbackItem[], Record<number, FeedbackComment[]>] {
+	{
+		const result = ((): [IdeaFeedbackItem[], Record<number, FeedbackComment[]>] => {
 			const oidHeadingToFeedbackComments: Record<number, FeedbackComment[]> = {};
 			const ideaChildren = res.map((idea) => {
 				(idea.feedbackComments ?? []).forEach((comment: FeedbackComment) => {
@@ -464,10 +469,9 @@ async function fetchIdeaChildrenData(
 				return { ...idea, isFeedback: true };
 			});
 			return [ideaChildren, oidHeadingToFeedbackComments];
-		}
-	);
-
-	return result;
+		})();
+		return result;
+	}
 }
 
 function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
