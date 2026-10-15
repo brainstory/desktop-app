@@ -62,55 +62,58 @@ export default function IdeaCard({
 				</span>
 			)}
 			<FeedbackStack feedback={feedbackList} />
-			<div className="relative bg-white border border-stone-200 rounded-lg">
-				<div className={`${cardHeight} p-6 rounded-lg`}>
-					<div>
-						{isFeedback && (
-							<span className="inline-block py-1 mb-3 text-pink-600 font-semibold tracking-wide uppercase">
-								Feedback
-							</span>
-						)}
+			{/* one card box: the article above carries the border, shadow and
+			 * min-height, and stretches with the grid row - nested bordered
+			 * wrappers used to stop short of the bottom on shorter cards.
+			 * Opaque white + z-10 keeps this body painted above the absolutely
+			 * positioned stack sheets behind it, which peek out at the edges */}
+			<div className={`relative z-10 rounded-lg bg-white ${cardHeight} p-6`}>
+				<div>
+					{isFeedback && (
+						<span className="inline-block py-1 mb-3 text-pink-600 font-semibold tracking-wide uppercase">
+							Feedback
+						</span>
+					)}
 
-						<h3 className="h-[64px] text-xl font-semibold tracking-tight text-stone-900 line-clamp-2 mb-3">
-							<PinkIcon shared={shared} />
-							<a
-								href={`/idea?id=${id}`}
-								className="after:absolute after:inset-0 after:rounded-lg"
-							>
-								{title}
-							</a>
-						</h3>
+					<h3 className="h-[64px] text-xl font-semibold tracking-tight text-stone-900 line-clamp-2 mb-3">
+						<PinkIcon shared={shared} />
+						<a
+							href={`/idea?id=${id}`}
+							className="after:absolute after:inset-0 after:rounded-lg"
+						>
+							{title}
+						</a>
+					</h3>
 
-						<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
+					<p className="mb-3 text-xs text-stone-500">{humanReadableDate}</p>
 
-						{preview && (
-							<p className="mb-3 text-sm text-stone-600 line-clamp-2">{preview}</p>
-						)}
+					{preview && (
+						<p className="mb-3 text-sm text-stone-600 line-clamp-2">{preview}</p>
+					)}
 
-						<div className="group mb-4 flex items-center">
-							<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">
-								{(creatorName || "You").trim().charAt(0).toUpperCase()}
-							</div>
-							<div className="w-full truncate">
-								<p className="text-xs font-medium text-stone-800">Created by</p>
-								<p className="text-xs font-medium text-stone-800 truncate">
-									{creatorName || "You"}
-								</p>
-							</div>
+					<div className="group mb-4 flex items-center">
+						<div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-white mr-2 bg-pink-100 text-pink-600 text-sm font-semibold">
+							{(creatorName || "You").trim().charAt(0).toUpperCase()}
+						</div>
+						<div className="w-full truncate">
+							<p className="text-xs font-medium text-stone-800">Created by</p>
+							<p className="text-xs font-medium text-stone-800 truncate">
+								{creatorName || "You"}
+							</p>
 						</div>
 					</div>
-					{!isFeedback && feedbackList.length > 0 && (
-						<div className="flex justify-end mt-4">
-							<a
-								href={`/idea?id=${id}&tab=feedback`}
-								className="relative z-10 hover:underline font-bold w-[130px] text-center text-accent-700 uppercase p-1 text-xs rounded-full"
-							>
-								{feedbackList.length}{" "}
-								{feedbackList.length > 1 ? "feedback items" : "feedback item"}
-							</a>
-						</div>
-					)}
 				</div>
+				{!isFeedback && feedbackList.length > 0 && (
+					<div className="flex justify-end mt-4">
+						<a
+							href={`/idea?id=${id}&tab=feedback`}
+							className="relative z-10 hover:underline font-bold w-[130px] text-center text-accent-700 uppercase p-1 text-xs rounded-full"
+						>
+							{feedbackList.length}{" "}
+							{feedbackList.length > 1 ? "feedback items" : "feedback item"}
+						</a>
+					</div>
+				)}
 			</div>
 		</article>
 	);
