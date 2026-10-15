@@ -2,7 +2,7 @@ import { useStore } from "@nanostores/react";
 import type { LlmAvailability } from "@components/global/aiStatusStore";
 import { $downloads } from "@components/global/downloadStore";
 
-import { aiSettingsHref } from "@helpers/helpers";
+import { aiSettingsHref, safeHref } from "@helpers/helpers";
 import { invokeCommand } from "@src/tauri/invoke";
 import { describeError } from "@helpers/describeError";
 
@@ -22,6 +22,8 @@ export function ModelStatusNotice({
 	// model is on its way in
 	const downloads = Object.values(useStore($downloads).active);
 	const boxStyle = "mx-4 mt-2 text-sm rounded-lg px-4 py-2";
+	// built from window.location: same guard as Button's href
+	const settingsHref = safeHref(aiSettingsHref()) ?? "/profile?tab=aiModels";
 	if (availability === "loading") {
 		const pct =
 			typeof progress === "number" && progress >= 0
@@ -55,7 +57,7 @@ export function ModelStatusNotice({
 					Downloading {what}
 					{pct === null ? "…" : ` · ${pct}%`} — chatting unlocks as soon as it&rsquo;s
 					ready.{" "}
-					<a className="underline font-semibold" href={aiSettingsHref()}>
+					<a className="underline font-semibold" href={settingsHref}>
 						AI Models
 					</a>
 				</p>
@@ -64,7 +66,7 @@ export function ModelStatusNotice({
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
 				No AI model is downloaded yet.{" "}
-				<a className="underline font-semibold" href={aiSettingsHref()}>
+				<a className="underline font-semibold" href={settingsHref}>
 					Download a model in Settings
 				</a>{" "}
 				to start chatting.
@@ -80,7 +82,7 @@ export function ModelStatusNotice({
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
 				The AI model failed to load{friendly ? `: ${friendly}` : error ? `: ${error}` : "."}{" "}
-				<a className="underline font-semibold" href={aiSettingsHref()}>
+				<a className="underline font-semibold" href={settingsHref}>
 					Check Settings &gt; AI Models
 				</a>
 			</p>

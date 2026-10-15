@@ -4,7 +4,8 @@ import {
 	formatISO8601ToHumanReadable,
 	isModerationError,
 	normalizeApiError,
-	parseBackendUtc
+	parseBackendUtc,
+	safeHref
 } from "./helpers";
 import { isTransientTranscriptionError } from "@components/recording-ui/transcription";
 
@@ -235,5 +236,27 @@ describe("callApiWithRetry", () => {
 		await vi.advanceTimersByTimeAsync(500);
 		await expect(promise).resolves.toBe("ok");
 		expect(calls).toBe(2);
+	});
+});
+
+describe("safeHref", () => {
+	it("keeps same-app paths and absolute http(s) URLs", () => {
+		expect(safeHref("/dashboard")).toBe("/dashboard");
+		expect(safeHref("/idea?id=x&tab=feedback")).toBe("/idea?id=x&tab=feedback");
+		expect(safeHref("/profile?tab=aiModels&return=%2Fchat%3Fid%3Da")).toBe(
+			"/profile?tab=aiModels&return=%2Fchat%3Fid%3Da"
+		);
+		expect(safeHref("https://brainstory.app")).toBe("https://brainstory.app");
+		expect(safeHref("http://localhost:1420")).toBe("http://localhost:1420");
+	});
+
+	it("refuses everything that could steer navigation elsewhere", () => {
+		expect(safeHref("//evil.com")).toBeNull(); // protocol-relative
+		expect(safeHref("/\\evil.com")).toBeNull(); // scheme-relative backslash
+		expect(safeHref("javascript:alert(1)")).toBeNull();
+		expect(safeHref("data:text/html,x")).toBeNull();
+		expect(safeHref("dashboard")).toBeNull(); // bare relative
+		expect(safeHref("")).toBeNull();
+		expect(safeHref("vbscript:x")).toBeNull();
 	});
 });

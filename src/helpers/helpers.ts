@@ -142,3 +142,14 @@ export function safeReturnTarget(raw: string | null): string | null {
 	if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return null;
 	return raw;
 }
+
+/** A navigation href is trusted only when it is a same-app path or an
+ * absolute http(s) URL. Everything else - "javascript:", "data:",
+ * protocol-relative "//host" (or "/\host", which browsers normalize
+ * the same way), bare "dashboard" - is refused, so a DOM- or
+ * network-derived value can never steer navigation (this is the
+ * sink-side guard the code scanner asks of unvalidated redirects). */
+export function safeHref(href: string): string | null {
+	if (/^\/(?![/\\])/.test(href) || /^https?:\/\//i.test(href)) return href;
+	return null;
+}

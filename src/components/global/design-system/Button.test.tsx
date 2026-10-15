@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen } from "@testing-library/react";
 
@@ -50,6 +50,26 @@ describe("conditional classes (cn)", () => {
 		const ref = createRef<HTMLButtonElement>();
 		render(<Button variant="transparent" ref={ref} sr="Open menu" icon="menu" />);
 		expect(ref.current).toBe(screen.getByRole("button", { name: "Open menu" }));
+	});
+
+	it("renders a real anchor for a same-app path", () => {
+		render(<Button href="/profile?tab=aiModels">Settings</Button>);
+		const link = screen.getByRole("link", { name: "Settings" });
+		expect(link).toHaveAttribute("href", "/profile?tab=aiModels");
+	});
+
+	it("degrades to a button and logs when the href is not navigable", () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		for (const href of ["javascript:alert(1)", "//evil.com", "/\\evil.com"]) {
+			const { unmount } = render(<Button href={href}>Go</Button>);
+			expect(screen.getByRole("button", { name: "Go" })).toBeInTheDocument();
+			expect(screen.queryByRole("link")).not.toBeInTheDocument();
+			unmount();
+		}
+		expect(
+			errorSpy.mock.calls.filter(([m]) => String(m).includes("refusing unsafe href"))
+		).length(3);
+		errorSpy.mockRestore();
 	});
 
 	it("LoadingAnimation emits no stray false/undefined class tokens", () => {

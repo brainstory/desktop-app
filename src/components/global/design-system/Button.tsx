@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@helpers/cn";
+import { safeHref } from "@helpers/helpers";
 import Icon from "./Icon";
 
 /** Colour schemes (formerly PinkButton / BlackButton / BorderedButton /
@@ -77,12 +78,19 @@ export default function Button({
 
 	// Real anchors (not role="link" buttons): cmd-click, middle-click and
 	// screen readers keep working. Never nest a button inside an anchor.
-	if (href) {
+	// The href reaches a real navigation surface, so it goes through the
+	// same-app/http(s)-only guard: anything else degrades to the button
+	// below instead of navigating (and says so in the console).
+	const url = href ? safeHref(href) : null;
+	if (href && url === null) {
+		console.error(`Button: refusing unsafe href ${JSON.stringify(href)}`);
+	}
+	if (url) {
 		// the shared prop type is button-shaped; anchor-specific bits come
 		// through the same spread (id, onClick, aria-*, ref, ...)
 		const anchorProps = props as React.ComponentProps<"a">;
 		return (
-			<a href={href} className={className} {...anchorProps}>
+			<a href={url} className={className} {...anchorProps}>
 				{content}
 			</a>
 		);
