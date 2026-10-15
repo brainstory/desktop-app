@@ -12,12 +12,14 @@ import TextsFadeIn from "./reusable/TextsFadeIn";
 const RivePencil = lazy(() => import("@components/global/RivePencil"));
 
 export default function GetStartedIntro() {
-	const [isTextLoading, setIsTextLoading] = useState(true);
+	const hasDone = hasDoneGettingStarted();
 	const { sludgeman } = useAppContext();
 	// only mount the pencil (and so load the Rive WASM) where it is shown
 	const showPencil = useMediaQuery("(min-width: 1024px)");
-
-	const hasDone = hasDoneGettingStarted();
+	// the first visit plays the reveal; returning users (and anyone
+	// asking for less motion) gets the cards at once
+	const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+	const [isTextLoading, setIsTextLoading] = useState(hasDone || reduceMotion ? false : true);
 
 	let introTextComponents;
 	if (hasDone) {
@@ -47,11 +49,12 @@ export default function GetStartedIntro() {
 	}
 
 	useEffect(() => {
+		if (hasDone || reduceMotion) return;
 		const timer = setTimeout(() => {
 			setIsTextLoading(false);
 		}, 1800);
 		return () => clearTimeout(timer);
-	}, []);
+	}, [hasDone, reduceMotion]);
 
 	return (
 		<div className="p-6 md:p-10">
