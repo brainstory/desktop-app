@@ -3,6 +3,7 @@ import type { LlmAvailability } from "@components/global/aiStatusStore";
 import { $downloads } from "@components/global/downloadStore";
 
 import { aiSettingsHref } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 
 /** One-line chat notice for a language model that can't answer (yet). */
 export function ModelStatusNotice({
@@ -51,9 +52,14 @@ export function ModelStatusNotice({
 		);
 	}
 	if (availability === "error") {
+		const described = error ? describeError(error) : null;
+		const friendly =
+			described && described.kind !== "unknown"
+				? `${described.message} ${described.action ?? ""}`.trim()
+				: null;
 		return (
 			<p role="status" className={`${boxStyle} text-amber-900 bg-amber-50`}>
-				The AI model failed to load{error ? `: ${error}` : "."}{" "}
+				The AI model failed to load{friendly ? `: ${friendly}` : error ? `: ${error}` : "."}{" "}
 				<a className="underline font-semibold" href={aiSettingsHref()}>
 					Check Settings &gt; AI Models
 				</a>

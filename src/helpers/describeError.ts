@@ -12,6 +12,10 @@ export type ErrorKind =
 	| "external-endpoint"
 	| "speech-permission"
 	| "no-audio"
+	| "out-of-memory"
+	| "model-file-bad"
+	| "context-too-large"
+	| "db-locked"
 	| "unknown";
 
 export interface DescribedError {
@@ -83,5 +87,48 @@ export function describeError(error: unknown): DescribedError {
 			action: "Check that the right microphone is selected and try again."
 		};
 	}
+	if (
+		raw.includes("out of memory") ||
+		raw.includes("failed to allocate") ||
+		raw.includes("ggml_backend_alloc")
+	) {
+		return {
+			kind: "out-of-memory",
+			message: "The computer ran out of memory while running the AI model.",
+			action: "Try a smaller model or a smaller context window under Settings > AI Models."
+		};
+	}
+	if (raw.includes("hash mismatch") || raw.includes("does not match the pinned model")) {
+		return {
+			kind: "model-file-bad",
+			message: "A downloaded model file is damaged or incomplete.",
+			action: "Delete it under Settings > AI Models and download it again."
+		};
+	}
+	if (
+		raw.includes("too long for the current context window") ||
+		raw.includes("context length") ||
+		raw.includes("exceeds the context")
+	) {
+		return {
+			kind: "context-too-large",
+			message: "This conversation or idea is longer than the model's context window.",
+			action: "Raise the context window under Settings > AI Models, or use a shorter session."
+		};
+	}
+	if (raw.includes("database is locked") || raw.includes("database is busy")) {
+		return {
+			kind: "db-locked",
+			message: "The local database was busy for a moment.",
+			action: "Nothing was lost - try again."
+		};
+	}
 	return { kind: "unknown", message: raw };
+}
+
+/** The raw error behind a description, for a collapsed
+ * `<details>Details</details>` block: support can still see exactly
+ * what the backend said. */
+export function errorDetails(error: unknown): string {
+	return normalizeApiError(error);
 }

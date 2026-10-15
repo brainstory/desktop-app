@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeError } from "./describeError";
+import { describeError, errorDetails } from "./describeError";
 
 // The raw strings below are the backend's exact rejections (src-tauri).
 describe("describeError", () => {
@@ -67,6 +67,37 @@ describe("describeError", () => {
 		expect(describeError(new Error("disk full"))).toEqual({
 			kind: "unknown",
 			message: "disk full"
+		});
+	});
+
+	describe("describeError extended catalogue", () => {
+		it("explains out-of-memory with the smaller-model action", () => {
+			const d = describeError("ggml_backend_alloc: out of memory");
+			expect(d.kind).toBe("out-of-memory");
+			expect(d.action).toContain("smaller model");
+		});
+
+		it("explains a hash mismatch as a damaged download", () => {
+			const d = describeError("hash mismatch: expected abc, got def");
+			expect(d.kind).toBe("model-file-bad");
+			expect(d.action).toContain("download it again");
+		});
+
+		it("explains a context overflow", () => {
+			const d = describeError(
+				"This idea is too long for the current context window. Raise it under Settings > AI Models."
+			);
+			expect(d.kind).toBe("context-too-large");
+		});
+
+		it("explains a locked database as transient", () => {
+			const d = describeError("failed to save: database is locked");
+			expect(d.kind).toBe("db-locked");
+			expect(d.action).toContain("try again");
+		});
+
+		it("errorDetails keeps the raw backend text", () => {
+			expect(errorDetails("database is locked")).toBe("database is locked");
 		});
 	});
 });

@@ -673,7 +673,8 @@ describe("AiModelsCard", () => {
 				stt: { state: "loading", model_id: "whisper-tiny-en" }
 			});
 		});
-		expect(await screen.findByText("llm exploded")).toBeInTheDocument();
+		// the friendly line plus the collapsed raw details both carry it
+		expect(await screen.findAllByText("llm exploded")).not.toHaveLength(0);
 		expect(screen.getByText("Loading...")).toBeInTheDocument();
 		// a status change is not a reason to reload models/settings/disk space
 		expect(vi.mocked(invoke).mock.calls.length).toBe(invokesBefore);

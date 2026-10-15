@@ -24,6 +24,7 @@ import {
 } from "@helpers/chat";
 import { generateResponseStreamApi, type GenerateOptions } from "@helpers/api/ai";
 import { callApiWithRetry, normalizeApiError, isModerationError } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 import { markGettingStartedDone } from "@helpers/storage";
 import { useUnmountSignal } from "@src/hooks/useUnmountSignal";
 
@@ -331,7 +332,12 @@ export function useChatSession(
 					dispatch({ type: "coachFlagged", transcript: removedMessage });
 					return "flagged";
 				}
-				onError(normalizeApiError(err));
+				const described = describeError(err);
+				onError(
+					described.kind === "unknown"
+						? described.message
+						: `${described.message} ${described.action ?? ""}`.trim()
+				);
 				dispatch({ type: "coachFailed" });
 				return "failed";
 			}
@@ -501,7 +507,12 @@ export function useChatSession(
 					// output are a usable draft, and the stopped-early
 					// panel offers the retry/keep decision (a retry or a
 					// save clears it)
-					onError(normalizeApiError(err));
+					const described = describeError(err);
+					onError(
+						described.kind === "unknown"
+							? described.message
+							: `${described.message} ${described.action ?? ""}`.trim()
+					);
 				}
 				dispatch({ type: "resultFailed" });
 			},

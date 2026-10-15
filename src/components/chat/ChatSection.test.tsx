@@ -439,7 +439,7 @@ describe("ChatSection", () => {
 		await sendTyped("a calm day");
 		expect(await screen.findByText("and then?")).toBeInTheDocument();
 		const banner = await screen.findByRole("alert");
-		expect(banner).toHaveTextContent("Autosave failed");
+		expect(banner).toHaveTextContent("The local database was busy");
 		expect(banner).toHaveTextContent("Try again");
 
 		await userEvent.click(screen.getByRole("button", { name: "Try again" }));

@@ -9,6 +9,7 @@ import type { ChatMessage } from "@src/types";
 import { CHAT_SAVE_STATE, CHAT_TYPE, type ChatSaveState, type ChatType } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Load failures that replace the whole chat UI with an error section. */
@@ -135,7 +136,9 @@ export function useIdeaPersistence(
 				pendingSaveRef.current ??= job;
 				if (pendingSaveRef.current !== job) return;
 				setSaveState(CHAT_SAVE_STATE.FAILED);
-				onErrorRef.current(`Autosave failed: ${normalizeApiError(e)}`);
+				onErrorRef.current(
+					describeError(e).message || `Autosave failed: ${normalizeApiError(e)}`
+				);
 			} finally {
 				savesInFlightRef.current -= 1;
 			}
@@ -231,7 +234,9 @@ export function useIdeaPersistence(
 					creatingIdeaRef.current = false;
 					// the ref keeps the callback out of the deps: this effect
 					// must not re-run (and re-create) on every parent render
-					onErrorRef.current(`Could not save this session: ${normalizeApiError(err)}`);
+					onErrorRef.current(
+						`Could not save this session: ${describeError(err).message || normalizeApiError(err)}`
+					);
 					// readyToCreateIdea stays true; the next conversation
 					// update re-runs this effect and retries creation
 				});

@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import Button from "@ds/Button";
 import ErrorSection from "@components/error/ErrorSection";
+import { describeError } from "@helpers/describeError";
 
 interface ErrorBoundaryProps {
 	children: ReactNode;
@@ -37,12 +38,15 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 	override render(): ReactNode {
 		const { error } = this.state;
 		if (error !== null) {
+			const described = describeError(error.message);
 			return (
 				<ErrorSection
 					title={this.props.title ?? "Something went wrong"}
 					paragraphs={[
 						"The page hit an unexpected error. Your ideas are safe on this device — reloading usually clears it.",
-						`Details: ${error.message}`
+						described.kind !== "unknown" && described.action
+							? `${described.message} ${described.action}`
+							: `Details: ${error.message}`
 					]}
 					showRestartHint
 					action={

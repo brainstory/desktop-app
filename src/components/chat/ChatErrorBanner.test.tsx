@@ -34,7 +34,7 @@ describe("ChatErrorBanner", () => {
 			/>
 		);
 		const alert = screen.getByRole("alert");
-		expect(alert).toHaveTextContent("Not saved yet: Autosave failed: database is locked");
+		expect(alert).toHaveTextContent("Not saved yet: The local database was busy");
 		expect(alert).not.toHaveTextContent(/AI couldn/);
 		expect(screen.queryByRole("link", { name: "Open AI settings" })).not.toBeInTheDocument();
 	});

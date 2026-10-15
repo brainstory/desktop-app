@@ -1,4 +1,5 @@
 import { cn } from "@helpers/cn";
+import { describeError } from "@helpers/describeError";
 import type { EngineStatus } from "@helpers/api/models";
 
 const STATUS_LABELS = {
@@ -39,7 +40,22 @@ export function EngineStatusHeader({
 					{STATUS_LABELS[status.state] ?? status.state}
 				</span>
 			</div>
-			{status.error && <p className="text-sm text-red-600">{status.error}</p>}
+			{status.error && (
+				<p className="text-sm text-red-600">
+					{(() => {
+						const described = describeError(status.error);
+						return described.action
+							? `${described.message} ${described.action}`
+							: described.message;
+					})()}
+					<details className="mt-1">
+						<summary className="text-xs cursor-pointer text-stone-500">Details</summary>
+						<pre className="text-xs whitespace-pre-wrap text-stone-500">
+							{status.error}
+						</pre>
+					</details>
+				</p>
+			)}
 		</>
 	);
 }
