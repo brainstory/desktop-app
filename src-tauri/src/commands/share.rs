@@ -871,7 +871,13 @@ mod tests {
 		let idea = reader_db.get_idea(id).unwrap().expect("stored");
 		assert_eq!(idea.r#type.as_deref(), Some("original"));
 		assert_eq!(idea.result.as_deref(), Some("## Plan\nship it"));
-		assert_eq!(reader_db.get_daily_status().intent_idea_id, None);
+		assert_eq!(
+			reader_db
+				.get_daily_status()
+				.expect("daily status")
+				.intent_idea_id,
+			None
+		);
 	}
 
 	#[test]

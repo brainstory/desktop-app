@@ -43,9 +43,12 @@ fn every_open_backfills_rows_left_undated_at_v3_and_v4() {
 				assert_eq!(undated, 0, "v{version}: {table} row left undated");
 			}
 		}
-		assert!(db.has_activity_today(), "v{version}: today's log counts");
+		assert!(
+			db.has_activity_today().expect("activity check"),
+			"v{version}: today's log counts"
+		);
 		assert_eq!(
-			db.get_daily_status().streak,
+			db.get_daily_status().expect("daily status").streak,
 			1,
 			"v{version}: the backfilled log feeds the daily intent streak"
 		);

@@ -93,7 +93,16 @@ async fn tick_in_zone(app: &AppHandle, state: &AppState, zone: Option<Tz>) -> Du
 
 	// Already brainstormed today? Then the reminder has nothing to do
 	// (record it as handled so the loop sleeps until tomorrow).
-	if state.db.has_activity_today() {
+	let active_today = match state.db.has_activity_today() {
+		Ok(active) => active,
+		Err(e) => {
+			// a broken store must not look like an inactive day: the
+			// reminder would fire on a day the user already worked
+			log::warn!("skipping today's reminder: activity check failed: {e}");
+			return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
+		}
+	};
+	if active_today {
 		if let Err(e) = state
 			.db
 			.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)

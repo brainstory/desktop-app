@@ -343,6 +343,20 @@ impl Db {
 		Ok(next)
 	}
 
+	/// [`Self::get_setting`] for callers that must distinguish "absent"
+	/// from "broken" (the settings page and the reminder loop): a failed
+	/// read is Err instead of a silent None.
+	pub fn get_setting_checked(&self, key: &str) -> Result<Option<String>, String> {
+		self.lock()
+			.query_row(
+				"SELECT value FROM settings WHERE key = ?1",
+				params![key],
+				|row| row.get(0),
+			)
+			.optional()
+			.map_err(|e| format!("settings read '{key}' failed: {e}"))
+	}
+
 	pub fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
 		self.lock()
 			.execute(

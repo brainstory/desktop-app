@@ -31,37 +31,37 @@ impl Db {
 		})
 	}
 
-	pub fn get_log_answers_today(&self) -> Option<Vec<crate::types::LogAnswerItem>> {
+	/// Err on a database failure (a broken store must not masquerade as
+	/// "no log today"); Ok(None) genuinely means none was submitted.
+	pub fn get_log_answers_today(
+		&self,
+	) -> Result<Option<Vec<crate::types::LogAnswerItem>>, String> {
 		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
-		// a read failure is logged before degrading to "no log today": the
-		// caller's None cannot tell the two apart, so the log is the only
-		// trace of a broken store
-		let log_id: Option<String> = match conn
+		let log_id: Option<String> = conn
 			.query_row(
 				"SELECT log_id FROM daily WHERE date = ?1",
 				params![today],
 				|row| row.get(0),
 			)
 			.optional()
-		{
-			Ok(value) => value.flatten(),
-			Err(e) => {
-				log::warn!("today's daily log lookup failed: {e}");
-				None
-			}
+			.map_err(|e| format!("today's daily log lookup failed: {e}"))?
+			.flatten();
+		let Some(log_id) = log_id else {
+			return Ok(None);
 		};
-		let log_id = log_id?;
-		let answers: String = conn
+		let answers: Option<String> = conn
 			.query_row(
 				"SELECT answers FROM log_entries WHERE id = ?1",
 				params![log_id],
 				|row| row.get(0),
 			)
 			.optional()
-			.ok()
-			.flatten()?;
-		serde_json::from_str(&answers).ok()
+			.map_err(|e| format!("today's daily log answers lookup failed: {e}"))?;
+		let Some(answers) = answers else {
+			return Ok(None);
+		};
+		Ok(serde_json::from_str(&answers).ok())
 	}
 
 	pub fn insert_survey(
@@ -114,7 +114,10 @@ impl Db {
 
 	/// True if any idea, log or survey was recorded today (local time) -
 	/// used to skip the daily reminder on already-active days.
-	pub fn has_activity_today(&self) -> bool {
+	/// Err on a database failure: callers that gate on activity (the
+	/// reminder) must skip acting rather than treating a broken store as
+	/// an inactive day.
+	pub fn has_activity_today(&self) -> Result<bool, String> {
 		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		for table in ["ideas", "log_entries", "surveys"] {
@@ -125,14 +128,17 @@ impl Db {
 				"SELECT EXISTS(SELECT 1 FROM {table} WHERE local_date = ?1{})",
 				own_activity_filter(table)
 			);
-			if let Ok(1) = conn.query_row(&sql, params![today], |row| row.get::<_, i64>(0)) {
-				return true;
+			let found: i64 = conn
+				.query_row(&sql, params![today], |row| row.get(0))
+				.map_err(|e| format!("activity check on {table} failed: {e}"))?;
+			if found == 1 {
+				return Ok(true);
 			}
 		}
-		false
+		Ok(false)
 	}
 
-	pub fn get_daily_status(&self) -> DailyStatus {
+	pub fn get_daily_status(&self) -> Result<DailyStatus, String> {
 		let today = self.today_local().format("%Y-%m-%d").to_string();
 		let conn = self.lock();
 		let row = conn
@@ -149,8 +155,7 @@ impl Db {
 				},
 			)
 			.optional()
-			.ok()
-			.flatten();
+			.map_err(|e| format!("daily status lookup failed: {e}"))?;
 		let (log_id, intent_idea_id, survey_id, is_completed) =
 			row.unwrap_or((None, None, None, false));
 
@@ -205,12 +210,12 @@ impl Db {
 			day = d.pred_opt();
 		}
 
-		DailyStatus {
+		Ok(DailyStatus {
 			log_id,
 			intent_idea_id,
 			survey_id,
 			is_completed,
 			streak,
-		}
+		})
 	}
 }

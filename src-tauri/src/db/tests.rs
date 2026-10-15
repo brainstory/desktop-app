@@ -7,12 +7,40 @@ fn temp_db_path() -> (std::path::PathBuf, tempfile::TempDir) {
 }
 
 #[test]
+fn broken_daily_reads_are_errors_not_empty_data() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).expect("open");
+	db.insert_log(
+		"log-1",
+		&[crate::types::LogAnswerItem { id: 1, value: true }],
+	)
+	.unwrap();
+	// break the store the way a corrupt page or a bad migration would
+	db.lock()
+		.execute_batch("DROP TABLE daily; DROP TABLE ideas;")
+		.expect("drop the daily tables");
+
+	let status = db.get_daily_status();
+	assert!(status.is_err(), "a broken store must not read as streak 0");
+	let answers = db.get_log_answers_today();
+	assert!(
+		answers.is_err(),
+		"a broken store must not read as 'no log yet'"
+	);
+	let activity = db.has_activity_today();
+	assert!(
+		activity.is_err(),
+		"a broken store must not read as an inactive day (the reminder would fire)"
+	);
+}
+
+#[test]
 fn survey_does_not_complete_the_daily_intent() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");
 	db.insert_survey("s1", None, &serde_json::json!({ "focused": 3 }))
 		.unwrap();
-	let status = db.get_daily_status();
+	let status = db.get_daily_status().expect("daily status");
 	assert!(
 		!status.is_completed,
 		"a survey alone must not complete the daily intent"
@@ -235,8 +263,8 @@ fn invalid_json_rows_are_reported_not_fatal() {
 	assert_eq!(ideas.len(), 1);
 	assert_eq!(ideas[0].id, "broken");
 	// the activity filter's json_valid CASE returns false, not an error
-	let _ = db.has_activity_today();
-	let _ = db.get_daily_status();
+	let _ = db.has_activity_today().expect("activity check");
+	let _ = db.get_daily_status().expect("daily status");
 }
 
 #[test]
@@ -322,7 +350,7 @@ fn notes_are_structured_and_rebuild_one_trailing_section() {
 	db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
 		.unwrap();
 	db.add_idea_note("i1", "mid-day thought").unwrap();
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 
 	let err = db
 		.add_idea_note("ghost", "x")
@@ -379,7 +407,7 @@ fn failed_daily_completion_rolls_back_the_finished_idea() {
 	}];
 	db.create_daily_intent_idea("i1", "", "", &draft, &serde_json::json!({}))
 		.unwrap();
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 	// a failure injected into the daily-completion write only
 	db.lock()
 		.execute_batch(
@@ -423,7 +451,7 @@ fn failed_daily_completion_rolls_back_the_finished_idea() {
 	);
 	assert_eq!(transcript[0].content, "talked through the day");
 	assert!(
-		!db.get_daily_status().is_completed,
+		!db.get_daily_status().expect("daily status").is_completed,
 		"the day must not be completed either"
 	);
 }
@@ -434,14 +462,14 @@ fn finishing_the_intent_completes_the_day_in_the_same_transaction() {
 	let db = Db::open(&path).expect("open");
 	db.create_daily_intent_idea("i1", "", "", &[], &serde_json::json!({}))
 		.unwrap();
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 	db.update_idea("i1", Some("Derived Title"), Some("## Result"), None, None)
 		.unwrap();
 	let idea = db.get_idea("i1").unwrap().unwrap();
 	assert_eq!(idea.result.as_deref(), Some("## Result"));
 	assert_eq!(idea.title, "Derived Title");
 	assert!(
-		db.get_daily_status().is_completed,
+		db.get_daily_status().expect("daily status").is_completed,
 		"a nonempty result completes the day together with the idea update"
 	);
 }
@@ -476,7 +504,7 @@ fn updating_an_ordinary_idea_without_a_daily_association_still_saves() {
 		.query_row("SELECT COUNT(*) FROM daily", [], |r| r.get(0))
 		.unwrap();
 	assert_eq!(daily_rows, 0, "ordinary ideas never touch the daily table");
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 }
 
 #[test]
@@ -491,20 +519,20 @@ fn empty_or_absent_result_leaves_daily_completion_unchanged() {
 		db.get_idea("i1").unwrap().unwrap().result.as_deref(),
 		Some("")
 	);
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 	// a transcript-only autosave (absent result) doesn't complete either
 	let chat = vec![ChatMessage {
 		role: "user".into(),
 		content: "more".into(),
 	}];
 	db.update_idea("i1", None, None, Some(&chat), None).unwrap();
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 	// once the day is complete, later saves must not undo it
 	db.update_idea("i1", None, Some("## Done"), None, None)
 		.unwrap();
-	assert!(db.get_daily_status().is_completed);
+	assert!(db.get_daily_status().expect("daily status").is_completed);
 	db.update_idea("i1", None, None, Some(&chat), None).unwrap();
-	assert!(db.get_daily_status().is_completed);
+	assert!(db.get_daily_status().expect("daily status").is_completed);
 }
 
 #[test]
@@ -515,11 +543,11 @@ fn repeating_the_finished_intent_update_is_idempotent() {
 		.unwrap();
 	db.update_idea("i1", Some("T"), Some("## First"), None, None)
 		.unwrap();
-	assert!(db.get_daily_status().is_completed);
+	assert!(db.get_daily_status().expect("daily status").is_completed);
 	db.update_idea("i1", Some("T"), Some("## Second"), None, None)
 		.unwrap();
 	assert!(
-		db.get_daily_status().is_completed,
+		db.get_daily_status().expect("daily status").is_completed,
 		"a repeated finish keeps the day completed"
 	);
 	assert_eq!(
@@ -540,7 +568,7 @@ fn update_after_the_intent_idea_was_deleted_reports_not_found() {
 		.expect_err("updating a deleted idea must fail");
 	assert!(err.contains("not found"), "unexpected error: {err}");
 	// the day row survives the delete untouched and uncompleted
-	let status = db.get_daily_status();
+	let status = db.get_daily_status().expect("daily status");
 	assert!(!status.is_completed);
 	assert_eq!(status.intent_idea_id, None);
 }
@@ -565,8 +593,12 @@ fn imported_ideas_do_not_count_toward_activity() {
 		..Default::default()
 	}))
 	.expect("insert imported");
-	assert_eq!(db.get_daily_status().streak, 0, "import must not count");
-	assert!(!db.has_activity_today());
+	assert_eq!(
+		db.get_daily_status().expect("daily status").streak,
+		0,
+		"import must not count"
+	);
+	assert!(!db.has_activity_today().expect("activity check"));
 	// a local idea dated today still counts normally
 	db.insert_idea(NewIdea {
 		id: "mine",
@@ -577,7 +609,7 @@ fn imported_ideas_do_not_count_toward_activity() {
 		..Default::default()
 	})
 	.expect("insert local");
-	assert!(db.has_activity_today());
+	assert!(db.has_activity_today().expect("activity check"));
 }
 
 #[test]
@@ -614,17 +646,20 @@ fn imported_ideas_still_do_not_count_after_reopening() {
 			..Default::default()
 		}))
 		.expect("insert imported feedback");
-		assert_eq!(db.get_daily_status().streak, 0);
-		assert!(!db.has_activity_today());
+		assert_eq!(db.get_daily_status().expect("daily status").streak, 0);
+		assert!(!db.has_activity_today().expect("activity check"));
 	}
 	// the every-open backfill must not hand the rows a local date...
 	let db = Db::open(&path).expect("reopen");
 	assert_eq!(
-		db.get_daily_status().streak,
+		db.get_daily_status().expect("daily status").streak,
 		0,
 		"import counted after reopen"
 	);
-	assert!(!db.has_activity_today(), "import counted after reopen");
+	assert!(
+		!db.has_activity_today().expect("activity check"),
+		"import counted after reopen"
+	);
 	{
 		let conn = db.lock();
 		let dated: i64 = conn
@@ -640,11 +675,14 @@ fn imported_ideas_still_do_not_count_after_reopening() {
 			.unwrap();
 	}
 	assert_eq!(
-		db.get_daily_status().streak,
+		db.get_daily_status().expect("daily status").streak,
 		0,
 		"legacy-backfilled import counted"
 	);
-	assert!(!db.has_activity_today(), "legacy-backfilled import counted");
+	assert!(
+		!db.has_activity_today().expect("activity check"),
+		"legacy-backfilled import counted"
+	);
 }
 
 #[test]
@@ -690,11 +728,11 @@ fn new_intent_draft_resets_completion() {
 	// the day is completed by a finished intent...
 	db.create_daily_intent_idea("done", "T", "## Result", &[], &serde_json::json!({}))
 		.unwrap();
-	assert!(db.get_daily_status().is_completed);
+	assert!(db.get_daily_status().expect("daily status").is_completed);
 	// ...so a new empty draft for the same day must not inherit it
 	db.create_daily_intent_idea("draft", "T", "", &[], &serde_json::json!({}))
 		.unwrap();
-	let status = db.get_daily_status();
+	let status = db.get_daily_status().expect("daily status");
 	assert!(
 		!status.is_completed,
 		"a new draft intent resets the completed flag"
@@ -709,11 +747,11 @@ fn generating_the_intent_result_completes_the_day() {
 	// draft intent: recorded but not completed
 	db.create_daily_intent_idea("i1", "T", "", &[], &serde_json::json!({}))
 		.unwrap();
-	assert!(!db.get_daily_status().is_completed);
+	assert!(!db.get_daily_status().expect("daily status").is_completed);
 	// an intent created with its result already present completes the day
 	db.create_daily_intent_idea("i2", "T", "## Result", &[], &serde_json::json!({}))
 		.unwrap();
-	assert!(db.get_daily_status().is_completed);
+	assert!(db.get_daily_status().expect("daily status").is_completed);
 }
 
 #[test]
@@ -784,10 +822,13 @@ fn migration_backfill_is_idempotent_after_partial_run() {
 	}
 	// the backfilled log row counts toward the daily intent streak
 	// again, not just after the healing open but on every later open too
-	assert!(db.get_daily_status().streak >= 1);
+	assert!(db.get_daily_status().expect("daily status").streak >= 1);
 	drop(db);
 	let db = Db::open(&path).expect("reopen");
-	assert!(db.get_daily_status().streak >= 1, "backfill stays stable");
+	assert!(
+		db.get_daily_status().expect("daily status").streak >= 1,
+		"backfill stays stable"
+	);
 }
 
 #[test]
@@ -828,7 +869,7 @@ fn migrates_v2_database_and_backfills_local_date() {
 	}
 	// yesterday's log counts via its frozen local date; today without
 	// daily intent activity doesn't break the streak
-	assert!(db.get_daily_status().streak >= 1);
+	assert!(db.get_daily_status().expect("daily status").streak >= 1);
 }
 
 #[test]

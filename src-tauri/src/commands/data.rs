@@ -58,7 +58,7 @@ pub async fn get_user(app: tauri::AppHandle) -> Result<UserData, String> {
 pub async fn get_daily_status(app: tauri::AppHandle) -> Result<DailyStatus, String> {
 	run_blocking("daily status", move || {
 		let state = app.state::<AppState>();
-		Ok(state.db.get_daily_status())
+		state.db.get_daily_status()
 	})
 	.await
 }
@@ -520,7 +520,7 @@ pub async fn get_log_questions(app: tauri::AppHandle) -> Result<serde_json::Valu
 	run_blocking("get log questions", move || {
 		let state = app.state::<AppState>();
 		let enabled_ids = enabled_log_ids(&state);
-		let answers = state.db.get_log_answers_today();
+		let answers = state.db.get_log_answers_today()?;
 		let log: Vec<LogQuestionItem> = DEFAULT_LOG_QUESTIONS
 			.iter()
 			.map(|(id, text, label)| LogQuestionItem {

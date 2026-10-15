@@ -49,12 +49,16 @@ fn streak_counts_consecutive_days_and_stops_at_gap() {
 	log_on(1);
 	log_on(2);
 	log_on(4);
-	assert_eq!(db.get_daily_status().streak, 3, "stops at the gap");
+	assert_eq!(
+		db.get_daily_status().expect("daily status").streak,
+		3,
+		"stops at the gap"
+	);
 
 	// an ordinary idea fills no gap: it is not daily intent activity
 	idea(&db, "bridge", &ts(3));
 	assert_eq!(
-		db.get_daily_status().streak,
+		db.get_daily_status().expect("daily status").streak,
 		3,
 		"an ordinary idea must not bridge the gap"
 	);
