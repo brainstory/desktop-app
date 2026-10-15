@@ -335,8 +335,18 @@ pub async fn download_model(
 	let spec_label = spec.label;
 
 	// Already present (app copy or hub cache)? Nothing to download -
-	// the UI hides the button, this covers races and stale cards.
-	if state.resolve_model_file(&spec).is_some() {
+	// the UI hides the button, this covers races and stale cards. A
+	// hub-cache file whose size disagrees with the pinned spec is NOT
+	// "already downloaded": a truncated or foreign copy must be
+	// re-downloadable.
+	let existing = state.resolve_model_file(&spec);
+	let app_copy = state.model_path(&spec);
+	let size_matches = existing.as_ref().is_some_and(|path| {
+		std::fs::metadata(path)
+			.map(|m| m.len() == spec.size_bytes)
+			.unwrap_or(false)
+	});
+	if existing.is_some() && (existing == Some(app_copy) || size_matches) {
 		return Err("model is already downloaded".into());
 	}
 

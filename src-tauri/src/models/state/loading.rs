@@ -188,6 +188,22 @@ impl AppState {
 		let loaded = match result {
 			Ok(engine) => Some(engine),
 			Err(e) => {
+				// A hub-cache file with the right name but wrong bytes
+				// fails with a cryptic decoder error: name it for what
+				// it is so the fix (delete it or re-download) is obvious.
+				let hub_sourced = self.resolve_model_file(spec) != Some(self.model_path(spec));
+				let mismatched = hub_sourced
+					&& std::fs::metadata(&path)
+						.map(|m| m.len() != spec.size_bytes)
+						.unwrap_or(false);
+				let e = if mismatched {
+					format!(
+						"the cached copy in {} does not match the pinned model; delete it or re-download",
+						path.display()
+					)
+				} else {
+					e
+				};
 				log::error!("{} load failed: {e}", spec.id);
 				None
 			}
