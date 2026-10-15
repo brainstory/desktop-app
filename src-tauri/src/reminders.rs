@@ -48,69 +48,92 @@ pub fn spawn(app: AppHandle) {
 
 /// One scheduler pass. Returns how long to sleep before the next pass.
 async fn tick(app: &AppHandle) -> Duration {
-	let Some(state) = app.try_state::<AppState>() else {
-		return MAX_SLEEP;
-	};
+	let state = app.state::<std::sync::Arc<AppState>>();
 	// The reminder clock runs in the SAME zone as the daily boundaries:
 	// the stored user timezone when one resolves, the OS zone otherwise
 	// (Db::active_zone mirrors the stored row; the reminder's "today"
 	// and has_activity_today's "today" can never disagree).
-	tick_in_zone(app, &state, state.db.active_zone()).await
+	let zone = state.db.active_zone();
+	tick_in_zone(app, std::sync::Arc::clone(&state), zone).await
 }
 
 /// The scheduler pass for one active zone (None = OS-local).
-async fn tick_in_zone(app: &AppHandle, state: &AppState, zone: Option<Tz>) -> Duration {
-	let enabled = state
-		.db
-		.get_setting(keys::setting::REMINDER_ENABLED)
-		.map(|v| v == "true")
-		.unwrap_or(false);
-	if !enabled {
-		return MAX_SLEEP;
-	}
-
-	let time_str = state
-		.db
-		.get_setting(keys::setting::REMINDER_TIME)
-		.filter(|s| !s.is_empty())
-		.unwrap_or_else(|| "09:00".into());
-	let (hour, minute) = parse_time(&time_str);
-	let now = Utc::now();
-	let today = wall_clock(zone, &now).format("%Y-%m-%d").to_string();
-	let last_fired = state
-		.db
-		.get_setting(keys::setting::REMINDER_LAST_FIRED)
-		.unwrap_or_default();
-
-	if last_fired == today {
-		// done for today: sleep until the reminder time tomorrow
-		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
-	}
-
-	if !is_due(wall_clock(zone, &now).time(), hour, minute) {
-		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
-	}
-
-	// Already brainstormed today? Then the reminder has nothing to do
-	// (record it as handled so the loop sleeps until tomorrow).
-	let active_today = match state.db.has_activity_today() {
-		Ok(active) => active,
-		Err(e) => {
+async fn tick_in_zone(
+	app: &AppHandle,
+	state: std::sync::Arc<AppState>,
+	zone: Option<Tz>,
+) -> Duration {
+	// the settings reads and the activity check are blocking DB work:
+	// run them on the blocking pool (behind a big write they can hold
+	// the 5 s busy_timeout)
+	let db_state = std::sync::Arc::clone(&state);
+	let phase = tauri::async_runtime::spawn_blocking(move || {
+		// Phase 1 outcome: Disabled | Handled | Fire | Wait
+		let enabled = db_state
+			.db
+			.get_setting(keys::setting::REMINDER_ENABLED)
+			.map(|v| v == "true")
+			.unwrap_or(false);
+		if !enabled {
+			return TickPhase::Disabled;
+		}
+		let time_str = db_state
+			.db
+			.get_setting(keys::setting::REMINDER_TIME)
+			.filter(|s| !s.is_empty())
+			.unwrap_or_else(|| "09:00".into());
+		let (hour, minute) = parse_time(&time_str);
+		let now = Utc::now();
+		let today = wall_clock(zone, &now).format("%Y-%m-%d").to_string();
+		let last_fired = db_state
+			.db
+			.get_setting(keys::setting::REMINDER_LAST_FIRED)
+			.unwrap_or_default();
+		if last_fired == today {
+			return TickPhase::Wait(hour, minute);
+		}
+		if !is_due(wall_clock(zone, &now).time(), hour, minute) {
+			return TickPhase::Wait(hour, minute);
+		}
+		// Already brainstormed today? Then the reminder has nothing to
+		// do (record it as handled so the loop sleeps until tomorrow).
+		match db_state.db.has_activity_today() {
+			Ok(true) => {
+				if let Err(e) = db_state
+					.db
+					.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
+				{
+					log::warn!("failed to record reminder: {e}");
+				}
+				TickPhase::Wait(hour, minute)
+			}
+			Ok(false) => TickPhase::Fire(hour, minute, today),
 			// a broken store must not look like an inactive day: the
 			// reminder would fire on a day the user already worked
-			log::warn!("skipping today's reminder: activity check failed: {e}");
-			return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
+			Err(e) => {
+				log::warn!("skipping today's reminder: activity check failed: {e}");
+				TickPhase::Wait(hour, minute)
+			}
+		}
+	})
+	.await;
+
+	let phase = match phase {
+		Ok(phase) => phase,
+		Err(e) => {
+			log::warn!("reminder tick task failed: {e}");
+			return MAX_SLEEP;
 		}
 	};
-	if active_today {
-		if let Err(e) = state
-			.db
-			.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
-		{
-			log::warn!("failed to record reminder: {e}");
-		}
+	let now = Utc::now();
+	let (hour, minute, fired_today) = match phase {
+		TickPhase::Disabled => return MAX_SLEEP,
+		TickPhase::Wait(hour, minute) => (hour, minute, None),
+		TickPhase::Fire(hour, minute, today) => (hour, minute, Some(today)),
+	};
+	let Some(today) = fired_today else {
 		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
-	}
+	};
 
 	let _ = app
 		.notification()
@@ -118,13 +141,24 @@ async fn tick_in_zone(app: &AppHandle, state: &AppState, zone: Option<Tz>) -> Du
 		.title("Brainstory")
 		.body("What's on your mind today? Take a few minutes to think out loud.")
 		.show();
-	if let Err(e) = state
-		.db
-		.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
-	{
-		log::warn!("failed to record reminder: {e}");
-	}
+	// record the firing off the async worker too (same blocking-DB rule)
+	let record_state = std::sync::Arc::clone(&state);
+	let _ = tauri::async_runtime::spawn_blocking(move || {
+		record_state
+			.db
+			.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
+	})
+	.await;
 	until_next_due(zone, Utc::now(), hour, minute).min(MAX_SLEEP)
+}
+
+/// What the DB phase of a tick decided.
+enum TickPhase {
+	Disabled,
+	/// sleep until the next due time (hour, minute)
+	Wait(u32, u32),
+	/// fire now, recording (hour, minute, today)
+	Fire(u32, u32, String),
 }
 
 /// True once today's reminder time (HH:MM in the active zone) has been

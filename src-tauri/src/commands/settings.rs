@@ -1,4 +1,4 @@
-use tauri::{Manager, State};
+use tauri::Manager;
 
 use crate::commands::run_blocking;
 use crate::db::DEFAULT_LOG_QUESTIONS;
@@ -476,27 +476,42 @@ pub async fn test_stt_endpoint(
 /// Toggle dock / menu-bar (tray) icon visibility. Applied immediately and
 /// persisted for future launches.
 #[tauri::command]
-pub fn set_app_presence(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-	dock: bool,
-	tray: bool,
-) -> Result<(), String> {
+pub async fn set_app_presence(app: tauri::AppHandle, dock: bool, tray: bool) -> Result<(), String> {
 	if !dock && !tray {
 		return Err(
 			"Brainstory can't be hidden from both the Dock and the menu bar - keep at least one visible."
 				.into(),
 		);
 	}
-	state.db.set_setting(
-		keys::setting::SHOW_IN_DOCK,
-		if dock { "true" } else { "false" },
-	)?;
-	state.db.set_setting(
-		keys::setting::SHOW_IN_TRAY,
-		if tray { "true" } else { "false" },
-	)?;
-	crate::apply_presence(app.app_handle(), dock, tray);
+	// both keys in ONE transaction, off the main thread (a sync command
+	// blocks the UI for the whole busy_timeout behind a big write)
+	let handle = app.app_handle().clone();
+	let db_handle = handle.clone();
+	run_blocking("set app presence", move || {
+		use tauri::Manager;
+		db_handle.state::<crate::AppState>().db.set_settings(&[
+			(
+				keys::setting::SHOW_IN_DOCK,
+				if dock {
+					"true".to_string()
+				} else {
+					"false".to_string()
+				},
+			),
+			(
+				keys::setting::SHOW_IN_TRAY,
+				if tray {
+					"true".to_string()
+				} else {
+					"false".to_string()
+				},
+			),
+		])
+	})
+	.await?;
+	// the visibility change itself touches AppKit: hop to the main thread
+	app.run_on_main_thread(move || crate::apply_presence(&handle, dock, tray))
+		.map_err(|e| format!("failed to apply the visibility change: {e}"))?;
 	Ok(())
 }
 
