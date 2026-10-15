@@ -120,6 +120,7 @@ pub fn run() {
 			commands::ai::regenerate_result,
 			commands::ai::cancel_generation,
 			commands::ai::cancel_transcription,
+			commands::ai::stop_and_transcribe,
 			commands::ai::send_test_notification,
 			commands::ai::start_voice_capture,
 			commands::ai::stop_voice_capture,

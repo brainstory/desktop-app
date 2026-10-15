@@ -31,6 +31,10 @@ export function useVoiceCapture(options: {
 	isRecording: boolean;
 	setIsRecording: (recording: boolean) => void;
 	onWavCaptured: (wav: Blob) => void;
+	/** the capture stopped with audio to use; when given, the stop call
+	 * also transcribes in one round trip (the WAV bytes never cross to
+	 * the webview and back) and this receives the transcript */
+	onStoppedAndTranscribed?: (transcript: string) => void;
 	onError: (error: unknown) => void;
 	onStopError: (error: unknown) => void;
 	onTimeLimit: () => void;
@@ -42,6 +46,7 @@ export function useVoiceCapture(options: {
 		isRecording,
 		setIsRecording,
 		onWavCaptured,
+		onStoppedAndTranscribed,
 		onError,
 		onStopError,
 		onTimeLimit,
@@ -64,6 +69,7 @@ export function useVoiceCapture(options: {
 	// keep the latest callbacks reachable from the timer/unmount closures
 	const callbacksRef = useRef({
 		onWavCaptured,
+		onStoppedAndTranscribed,
 		onError,
 		onStopError,
 		onTimeLimit,
@@ -72,6 +78,7 @@ export function useVoiceCapture(options: {
 	useEffect(() => {
 		callbacksRef.current = {
 			onWavCaptured,
+			onStoppedAndTranscribed,
 			onError,
 			onStopError,
 			onTimeLimit,
@@ -119,6 +126,24 @@ export function useVoiceCapture(options: {
 	}, [teardownRecording]);
 
 	const stopWavCapture = useCallback(async (): Promise<void> => {
+		if (callbacksRef.current.onStoppedAndTranscribed) {
+			// one round trip: the stop and the transcription complete
+			// together. The caller already announced "Transcribing…" when
+			// the stop began (that is the honest state for the whole
+			// call), so no separate "stopped" announcement here. A
+			// rejection is a TRANSCRIPTION failure (including a cancel),
+			// not a stop failure: route it to onError so it gets the
+			// transcription error handling, not the retry-stop UI.
+			activeRecordingRef.current = false;
+			const result = await invokeCommand("stopAndTranscribe").catch((error: unknown) => {
+				callbacksRef.current.onError(error);
+				return null;
+			});
+			if (result !== null) {
+				callbacksRef.current.onStoppedAndTranscribed?.(result.transcript);
+			}
+			return;
+		}
 		const wav = await invokeCommand("stopVoiceCapture");
 		// Only clear the flag once the Rust side has actually stopped:
 		// clearing first would make the unmount cleanup skip the stop and

@@ -102,6 +102,14 @@ pub async fn transcribe(
 		tauri::ipc::InvokeBody::Raw(raw) => raw.to_vec(),
 		_ => return Err("expected raw audio bytes".into()),
 	};
+	transcribe_wav(app, bytes).await
+}
+
+/// The whole transcription path (validation, settings, engine wait,
+/// silence gate, whisper run) over WAV bytes; shared by the transcribe
+/// command (bytes from the webview) and stop_and_transcribe (bytes
+/// that never left the process).
+async fn transcribe_wav(app: AppHandle, bytes: Vec<u8>) -> Result<serde_json::Value, String> {
 	if bytes.is_empty() {
 		return Err("no audio received".into());
 	}
@@ -637,6 +645,20 @@ pub async fn stop_voice_capture() -> Result<tauri::ipc::Response, String> {
 		.await
 		.map_err(|e| e.to_string())??;
 	Ok(tauri::ipc::Response::new(wav))
+}
+
+/// Stop the capture and transcribe it in one call. The old pair
+/// (stop_voice_capture -> transcribe) shipped ~7.7 MB of WAV to the
+/// webview only for it to be posted straight back; kept working for
+/// compatibility, but the UI prefers this.
+#[tauri::command]
+pub async fn stop_and_transcribe(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+	let wav = tauri::async_runtime::spawn_blocking(crate::voice::stop_capture)
+		.await
+		.map_err(|e| e.to_string())??;
+	// hand straight to the same transcribe path (settings, cancel token,
+	// engine wait, silence gate)
+	transcribe_wav(app, wav).await
 }
 
 /// Test notification command, also used to trigger the daily reminder

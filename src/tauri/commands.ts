@@ -63,6 +63,7 @@ export const COMMANDS = {
 	sendTestNotification: "send_test_notification",
 	startVoiceCapture: "start_voice_capture",
 	stopVoiceCapture: "stop_voice_capture",
+	stopAndTranscribe: "stop_and_transcribe",
 	getUserSettings: "get_user_settings",
 	saveUserSettings: "save_user_settings",
 	setAppPresence: "set_app_presence",
@@ -178,6 +179,7 @@ interface CommandSignatures {
 	cancelTranscription: { args: undefined; result: void };
 	startVoiceCapture: { args: undefined; result: void };
 	stopVoiceCapture: { args: undefined; result: ArrayBuffer };
+	stopAndTranscribe: { args: undefined; result: { transcript: string } };
 	getUserSettings: { args: undefined; result: RawUserSettings };
 	saveUserSettings: { args: Record<string, unknown>; result: { id: string } };
 	setAppPresence: { args: { dock: boolean; tray: boolean }; result: void };

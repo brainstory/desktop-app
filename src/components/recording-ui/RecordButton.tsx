@@ -85,6 +85,14 @@ function RecordButton({
 	const unmountSignal = useUnmountSignal();
 
 	const handleError = (error: unknown): void => {
+		// a cancel from the combined stop+transcribe: the UI is already
+		// back at idle, and a banner for a button the person pressed
+		// would be noise
+		if (isTranscriptionCancelled(error)) {
+			updateTranscribing(false);
+			setAnnouncement((current) => (current === TRANSCRIBING ? "" : current));
+			return;
+		}
 		updateTranscribing(false);
 		// the error itself is announced by the role="alert" banner; only
 		// retract a stale "Transcribing…"
@@ -106,6 +114,34 @@ function RecordButton({
 		setWarningType("error");
 	};
 
+	/** Everything after the transcript exists: shared by the two-call
+	 * path (stop -> transcribe, with its retry) and the one-shot stop
+	 * (which already did the transcription). */
+	const handleTranscript = (transcript: string): void => {
+		setAnnouncement("");
+		// silence or noise: there is nothing to send, and an empty
+		// user message would only confuse the coach
+		if (!transcript.trim()) {
+			updateTranscribing(false);
+			setErrorMessage("No speech was heard. Try again, or type your message.");
+			setWarningType("error");
+			return;
+		}
+		onTranscript(transcript);
+		updateTranscribing(false);
+	};
+
+	const handleTranscriptError = (error: unknown): void => {
+		// a user cancel: the UI already returned to idle, and an
+		// error banner for a button the person pressed would be noise
+		if (isTranscriptionCancelled(error)) {
+			updateTranscribing(false);
+			setAnnouncement("");
+			return;
+		}
+		handleError(error);
+	};
+
 	const generateTranscript = (blobby: Blob): void => {
 		updateTranscribing(true);
 		setAnnouncement(TRANSCRIBING);
@@ -120,29 +156,11 @@ function RecordButton({
 		)
 			.then((transcript) => {
 				if (!mountedRef.current) return;
-				setAnnouncement("");
-				// silence or noise: there is nothing to send, and an empty
-				// user message would only confuse the coach
-				if (!transcript.trim()) {
-					updateTranscribing(false);
-					setErrorMessage("No speech was heard. Try again, or type your message.");
-					setWarningType("error");
-					return;
-				}
-				onTranscript(transcript);
-				updateTranscribing(false);
+				handleTranscript(transcript);
 			})
 			.catch((error: unknown) => {
 				if (!mountedRef.current) return;
-				// a user cancel: the UI already returned to idle, and an
-				// error banner for a button the person pressed would be
-				// noise
-				if (isTranscriptionCancelled(error)) {
-					updateTranscribing(false);
-					setAnnouncement("");
-					return;
-				}
-				handleError(error);
+				handleTranscriptError(error);
 			});
 	};
 
@@ -159,10 +177,29 @@ function RecordButton({
 		setAnnouncement("");
 	};
 
+	/** The stop call itself transcribes (one round trip), so the
+	 * transcribing state starts the moment the mic stops and the cancel
+	 * affordance covers the whole combined call. */
+	const handleMicToggle = (): void => {
+		if (isRecording) {
+			updateTranscribing(true);
+			setAnnouncement(TRANSCRIBING);
+		}
+		void voice.toggleRecording();
+	};
+
 	const voice = useVoiceCapture({
 		isRecording,
 		setIsRecording,
 		onWavCaptured: generateTranscript,
+		// stop + transcribe in ONE round trip (the WAV bytes never
+		// cross to the webview and back)
+		onStoppedAndTranscribed: (transcript) => {
+			if (!mountedRef.current) return;
+			// the stop call already transcribed: no separate
+			// "Transcribing…" phase to announce
+			handleTranscript(transcript);
+		},
 		onError: handleError,
 		onStopError: handleStopError,
 		onTimeLimit: () => setWarningType("timer"),
@@ -201,7 +238,7 @@ function RecordButton({
 				conversationState !== CONVERSATION_STATE.TranscribingUser;
 			if (micUsable) {
 				event.preventDefault();
-				void voice.toggleRecording();
+				handleMicToggle();
 			}
 		};
 		window.addEventListener("keydown", onKeyDown);
@@ -274,7 +311,7 @@ function RecordButton({
 								? "Loading model…"
 								: voice.status
 					}
-					onToggle={() => void voice.toggleRecording()}
+					onToggle={handleMicToggle}
 					onAnimationTrigger={context.setSludgeman}
 					isCompressed={isCompressed}
 				/>

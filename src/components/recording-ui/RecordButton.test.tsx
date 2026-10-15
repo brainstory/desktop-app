@@ -43,8 +43,7 @@ describe("RecordButton", () => {
 		let finish!: (v: unknown) => void;
 		mockInvoke({
 			start_voice_capture: () => null,
-			stop_voice_capture: wav,
-			transcribe: () => new Promise((res) => (finish = res))
+			stop_and_transcribe: () => new Promise((res) => (finish = res))
 		});
 		renderRecorder();
 		const user = userEvent.setup();
@@ -54,12 +53,15 @@ describe("RecordButton", () => {
 		expect(started).toHaveClass("sr-only");
 
 		await user.click(screen.getByRole("button", { name: "Stop recording" }));
-		// the stop is announced, then the transcription that follows it
+		// the one-shot call combines stop + transcription:
+		// "Transcribing…" is the announcement for the whole combined wait
 		expect(await screen.findByText("Transcribing…")).toHaveAttribute("aria-live", "polite");
 		await act(async () => {
 			finish({ transcript: "hello" });
 			await Promise.resolve();
 		});
+		expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
+		expect(callsTo("stop_and_transcribe")).toHaveLength(1);
 		expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
 	});
 
@@ -99,23 +101,23 @@ describe("RecordButton", () => {
 		localStorage.removeItem(STORAGE_KEYS.inputMode);
 	});
 
-	it("announces a stop that is not followed by a transcription", async () => {
-		vi.spyOn(console, "error").mockImplementation(() => {});
+	it("says nothing was heard when the stop captured no speech", async () => {
 		mockInvoke({
 			start_voice_capture: () => null,
-			stop_voice_capture: () => new ArrayBuffer(44)
+			stop_and_transcribe: () => ({ transcript: "" })
 		});
 		renderRecorder();
 		await recordAndStop();
-		expect(await screen.findByText("Recording stopped")).toHaveAttribute("aria-live", "polite");
-		vi.mocked(console.error).mockRestore();
+		// the combined stop+transcribe resolves at once: the visible
+		// outcome is the nothing-heard message, not a stopped banner
+		expect(await screen.findByText(/No speech was heard/)).toBeInTheDocument();
 	});
 
 	describe("keyboard shortcuts", () => {
 		it("Space toggles the mic when no field has focus", async () => {
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav
+				stop_and_transcribe: () => ({ transcript: "ok" })
 			});
 			renderRecorder();
 			const user = userEvent.setup();
@@ -125,14 +127,14 @@ describe("RecordButton", () => {
 			).toHaveLength(1);
 			await user.keyboard(" ");
 			expect(
-				vi.mocked(invoke).mock.calls.filter(([c]) => c === "stop_voice_capture")
+				vi.mocked(invoke).mock.calls.filter(([c]) => c === "stop_and_transcribe")
 			).toHaveLength(1);
 		});
 
 		it("typing a space in the composer does not toggle the mic", async () => {
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav
+				stop_and_transcribe: () => ({ transcript: "ok" })
 			});
 			renderRecorder();
 			const user = userEvent.setup();
@@ -150,8 +152,7 @@ describe("RecordButton", () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => new Promise((res) => (finish = res)),
+				stop_and_transcribe: () => new Promise((res) => (finish = res)),
 				cancel_transcription: () => null
 			});
 			renderRecorder();
@@ -174,20 +175,19 @@ describe("RecordButton", () => {
 			let fail!: (e: unknown) => void;
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => new Promise((_res, rej) => (fail = rej)),
+				stop_and_transcribe: () => new Promise((_res, rej) => (fail = rej)),
 				cancel_transcription: () => null
 			});
 			const { props } = renderRecorder();
 			await recordAndStop();
+			// the combined stop+transcribe is one call: the transcribing
+			// state (and its cancel affordance) covers all of it
 			expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
 
 			const user = userEvent.setup();
 			await user.click(screen.getByRole("button", { name: "Cancel transcription" }));
 			expect(callsTo("cancel_transcription")).toHaveLength(1);
-			// the recorder is released immediately
 			await waitFor(() => expect(props.setIsTranscribing).toHaveBeenLastCalledWith(false));
-			expect(screen.queryByText("Transcribing…")).not.toBeInTheDocument();
 
 			// the pending invoke settles with the backend's cancel error:
 			// no banner, no retry
@@ -196,7 +196,7 @@ describe("RecordButton", () => {
 				await Promise.resolve();
 			});
 			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-			expect(callsTo("transcribe")).toHaveLength(1);
+			expect(callsTo("stop_and_transcribe")).toHaveLength(1);
 		});
 
 		it("does not retry a permanent transcription error", async () => {
@@ -204,8 +204,7 @@ describe("RecordButton", () => {
 			vi.spyOn(console, "error").mockImplementation(() => {});
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => {
+				stop_and_transcribe: () => {
 					throw "no audio received";
 				}
 			});
@@ -213,7 +212,8 @@ describe("RecordButton", () => {
 			await recordAndStop();
 			expect(await screen.findByRole("alert")).toHaveTextContent("No audio was captured.");
 			await act(() => vi.advanceTimersByTimeAsync(2000));
-			expect(callsTo("transcribe")).toHaveLength(1);
+			// one call, no retry (the error is permanent)
+			expect(callsTo("stop_and_transcribe")).toHaveLength(1);
 			vi.mocked(console.error).mockRestore();
 		});
 
@@ -221,24 +221,22 @@ describe("RecordButton", () => {
 			vi.useFakeTimers({ shouldAdvanceTime: true });
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => {
+				stop_and_transcribe: () => {
 					throw "connection reset";
 				}
 			});
 			const { unmount } = renderRecorder();
 			await recordAndStop();
-			await vi.waitFor(() => expect(callsTo("transcribe")).toHaveLength(1));
+			await vi.waitFor(() => expect(callsTo("stop_and_transcribe")).toHaveLength(1));
 			unmount();
 			await vi.advanceTimersByTimeAsync(2000);
-			expect(callsTo("transcribe")).toHaveLength(1);
+			expect(callsTo("stop_and_transcribe")).toHaveLength(1);
 		});
 
 		it("says nothing was heard instead of sending an empty message", async () => {
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => ({ transcript: "  " })
+				stop_and_transcribe: () => ({ transcript: "  " })
 			});
 			const { props } = renderRecorder();
 			await recordAndStop();
@@ -253,8 +251,7 @@ describe("RecordButton", () => {
 			let calls = 0;
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => {
+				stop_and_transcribe: () => {
 					calls += 1;
 					if (calls === 1) throw "no audio received";
 					return { transcript: "hello" };
@@ -283,12 +280,11 @@ describe("RecordButton", () => {
 			let finish!: (v: unknown) => void;
 			mockInvoke({
 				start_voice_capture: () => null,
-				stop_voice_capture: wav,
-				transcribe: () => new Promise((res) => (finish = res))
+				stop_and_transcribe: () => new Promise((res) => (finish = res))
 			});
 			const { props, unmount } = renderRecorder();
 			await recordAndStop();
-			expect(callsTo("transcribe")).toHaveLength(1);
+			expect(callsTo("stop_and_transcribe")).toHaveLength(1);
 			unmount();
 			await act(async () => {
 				finish({ transcript: "too late" });
