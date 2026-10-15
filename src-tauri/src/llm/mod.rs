@@ -600,13 +600,13 @@ mod tests {
 		let prompt = [1, 2, 3, 40, 41, 7, 8];
 		let plan = plan_kv_reuse(&cached, &prompt).expect("shared prefix");
 		assert_eq!(plan.decode_from, 5);
-		assert_eq!(plan.tokens_after_prompt(&cached, &prompt), prompt);
+		assert_eq!(plan.mirror_after(&cached, &prompt, prompt.len()), prompt);
 
 		// the reply was re-templated differently: reuse stops at the split
 		let prompt = [1, 2, 3, 9, 9];
 		let plan = plan_kv_reuse(&cached, &prompt).expect("shared prefix");
 		assert_eq!(plan.decode_from, 3);
-		assert_eq!(plan.tokens_after_prompt(&cached, &prompt), prompt);
+		assert_eq!(plan.mirror_after(&cached, &prompt, prompt.len()), prompt);
 	}
 
 	#[test]
@@ -620,7 +620,7 @@ mod tests {
 			let plan = plan_kv_reuse(cached, &prompt).expect("shared prefix");
 			assert_eq!(plan.decode_from, 3, "the last token decodes again");
 			assert_eq!(
-				plan.tokens_after_prompt(cached, &prompt),
+				plan.mirror_after(cached, &prompt, prompt.len()),
 				prompt,
 				"cache bookkeeping must match the cells actually held"
 			);
@@ -628,7 +628,26 @@ mod tests {
 		// a one-token prompt still decodes its token
 		let plan = plan_kv_reuse(&[1, 2], &[1]).expect("shared prefix");
 		assert_eq!(plan.decode_from, 0);
-		assert_eq!(plan.tokens_after_prompt(&[1, 2], &[1]), [1]);
+		assert_eq!(plan.mirror_after(&[1, 2], &[1], 1), [1]);
+	}
+
+	#[test]
+	fn a_cancelled_decode_leaves_an_honest_prefix_for_the_next_plan() {
+		use super::local::plan_kv_reuse;
+		// the persistent context holds [1, 2]; the request's prompt grows
+		// from there, but its tail decode is cancelled partway
+		let prompt = [1, 2, 3, 4, 5, 6, 7, 8];
+		let plan = plan_kv_reuse(&[1, 2], &prompt).expect("shared prefix");
+		// only positions up to 5 decoded: the mirror (which the worker
+		// extends per decoded chunk) must record exactly those cells - the
+		// old state-capture path recorded the whole planned prompt, so the
+		// next restore would attend over a gap of undecoded cells
+		let held = plan.mirror_after(&[1, 2], &prompt, 5);
+		assert_eq!(held, [1, 2, 3, 4, 5]);
+		// the retry plans against the honest prefix: it decodes the true
+		// remaining tail, not just the final token
+		let retry = plan_kv_reuse(&held, &prompt).expect("shared prefix");
+		assert_eq!(retry.decode_from, 5);
 	}
 
 	#[test]
