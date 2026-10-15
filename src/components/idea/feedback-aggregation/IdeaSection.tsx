@@ -41,6 +41,14 @@ export default function IdeaSection({
 		scheduleSectionReset(() => setFocusedSection(null), 3000);
 	}
 
+	// No feedback yet: no sidebar. The empty "All feedback comments"
+	// pane next to a feedback-free document is noise; the document takes
+	// the full width instead.
+	const commentCount = Object.values(headingIdxToComments).reduce(
+		(sum, comments) => sum + comments.length,
+		0
+	);
+
 	return (
 		<div className="flex h-[calc(100vh-11.5rem)]">
 			<IdeaDocument
@@ -51,13 +59,15 @@ export default function IdeaSection({
 				sectionReactions={sectionReactions}
 				onToggleSectionReaction={onToggleSectionReaction}
 			/>
-			<IdeaSidebar
-				currentFocusedFeedback={focusedFeedback}
-				headingIdxToComments={headingIdxToComments}
-				onFeedbackClick={onFeedbackClick}
-				commentReactions={commentReactions}
-				onToggleCommentReaction={onToggleCommentReaction}
-			/>
+			{commentCount > 0 && (
+				<IdeaSidebar
+					currentFocusedFeedback={focusedFeedback}
+					headingIdxToComments={headingIdxToComments}
+					onFeedbackClick={onFeedbackClick}
+					commentReactions={commentReactions}
+					onToggleCommentReaction={onToggleCommentReaction}
+				/>
+			)}
 		</div>
 	);
 }

@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import {
-	getIdeaApi,
-	getIdeaChildrenApi,
-	markIdeaReadApi,
-	regenerateResultApi,
-	setIdeaResultApi
-} from "@helpers/api/idea";
+import { getIdeaApi, getIdeaChildrenApi, markIdeaReadApi } from "@helpers/api/idea";
 import type { IdeaDetail, IdeaFeedbackItem, FeedbackComment } from "@src/types";
 
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
-import Button from "@ds/Button";
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import IdeaTitleBar from "./IdeaTitleBar";
 import IdeaSummary from "./IdeaSummary";
@@ -17,7 +10,7 @@ import IdeaSection from "@components/idea/feedback-aggregation/IdeaSection";
 import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import IdeaNotes from "./IdeaNotes";
-import { getQueryParam, normalizeApiError } from "@helpers/helpers";
+import { getQueryParam } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 import { finishedFeedback, isOwnIdea, parseHeadingIndex, stripNotesSection } from "@helpers/ideas";
 import ErrorSection from "../error/ErrorSection";
@@ -51,14 +44,6 @@ function IdeaResultContentInner() {
 	// useMediaQuery stays for reduced-motion checks elsewhere.
 	const [isUnread, setIsUnread] = useState(false);
 	const { openSnackbar } = useSnackbar();
-	// manual summary editing
-	const [isEditingSummary, setIsEditingSummary] = useState(false);
-	const [summaryDraft, setSummaryDraft] = useState("");
-	const [isSavingSummary, setIsSavingSummary] = useState(false);
-	// regeneration
-	const [isRegenerating, setIsRegenerating] = useState(false);
-	const [regenStatus, setRegenStatus] = useState<string | null>(null);
-	const [regenText, setRegenText] = useState("");
 	const { sectionReactions, toggleSectionReaction, commentReactions, toggleCommentReaction } =
 		useIdeaReactions(ideaId, (message) => openSnackbar(false, message));
 
@@ -177,115 +162,6 @@ function IdeaResultContentInner() {
 	// structured notes are shown as the editable list below; the rendered
 	// "## Notes" section would duplicate them. Without structured notes
 	// (legacy rows), the section stays so nothing is lost.
-	const startEditingSummary = (): void => {
-		setSummaryDraft(summaryMarkdown ?? "");
-		setIsEditingSummary(true);
-	};
-
-	const saveSummaryEdit = (): void => {
-		const trimmed = summaryDraft.trim();
-		if (!trimmed || !ideaId || trimmed === (summaryMarkdown ?? "")) {
-			setIsEditingSummary(false);
-			return;
-		}
-		setIsSavingSummary(true);
-		setIdeaResultApi(ideaId, trimmed)
-			.then(() => {
-				setIdea((prev) => ({ ...prev, summary: trimmed }));
-				setIsEditingSummary(false);
-				openSnackbar(true, "Summary updated");
-				// the sectioned view derives from result_json: refetch so
-				// both views show the edited text
-				reloadIdea();
-			})
-			.catch((err) => {
-				console.error("summary edit failed", err);
-				openSnackbar(false, normalizeApiError(err));
-			})
-			.finally(() => setIsSavingSummary(false));
-	};
-
-	const regenerateSummary = (): void => {
-		if (!ideaId) return;
-		setIsRegenerating(true);
-		setRegenText("");
-		setRegenStatus(null);
-		const { channel, invokePromise } = regenerateResultApi(ideaId);
-		channel.onmessage = (raw: unknown) => {
-			const event = raw as { type: string; content?: string };
-			if (event.type === "chunk" && typeof event.content === "string") {
-				setRegenText((prev) => prev + event.content);
-			} else if (event.type === "cumulative" && typeof event.content === "string") {
-				setRegenText(event.content);
-			} else if (event.type === "status" && typeof event.content === "string") {
-				setRegenStatus(event.content);
-			}
-		};
-		invokePromise
-			.then((res) => {
-				const text = res.response ?? "";
-				if (text) {
-					setIdea((prev) => ({ ...prev, summary: text }));
-				}
-				setIsRegenerating(false);
-				openSnackbar(
-					true,
-					"Summary regenerated - the previous one is kept in the idea metadata"
-				);
-			})
-			.catch((err) => {
-				console.error("regeneration failed", err);
-				setIsRegenerating(false);
-				openSnackbar(false, normalizeApiError(err));
-			});
-	};
-
-	/** shared by both summary-tab layouts */
-	const regenerationBlock = (
-		<div className="py-8 text-center">
-			<p className="text-stone-700 font-medium mb-2">
-				{regenStatus ?? "Regenerating your summary..."}
-			</p>
-			{regenText && (
-				<p className="text-sm text-stone-500 whitespace-pre-wrap font-mono max-h-64 overflow-y-auto text-left">
-					{regenText}
-				</p>
-			)}
-		</div>
-	);
-	const summaryEditorBlock = (
-		<div className="flex flex-col gap-2">
-			<textarea
-				aria-label="Edit summary"
-				rows={16}
-				value={summaryDraft}
-				onChange={(e) => setSummaryDraft(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === "Escape") {
-						e.preventDefault();
-						setIsEditingSummary(false);
-					} else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-						e.preventDefault();
-						saveSummaryEdit();
-					}
-				}}
-				className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-accent-500 resize-y bg-white text-stone-900 font-mono"
-			/>
-			<div className="flex justify-end gap-2">
-				<Button variant="transparent" onClick={() => setIsEditingSummary(false)}>
-					Cancel
-				</Button>
-				<Button
-					variant="pink"
-					disabled={isSavingSummary || summaryDraft.trim() === ""}
-					onClick={saveSummaryEdit}
-				>
-					{isSavingSummary ? "Saving..." : "Save"}
-				</Button>
-			</div>
-		</div>
-	);
-
 	const documentSections =
 		notes.length > 0
 			? (idea.resultJson ?? []).filter(
@@ -313,13 +189,7 @@ function IdeaResultContentInner() {
 						param: "summary",
 						content: (
 							<>
-								{isRegenerating ? (
-									regenerationBlock
-								) : isEditingSummary ? (
-									summaryEditorBlock
-								) : (
-									<IdeaSummary content={summaryMarkdown} />
-								)}
+								<IdeaSummary content={summaryMarkdown} />
 								{notesBlock}
 							</>
 						)
@@ -336,20 +206,14 @@ function IdeaResultContentInner() {
 						param: "summary",
 						content: (
 							<>
-								{isRegenerating ? (
-									regenerationBlock
-								) : isEditingSummary ? (
-									summaryEditorBlock
-								) : (
-									<IdeaSection
-										resultSections={documentSections}
-										headingIdxToComments={headingIdxToComments}
-										sectionReactions={sectionReactions}
-										onToggleSectionReaction={toggleSectionReaction}
-										commentReactions={commentReactions}
-										onToggleCommentReaction={toggleCommentReaction}
-									/>
-								)}
+								<IdeaSection
+									resultSections={documentSections}
+									headingIdxToComments={headingIdxToComments}
+									sectionReactions={sectionReactions}
+									onToggleSectionReaction={toggleSectionReaction}
+									commentReactions={commentReactions}
+									onToggleCommentReaction={toggleCommentReaction}
+								/>
 								{notesBlock}
 							</>
 						)
@@ -418,9 +282,6 @@ function IdeaResultContentInner() {
 					parentId={parentIdea?.id}
 					onNoteAdded={reloadIdea}
 					onTitleSaved={handleTitleSaved}
-					onEditSummary={startEditingSummary}
-					onRegenerateSummary={regenerateSummary}
-					isRegenerating={isRegenerating}
 					feedbackCount={finishedFeedback(ideaChildren ?? []).length}
 				/>
 				<TailwindComposedTabs

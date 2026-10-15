@@ -1,7 +1,7 @@
 import type { IdeaDetail } from "@src/types";
 import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
-import { exportIdeaApi, exportMarkdownApi, shortenHomePath } from "@helpers/api/share";
+import { exportIdeaApi, shortenHomePath } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import Button from "@ds/Button";
 import { useSnackbar } from "@ds/Snackbar";
@@ -16,12 +16,6 @@ interface IdeaTitleBarProps {
 	onNoteAdded?: () => void;
 	/** the saved title after a successful rename */
 	onTitleSaved?: (savedTitle: string) => void;
-	/** switch the summary to the editor */
-	onEditSummary?: () => void;
-	/** rerun the generation from the stored transcript */
-	onRegenerateSummary?: () => void;
-	/** a regeneration is running */
-	isRegenerating?: boolean;
 	/** finished feedback items hanging off this idea: the delete
 	 * confirmation names what it cascades to */
 	feedbackCount?: number;
@@ -33,9 +27,6 @@ export default function IdeaTitleBar({
 	parentId,
 	onNoteAdded,
 	onTitleSaved,
-	onEditSummary,
-	onRegenerateSummary,
-	isRegenerating = false,
 	feedbackCount = 0
 }: IdeaTitleBarProps) {
 	const { openSnackbar } = useSnackbar();
@@ -46,11 +37,7 @@ export default function IdeaTitleBar({
 		secondsLeft,
 		confirm: confirmDelete
 	} = useConfirmClick();
-	const {
-		isConfirming: confirmingRegenerate,
-		secondsLeft: regenSeconds,
-		confirm: confirmRegenerate
-	} = useConfirmClick();
+
 	const [scheduleExportReset] = useTimeout();
 	const [isEditing, setIsEditing] = useState(false);
 	const [editedTitle, setEditedTitle] = useState(idea.title ?? "");
@@ -129,22 +116,6 @@ export default function IdeaTitleBar({
 		}
 	};
 
-	/** Copy the whole document as Markdown. */
-	const handleCopy = () => {
-		const text = idea.summary ?? "";
-		if (!text.trim()) {
-			openSnackbar(false, "Nothing to copy yet");
-			return;
-		}
-		navigator.clipboard
-			.writeText(text)
-			.then(() => openSnackbar(true, "Copied"))
-			.catch((err) => {
-				console.error("copy failed", err);
-				openSnackbar(false, "Couldn't copy - select the text and copy manually");
-			});
-	};
-
 	const handleExport = () => {
 		setExportState("exporting");
 		exportIdeaApi(idea.id)
@@ -164,23 +135,6 @@ export default function IdeaTitleBar({
 				setExportState("error");
 				scheduleExportReset(() => setExportState(null), 4000);
 			});
-	};
-
-	/** Export the document (and its transcript) as a local .md file. */
-	const [isMarkdownExporting, setIsMarkdownExporting] = useState(false);
-	const handleMarkdownExport = () => {
-		setIsMarkdownExporting(true);
-		exportMarkdownApi(idea.id, true)
-			.then((res) => {
-				if (!res.cancelled && res.path) {
-					openSnackbar(true, `Saved to ${shortenHomePath(res.path)}`);
-				}
-			})
-			.catch((err) => {
-				console.error("markdown export failed", err);
-				openSnackbar(false, "Couldn't export the Markdown file");
-			})
-			.finally(() => setIsMarkdownExporting(false));
 	};
 
 	const handleDelete = () => {
@@ -217,47 +171,6 @@ export default function IdeaTitleBar({
 			buttons.push(
 				<Button variant="pink" key="add-note" onClick={() => setIsNoteOpen(true)}>
 					Add Note
-				</Button>
-			);
-		}
-		if (idea.summary !== null && idea.summary !== undefined) {
-			buttons.push(
-				<Button variant="bordered" key="copy-markdown" onClick={handleCopy}>
-					Copy as Markdown
-				</Button>
-			);
-			buttons.push(
-				<Button variant="bordered" key="edit-summary" onClick={() => onEditSummary?.()}>
-					Edit summary
-				</Button>
-			);
-			buttons.push(
-				<Button
-					variant="bordered"
-					key="regenerate"
-					onClick={() => {
-						if (confirmRegenerate()) onRegenerateSummary?.();
-					}}
-					classes={confirmingRegenerate ? "ring-red-400 text-red-600" : ""}
-					disabled={isRegenerating}
-				>
-					{isRegenerating
-						? "Regenerating..."
-						: confirmingRegenerate
-							? `Really regenerate? (${regenSeconds ?? 0}s)`
-							: "Regenerate"}
-				</Button>
-			);
-		}
-		if (isOwnIdea) {
-			buttons.push(
-				<Button
-					variant="bordered"
-					key="export-markdown"
-					onClick={handleMarkdownExport}
-					disabled={isMarkdownExporting}
-				>
-					{isMarkdownExporting ? "Exporting..." : "Export as Markdown"}
 				</Button>
 			);
 		}

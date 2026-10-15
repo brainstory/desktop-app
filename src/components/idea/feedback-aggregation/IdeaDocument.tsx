@@ -52,7 +52,10 @@ export default function IdeaDocument({
 	return (
 		<div
 			className={
-				"w-[calc(100%-20.5rem)] px-7 pb-7 overflow-y-auto prose max-w-none text-sm md:text-lg prose-stone prose-headings:underline prose-headings:decoration-pink-500 prose-headings:text-xl prose-h1:no-underline prose-h1:mb-1 prose-h1:text-xl prose-h1:lg:text-2xl prose-p:mb-1 " +
+				// flex-1, not a calc'd width: with the feedback sidebar
+				// hidden (no comments) the document takes the full width,
+				// and shrinks beside it when there are comments
+				"flex-1 min-w-0 px-7 pb-7 overflow-y-auto prose max-w-none text-sm md:text-lg prose-stone prose-headings:underline prose-headings:decoration-pink-500 prose-headings:text-xl prose-h1:no-underline prose-h1:mb-1 prose-h1:text-xl prose-h1:lg:text-2xl prose-p:mb-1 " +
 				"prose-p:leading-normal lg:prose-p:leading-loose"
 			}
 			ref={containerRef}

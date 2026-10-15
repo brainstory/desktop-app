@@ -46,81 +46,6 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe("IdeaResultContent summary editing", () => {
-	beforeEach(() => {
-		mockViewport(1200);
-	});
-	afterEach(() => {
-		mockViewport(1200);
-	});
-
-	it("edits the summary, saves it, and renders the new text", async () => {
-		mockInvoke({
-			get_idea: () => rawIdea(),
-			get_idea_children: () => ({ ideas: [] }),
-			mark_idea_read: () => null,
-			get_reactions: () => noReactions,
-			set_idea_result: () => null
-		});
-		render(<IdeaResultContent />);
-		expect(await screen.findByText("alpha body")).toBeInTheDocument();
-
-		await userEvent.click(screen.getByRole("button", { name: "Edit summary" }));
-		const editor = screen.getByLabelText("Edit summary");
-		expect(editor).toHaveValue("# Title\n\n## Alpha\nalpha body\n\n## Beta\nbeta body");
-
-		// Cmd+Enter saves; Escape-discarded edits leave the text alone
-		await userEvent.clear(editor);
-		await userEvent.type(editor, "# Rewritten\n\nNew body words.");
-		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
-		expect(await screen.findByText("Summary updated")).toBeInTheDocument();
-		expect(invoke).toHaveBeenCalledWith("set_idea_result", {
-			ideaId: "i1",
-			result: "# Rewritten\n\nNew body words."
-		});
-		// the editor closed (the sectioned view refetches separately)
-		expect(screen.queryByLabelText("Edit summary")).not.toBeInTheDocument();
-	});
-
-	it("Escape discards the edit", async () => {
-		mockInvoke({
-			get_idea: () => rawIdea(),
-			get_idea_children: () => ({ ideas: [] }),
-			mark_idea_read: () => null,
-			get_reactions: () => noReactions,
-			set_idea_result: () => null
-		});
-		render(<IdeaResultContent />);
-		await userEvent.click(await screen.findByRole("button", { name: "Edit summary" }));
-		const editor = screen.getByLabelText("Edit summary");
-		await userEvent.type(editor, " scratch");
-		await userEvent.keyboard("{Escape}");
-		expect(screen.queryByLabelText("Edit summary")).not.toBeInTheDocument();
-		expect(
-			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_idea_result")
-		).toHaveLength(0);
-		// the untouched text still shows
-		expect(screen.getByText("alpha body")).toBeInTheDocument();
-	});
-
-	it("regenerate asks for confirmation before running", async () => {
-		mockInvoke({
-			get_idea: () => rawIdea(),
-			get_idea_children: () => ({ ideas: [] }),
-			mark_idea_read: () => null,
-			get_reactions: () => noReactions
-		});
-		render(<IdeaResultContent />);
-		const button = await screen.findByRole("button", { name: "Regenerate" });
-		// first click arms, second runs
-		await userEvent.click(button);
-		expect(
-			vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "regenerate_result")
-		).toHaveLength(0);
-		expect(screen.getByRole("button", { name: /Really regenerate/ })).toBeInTheDocument();
-	});
-});
-
 describe("IdeaResultContent feedback heading references", () => {
 	it("files comments only under positive ordinals that map to a real heading", async () => {
 		mockInvoke({
@@ -252,7 +177,9 @@ describe("IdeaResultContent feedback tab", () => {
 		});
 		render(<IdeaResultContent />);
 		expect(await screen.findByRole("tab", { name: "Feedback" })).toBeDisabled();
-		expect(await screen.findByText("No comments found.")).toBeInTheDocument();
+		// no comments anywhere: no empty sidebar pane at all
+		expect(screen.queryByText("All Feedback Comments")).not.toBeInTheDocument();
+		expect(screen.queryByText("No comments found.")).not.toBeInTheDocument();
 		expect(screen.queryByText(/send it to someone/)).not.toBeInTheDocument();
 	});
 
@@ -327,16 +254,19 @@ describe("IdeaResultContent layout", () => {
 		});
 	});
 
-	it("keeps the document + sidebar view at any width (the window cannot go below 940px)", async () => {
+	it("keeps the sectioned view at any width and drops the sidebar without comments", async () => {
 		const viewport = mockViewport(1024);
 		render(<IdeaResultContent />);
-		expect(await screen.findByText("All Feedback Comments")).toBeInTheDocument();
+		expect(await screen.findByText("alpha body")).toBeInTheDocument();
+
+		// this idea has no feedback children: no comments anywhere, so
+		// no "All feedback comments" pane - the document is the page
+		expect(screen.queryByText("All Feedback Comments")).not.toBeInTheDocument();
 
 		// the old max-width variant dropped sections and reactions; the
 		// window's minWidth (tauri.conf.json) makes it unreachable, so
 		// even a narrow media query keeps the full layout
 		act(() => viewport.setWidth(768));
-		expect(screen.getByText("All Feedback Comments")).toBeInTheDocument();
 		expect(screen.getByText("alpha body")).toBeInTheDocument();
 	});
 
@@ -344,7 +274,7 @@ describe("IdeaResultContent layout", () => {
 		mockViewport(1024);
 		const addListener = vi.spyOn(window, "addEventListener");
 		render(<IdeaResultContent />);
-		await screen.findByText("All Feedback Comments");
+		await screen.findByText("alpha body");
 		expect(addListener.mock.calls.some(([type]) => type === "resize")).toBe(false);
 	});
 });
