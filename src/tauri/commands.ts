@@ -36,6 +36,10 @@ export const COMMANDS = {
 	updateIdea: "update_idea",
 	linkIdeaLog: "link_idea_log",
 	setIdeaResult: "set_idea_result",
+	getInputDevice: "get_input_device",
+	listInputDevices: "list_input_devices",
+	setInputDevice: "set_input_device",
+	testInputDevice: "test_input_device",
 	regenerateResult: "regenerate_result",
 	openDataFolder: "open_data_folder",
 	openLogFolder: "open_log_folder",
@@ -135,6 +139,10 @@ interface CommandSignatures {
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
 	linkIdeaLog: { args: { ideaId: string; logId: string }; result: null };
 	setIdeaResult: { args: { ideaId: string; result: string }; result: null };
+	getInputDevice: { args: undefined; result: { name: string } };
+	listInputDevices: { args: undefined; result: { name: string; isDefault: boolean }[] };
+	setInputDevice: { args: { name?: string }; result: null };
+	testInputDevice: { args: undefined; result: { peak: number } };
 	regenerateResult: {
 		args: { ideaId: string; onEvent: Channel };
 		result: GenerationResult;

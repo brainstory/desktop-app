@@ -187,6 +187,58 @@ pub fn copy_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
 	Ok(report)
 }
 
+/// Enumerate the machine's microphones: (name, is-default).
+#[tauri::command]
+pub fn list_input_devices() -> Vec<serde_json::Value> {
+	crate::voice::list_input_devices()
+		.into_iter()
+		.map(|(name, is_default)| serde_json::json!({ "name": name, "isDefault": is_default }))
+		.collect()
+}
+
+/// The stored microphone preference (empty = system default).
+#[tauri::command]
+pub fn get_input_device(app: tauri::AppHandle) -> serde_json::Value {
+	let state = app.state::<AppState>();
+	serde_json::json!({
+		"name": state.db.get_setting(crate::keys::setting::INPUT_DEVICE).unwrap_or_default(),
+	})
+}
+
+/// Store the preferred microphone (empty name = system default). Takes
+/// effect on the next recording.
+#[tauri::command]
+pub async fn set_input_device(app: tauri::AppHandle, name: Option<String>) -> Result<(), String> {
+	let name = name.unwrap_or_default();
+	let stored = name.clone();
+	run_blocking("set input device", move || {
+		let state = app.state::<AppState>();
+		state
+			.db
+			.set_setting(crate::keys::setting::INPUT_DEVICE, &stored)
+	})
+	.await?;
+	crate::voice::set_preferred_device(&name);
+	Ok(())
+}
+
+/// Record ~2 s from the preferred microphone and report the peak level
+/// (0..1), so the wrong device is visible before talking into it.
+#[tauri::command]
+pub async fn test_input_device() -> Result<serde_json::Value, String> {
+	tauri::async_runtime::spawn_blocking(|| {
+		crate::voice::start_capture()?;
+		std::thread::sleep(std::time::Duration::from_millis(2_000));
+		let wav = crate::voice::stop_capture()?;
+		let samples = crate::stt::wav_to_samples(&wav)?;
+		let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+		// a healthy voice lands well above 0.05; digital silence is ~0
+		Ok(serde_json::json!({ "peak": peak }))
+	})
+	.await
+	.map_err(|e| e.to_string())?
+}
+
 /// Replace an idea's summary with a manually edited one. The structured
 /// feedback document is cleared (it no longer matches the text).
 #[tauri::command]

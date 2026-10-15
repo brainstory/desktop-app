@@ -49,6 +49,8 @@ describe("Profile", () => {
 		const user = userEvent.setup();
 		let calls = 0;
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => {
 				calls += 1;
 				if (calls === 1) throw new Error("db locked");
@@ -66,6 +68,8 @@ describe("Profile", () => {
 
 	it("shows 'Detect automatically' rather than Etc/GMT when no timezone is stored", async () => {
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => ({ ...userSettings, user: { name: "Ada" } })
 		});
 		render(<Profile />);
@@ -74,6 +78,8 @@ describe("Profile", () => {
 
 	it("labels the reminder hour with the stored timezone", async () => {
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => ({
 				...userSettings,
 				notifications: [
@@ -94,6 +100,8 @@ describe("Profile", () => {
 
 	it("shows the Updates card with the stored opt-out", async () => {
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })
 		});
 		render(<Profile />);
@@ -118,6 +126,8 @@ describe("Profile", () => {
 	it("shows the updates-off warning above the tabs, on every tab", async () => {
 		const user = userEvent.setup();
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => ({ ...userSettings, updates: { enabled: false } })
 		});
 		render(<Profile />);
@@ -134,6 +144,8 @@ describe("Profile", () => {
 	it("saves daily log ids sorted numerically without touching the child's array", async () => {
 		const user = userEvent.setup();
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => userSettings,
 			save_user_settings: () => ({ id: "settings" })
 		});
@@ -163,6 +175,8 @@ describe("Profile", () => {
 		const saves = [failed, ok];
 		let loadCount = 0;
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => {
 				loadCount += 1;
 				return loadCount === 1
@@ -199,6 +213,8 @@ describe("Profile", () => {
 		let loads = 0;
 		let saves = 0;
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => {
 				loads += 1;
 				return {
@@ -249,6 +265,8 @@ describe("Profile", () => {
 
 	it("follows a reminder toggle made from the tray menu", async () => {
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => ({
 				...userSettings,
 				notifications: [
@@ -305,6 +323,8 @@ describe("Profile", () => {
 		window.history.replaceState(null, "", "/");
 		let calls = 0;
 		mockInvoke({
+			get_input_device: () => ({ name: "" }),
+			list_input_devices: () => [],
 			get_user_settings: () => userSettings,
 			save_user_settings: () => {
 				calls += 1;

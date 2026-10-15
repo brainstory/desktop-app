@@ -10,6 +10,7 @@ import { QUERY_PARAMS } from "@src/tauri/commands";
 
 import { PhotoNameCard, GeneralCard, detectedTimezone } from "./ProfileCards";
 import { AboutCard } from "./AboutCard";
+import { MicrophoneCard } from "./MicrophoneCard";
 import { DailyLogSettingsCard } from "./DailyLogSettingsCard";
 import { NotificationsCard } from "./NotificationsCard";
 import AiModelsCard from "./AiModelsCard";
@@ -175,6 +176,7 @@ function ProfileInner() {
 						timeZone={userTimezone || detectedTimezone()}
 						saveSettings={handleNotificationsSave}
 					/>
+					<MicrophoneCard openSnackbar={openSnackbar} />
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
 					<QuickCaptureCard enabled={quickCapture} openSnackbar={openSnackbar} />
 					<UpdatesCard enabled={updates.enabled} onToggle={updates.save} />

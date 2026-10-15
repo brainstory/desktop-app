@@ -87,6 +87,66 @@ pub fn is_capturing() -> bool {
 	CAPTURE.lock().unwrap_or_else(|e| e.into_inner()).is_some()
 }
 
+/// The input device to record from: the stored preference by name, the
+/// system default when none is stored, and the default again (with a
+/// warning) when the preferred device is gone - an unplugged headset
+/// must not make recording impossible.
+fn pick_input_device(host: &cpal::Host) -> Result<cpal::Device, String> {
+	let default = host
+		.default_input_device()
+		.ok_or_else(|| "no microphone found".to_string())?;
+	// read without a db handle: callers pass nothing today and the
+	// preference is read at capture start by the command layer
+	let Some(preferred) = PREFERRED_DEVICE.get().cloned() else {
+		return Ok(default);
+	};
+	if preferred.is_empty() {
+		return Ok(default);
+	}
+	match host.input_devices() {
+		Ok(devices) => {
+			for device in devices {
+				if device.to_string() == preferred {
+					return Ok(device);
+				}
+			}
+			log::warn!("microphone '{preferred}' not found; using the default");
+			Ok(default)
+		}
+		Err(_) => Ok(default),
+	}
+}
+
+/// The preferred microphone name, set once at startup from the settings
+/// row (empty = system default). A static: cpal device enumeration on
+/// every capture start would race a settings change anyway.
+static PREFERRED_DEVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the preferred microphone for subsequent captures.
+pub fn set_preferred_device(name: &str) {
+	let _ = PREFERRED_DEVICE.set(name.to_string());
+}
+
+/// Enumerate input devices with their names, marking the system default.
+pub fn list_input_devices() -> Vec<(String, bool)> {
+	let host = cpal::default_host();
+	let default_name = host
+		.default_input_device()
+		.map(|d| d.to_string())
+		.unwrap_or_default();
+	host.input_devices()
+		.map(|devices| {
+			devices
+				.map(|device| {
+					let name = device.to_string();
+					let is_default = name == default_name;
+					(name, is_default)
+				})
+				.collect()
+		})
+		.unwrap_or_default()
+}
+
 pub fn start_capture() -> Result<(), String> {
 	let mut guard = CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
 	// Read under the CAPTURE lock so this cannot race abandon_capture
@@ -101,9 +161,7 @@ pub fn start_capture() -> Result<(), String> {
 	}
 
 	let host = cpal::default_host();
-	let device = host
-		.default_input_device()
-		.ok_or_else(|| "no microphone found".to_string())?;
+	let device = pick_input_device(&host)?;
 
 	let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
 	let queue = Arc::clone(&samples);

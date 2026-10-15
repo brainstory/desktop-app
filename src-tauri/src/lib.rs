@@ -93,6 +93,10 @@ pub fn run() {
 			commands::data::link_idea_log,
 			commands::data::open_data_folder,
 			commands::data::set_idea_result,
+			commands::data::get_input_device,
+			commands::data::list_input_devices,
+			commands::data::set_input_device,
+			commands::data::test_input_device,
 			commands::data::open_log_folder,
 			commands::data::copy_diagnostics,
 			commands::data::get_all_ideas,
@@ -249,6 +253,16 @@ pub fn run() {
 			}
 
 			app.manage(AppState::new(db, data_dir));
+
+			// the preferred microphone, read once (an unplugged device
+			// falls back to the default inside voice.rs)
+			if let Some(preferred) = app
+				.state::<AppState>()
+				.db
+				.get_setting(keys::setting::INPUT_DEVICE)
+			{
+				voice::set_preferred_device(&preferred);
+			}
 
 			setup_tray(app)?;
 			// Quick capture is on by default; a stored "false" releases
