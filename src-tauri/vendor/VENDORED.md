@@ -34,7 +34,18 @@ is MIT (`whisper-rs-sys/whisper.cpp/LICENSE`).
 
 Every change to the upstream files is in this repository's git history on
 top of the commit that added them unmodified ("Vendor whisper-rs ..."). In
-short, all in `whisper-rs-sys/` (marked `Brainstory:` in the code):
+short (marked `Brainstory:` in the code):
+
+In `whisper-rs/`:
+
+- `src/whisper_params.rs`: `set_abort_callback_safe`'s trampoline cast the
+  double-boxed closure to `*mut F`, so any capturing closure read a heap
+  address as its captured state and the first abort poll returned true -
+  whisper_encode aborted with error -6 on every CI runner (the progress
+  callback's trampoline has the correct `*mut Box<dyn FnMut ...>` form;
+  the abort one now matches it).
+
+In `whisper-rs-sys/`:
 
 - `Cargo.toml`: depends on `llama-cpp-sys-2` (same exact version as the app's
   pin). That makes cargo pass `DEP_LLAMA_GGML_CMAKE_DIR`, the ggml CMake

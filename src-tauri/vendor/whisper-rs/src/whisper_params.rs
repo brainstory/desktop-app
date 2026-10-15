@@ -625,11 +625,14 @@ impl<'a, 'b> FullParams<'a, 'b> {
     {
         use std::ffi::c_void;
 
-        unsafe extern "C" fn trampoline<F>(user_data: *mut c_void) -> bool
-        where
-            F: FnMut() -> bool,
-        {
-            let user_data = &mut *(user_data as *mut F);
+        // Brainstory: cast to the boxed closure actually stored below.
+        // Upstream's `trampoline::<F>` (as *mut F) reinterprets the
+        // double box as the closure type itself, so any capturing
+        // closure reads a heap address as its captured state - the first
+        // poll returned true and whisper_encode aborted with error -6.
+        // The progress callback above has the correct form.
+        unsafe extern "C" fn trampoline(user_data: *mut c_void) -> bool {
+            let user_data = &mut *(user_data as *mut Box<dyn FnMut() -> bool>);
             user_data()
         }
 
@@ -642,7 +645,7 @@ impl<'a, 'b> FullParams<'a, 'b> {
                 // Raw pointer
                 let closure = Box::into_raw(closure);
 
-                self.fp.abort_callback = Some(trampoline::<F>);
+                self.fp.abort_callback = Some(trampoline);
                 self.fp.abort_callback_user_data = closure as *mut c_void;
                 self.abort_callback_safe = None;
             }
