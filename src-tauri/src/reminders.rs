@@ -48,28 +48,29 @@ pub fn spawn(app: AppHandle) {
 
 /// One scheduler pass. Returns how long to sleep before the next pass.
 async fn tick(app: &AppHandle) -> Duration {
-	let state = app.state::<std::sync::Arc<AppState>>();
+	let state = app.state::<AppState>();
 	// The reminder clock runs in the SAME zone as the daily boundaries:
 	// the stored user timezone when one resolves, the OS zone otherwise
 	// (Db::active_zone mirrors the stored row; the reminder's "today"
 	// and has_activity_today's "today" can never disagree).
 	let zone = state.db.active_zone();
-	tick_in_zone(app, std::sync::Arc::clone(&state), zone).await
+	tick_in_zone(app, zone).await
 }
 
 /// The scheduler pass for one active zone (None = OS-local).
-async fn tick_in_zone(
-	app: &AppHandle,
-	state: std::sync::Arc<AppState>,
-	zone: Option<Tz>,
-) -> Duration {
+async fn tick_in_zone(app: &AppHandle, zone: Option<Tz>) -> Duration {
 	// the settings reads and the activity check are blocking DB work:
 	// run them on the blocking pool (behind a big write they can hold
-	// the 5 s busy_timeout)
-	let db_state = std::sync::Arc::clone(&state);
+	// the 5 s busy_timeout). The AppHandle is cloned into the task and
+	// resolves the state there - the app manages AppState, and holding
+	// `State<'_, AppState>` across the await would borrow the wrong
+	// thing (an earlier `state::<Arc<AppState>>() lookup here panicked
+	// on every wake).
+	let task_app = app.clone();
 	let phase = tauri::async_runtime::spawn_blocking(move || {
+		let state = task_app.state::<AppState>();
 		// Phase 1 outcome: Disabled | Handled | Fire | Wait
-		let enabled = db_state
+		let enabled = state
 			.db
 			.get_setting(keys::setting::REMINDER_ENABLED)
 			.map(|v| v == "true")
@@ -77,7 +78,7 @@ async fn tick_in_zone(
 		if !enabled {
 			return TickPhase::Disabled;
 		}
-		let time_str = db_state
+		let time_str = state
 			.db
 			.get_setting(keys::setting::REMINDER_TIME)
 			.filter(|s| !s.is_empty())
@@ -85,7 +86,7 @@ async fn tick_in_zone(
 		let (hour, minute) = parse_time(&time_str);
 		let now = Utc::now();
 		let today = wall_clock(zone, &now).format("%Y-%m-%d").to_string();
-		let last_fired = db_state
+		let last_fired = state
 			.db
 			.get_setting(keys::setting::REMINDER_LAST_FIRED)
 			.unwrap_or_default();
@@ -97,9 +98,9 @@ async fn tick_in_zone(
 		}
 		// Already brainstormed today? Then the reminder has nothing to
 		// do (record it as handled so the loop sleeps until tomorrow).
-		match db_state.db.has_activity_today() {
+		match state.db.has_activity_today() {
 			Ok(true) => {
-				if let Err(e) = db_state
+				if let Err(e) = state
 					.db
 					.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
 				{
@@ -142,9 +143,10 @@ async fn tick_in_zone(
 		.body("What's on your mind today? Take a few minutes to think out loud.")
 		.show();
 	// record the firing off the async worker too (same blocking-DB rule)
-	let record_state = std::sync::Arc::clone(&state);
+	let record_app = app.clone();
 	let _ = tauri::async_runtime::spawn_blocking(move || {
-		record_state
+		record_app
+			.state::<AppState>()
 			.db
 			.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
 	})

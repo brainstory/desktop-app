@@ -62,15 +62,22 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 						.to_string(),
 						size_bytes: spec.size_bytes,
 						downloaded: state.is_model_downloaded(spec),
+						// "active" describes the engine actually running: a
+						// model that is selected-but-not-downloaded must not
+						// show as active (the runtime reports missing until
+						// it lands)
 						active: match kind {
 							ModelKind::Llm => {
-								!settings.uses_external_llm() && settings.llm_model == spec.id
+								!settings.uses_external_llm()
+									&& settings.llm_model == spec.id
+									&& state.is_model_downloaded(spec)
 							}
 							// A whisper model is only "active" when whisper actually
 							// handles local transcription (Apple Speech mode demotes it
 							// to fallback).
 							ModelKind::Stt => {
 								settings.stt_model == spec.id
+									&& state.is_model_downloaded(spec)
 									&& settings.effective_stt_engine()
 										== crate::models::SpeechEngine::Whisper
 							}
