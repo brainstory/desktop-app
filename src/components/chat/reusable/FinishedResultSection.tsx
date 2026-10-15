@@ -20,6 +20,8 @@ interface FinishedResultSectionProps {
 	statusText?: string | null;
 	/** a feedback result finished without its comment cards */
 	cardsMissing?: boolean;
+	/** the idea document was shortened to fit the context window */
+	ideaCapped?: boolean;
 }
 
 export default function FinishedResultSection({
@@ -34,7 +36,8 @@ export default function FinishedResultSection({
 	onRetryGeneration,
 	onKeepDraft,
 	statusText,
-	cardsMissing
+	cardsMissing,
+	ideaCapped
 }: FinishedResultSectionProps) {
 	return (
 		<section>
@@ -55,6 +58,7 @@ export default function FinishedResultSection({
 				onKeepDraft={onKeepDraft}
 				statusText={statusText}
 				cardsMissing={cardsMissing}
+				ideaCapped={ideaCapped}
 			/>
 		</section>
 	);

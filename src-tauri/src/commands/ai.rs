@@ -37,6 +37,19 @@ fn take_transcription_token(state: &AppState) -> Arc<AtomicBool> {
 	token
 }
 
+/// The context window a request should budget against, from the
+/// settings: the external endpoint's own limit when routed there, else
+/// the local window (clamped to the model's trained context at load
+/// time; the pre-load approximation is conservative enough for the
+/// idea-document cap).
+fn context_budget_tokens(settings: &AiSettings) -> u32 {
+	if settings.uses_external_llm() {
+		crate::llm::DEFAULT_EXT_CTX
+	} else {
+		crate::llm::effective_ctx_for(settings.llm_ctx_tokens, None)
+	}
+}
+
 /// RAII counter for in-flight generations: a model switch (and the
 /// quick-capture shortcut) waits for these to drain instead of yanking
 /// the page or the engine's memory out from under a live generation.
@@ -231,6 +244,8 @@ impl GenerateParams {
 			react_to_author: self.react_to_author,
 			react_to_is_current_user: self.react_to_is_current_user,
 			structured_feedback: self.structured_feedback,
+			// refined against the settings before the prompt is built
+			built_ctx: crate::llm::DEFAULT_N_CTX,
 		};
 		if request.react_to.is_some() && request.chat_type == ChatType::Original {
 			request.chat_type = ChatType::Feedback;
@@ -255,6 +270,12 @@ async fn generate_and_respond<F>(
 where
 	F: Fn(EmitKind, &str) -> bool + Send + Sync + Clone + 'static,
 {
+	let request = {
+		let mut request = request.clone();
+		request.built_ctx = context_budget_tokens(&state.ai_settings());
+		request
+	};
+	let idea_capped = request.idea_capped_for_ctx();
 	let system = request.system_prompt();
 	let word_count: usize = request
 		.messages
@@ -397,6 +418,8 @@ where
 		// how many transcript turns the summary fit had to leave out
 		"truncated": dropped_turns > 0,
 		"dropped_turns": dropped_turns,
+		// the feedback idea document was shortened for the context window
+		"idea_truncated": idea_capped,
 	}))
 }
 
@@ -492,6 +515,7 @@ pub async fn regenerate_result(
 				react_to_author: None,
 				react_to_is_current_user: false,
 				structured_feedback: false,
+				built_ctx: context_budget_tokens(&app_state.ai_settings()),
 			};
 			// a feedback idea regenerates against its parent document
 			if request.chat_type == ChatType::Feedback {

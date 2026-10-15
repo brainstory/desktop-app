@@ -91,6 +91,8 @@ export interface ChatSessionState {
 	resultStoppedEarly: boolean;
 	/** how many turns resultTruncated dropped */
 	resultDroppedTurns: number;
+	/** the feedback idea document was shortened for the context window */
+	resultIdeaCapped: boolean;
 	/** saving the finished summary failed (the summary is kept so the
 	 * save can be retried) */
 	resultSaveError: string | null;
@@ -111,6 +113,7 @@ export type ChatSessionEvent =
 	| { type: "resultRequested" }
 	| { type: "resultStreamed" }
 	| { type: "resultTruncated"; droppedTurns: number }
+	| { type: "resultIdeaCapped" }
 	| { type: "resultStatus"; text: string }
 	| { type: "resultCardsMissing" }
 	| { type: "resultSaved" }
@@ -127,6 +130,7 @@ export const initialChatSessionState: ChatSessionState = {
 	resultComplete: false,
 	resultTruncated: false,
 	resultDroppedTurns: 0,
+	resultIdeaCapped: false,
 	resultStatus: null,
 	resultCardsMissing: false,
 	resultStoppedEarly: false,
@@ -194,6 +198,7 @@ export function chatSessionReducer(
 				resultComplete: false,
 				resultTruncated: false,
 				resultDroppedTurns: 0,
+				resultIdeaCapped: false,
 				resultStoppedEarly: false,
 				resultStatus: null,
 				resultCardsMissing: false,
@@ -211,6 +216,8 @@ export function chatSessionReducer(
 				resultTruncated: true,
 				resultDroppedTurns: event.droppedTurns
 			};
+		case "resultIdeaCapped":
+			return { ...state, resultIdeaCapped: true };
 		case "resultSaved":
 			return {
 				...state,
@@ -457,6 +464,9 @@ export function useChatSession(
 					type: "resultTruncated",
 					droppedTurns: generation.dropped_turns ?? 0
 				});
+			}
+			if (generation?.idea_truncated) {
+				dispatch({ type: "resultIdeaCapped" });
 			}
 			if (parentIdea && (structuredResult === null || structuredResult === undefined)) {
 				// the prose saved fine; only the comment cards failed

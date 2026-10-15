@@ -99,6 +99,8 @@ export interface GenerationResult {
 	truncated?: boolean;
 	/** how many transcript turns the summary fit dropped */
 	dropped_turns?: number;
+	/** the feedback idea document was shortened for the context window */
+	idea_truncated?: boolean;
 }
 
 type UpdateMessage = (message: string) => void;

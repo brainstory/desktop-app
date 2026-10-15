@@ -22,6 +22,8 @@ interface StickyLoadingSectionProps {
 	statusText?: string | null;
 	/** a feedback result finished without its structured comment cards */
 	cardsMissing?: boolean;
+	/** the idea document was shortened to fit the context window */
+	ideaCapped?: boolean;
 }
 
 /** One-line amber notice: the conversation was longer than the model's
@@ -32,6 +34,17 @@ function TruncationNotice({ droppedTurns }: { droppedTurns: number }) {
 			The model could only read the last part of this conversation ({droppedTurns} earlier
 			turns were left out). Shorter sessions, or a larger context window under Settings &gt;
 			AI Models, avoid this.
+		</p>
+	);
+}
+
+/** One-line amber notice: the idea document was shortened to fit. */
+function IdeaCappedNotice() {
+	return (
+		<p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-center">
+			The idea document was shortened to fit the model&rsquo;s context window; the model only
+			read the first sections. A larger context window under Settings &gt; AI Models avoids
+			this.
 		</p>
 	);
 }
@@ -47,7 +60,8 @@ export default function StickyLoadingSection({
 	onRetryGeneration,
 	onKeepDraft,
 	statusText = null,
-	cardsMissing = false
+	cardsMissing = false,
+	ideaCapped = false
 }: StickyLoadingSectionProps) {
 	const truncated = droppedTurns > 0;
 	return (
@@ -92,6 +106,7 @@ export default function StickyLoadingSection({
 						Finished! Saved your summary
 					</h1>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
+					{ideaCapped && <IdeaCappedNotice />}
 					{cardsMissing && (
 						<p className="mb-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-center">
 							Couldn&rsquo;t build comment cards; your written feedback is saved.
@@ -121,6 +136,7 @@ export default function StickyLoadingSection({
 				<>
 					<h1 className={headingStyle}>Hang tight! Writing your thoughts down...</h1>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
+					{ideaCapped && <IdeaCappedNotice />}
 					<LoadingAnimation
 						text={statusText ?? "Saving your summary — keep the app open."}
 					/>

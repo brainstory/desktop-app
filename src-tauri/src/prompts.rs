@@ -220,6 +220,10 @@ pub struct PromptRequest {
 	pub react_to_author: Option<String>,
 	pub react_to_is_current_user: bool,
 	pub structured_feedback: bool,
+	/// The context window the prompt is budgeted for (the command layer
+	/// fills it from the settings; 0 = the app default). Drives the cap
+	/// on a pasted feedback idea.
+	pub built_ctx: u32,
 }
 
 impl PromptRequest {
@@ -255,7 +259,12 @@ impl PromptRequest {
 				} else {
 					"false"
 				};
-				let idea = sanitize_tag_content(&self.react_to.clone().unwrap_or_default(), "idea");
+				// an imported idea can be far larger than the context
+				// window: cap it (whole sections) so the conversation
+				// still fits beside it
+				let (idea, _) =
+					cap_idea_document(&self.react_to.clone().unwrap_or_default(), self.built_ctx);
+				let idea = sanitize_tag_content(&idea, "idea");
 				format!(
 					"{}\n\n<idea author=\"{}\" is_current_user=\"{}\">{}</idea>",
 					Prompt::StoryInterviewReact.text().trim_end(),
@@ -275,6 +284,19 @@ impl PromptRequest {
 		self.messages.clone()
 	}
 
+	/// Whether the feedback idea had to be shortened for the context
+	/// window (for the same truncation notice as a dropped-turns
+	/// summary).
+	pub fn idea_capped_for_ctx(&self) -> bool {
+		if self.chat_type != ChatType::Feedback {
+			return false;
+		}
+		let Some(idea) = self.react_to.as_deref() else {
+			return false;
+		};
+		cap_idea_document(idea, self.built_ctx).1
+	}
+
 	/// The engine-call renderer for summary generations: `Some` exactly
 	/// when this request summarizes. Serializes the (fitted) turns into
 	/// the single message the model sees.
@@ -290,6 +312,7 @@ impl PromptRequest {
 			react_to_author: self.react_to_author.clone(),
 			react_to_is_current_user: self.react_to_is_current_user,
 			structured_feedback: false,
+			built_ctx: self.built_ctx,
 		};
 		Some(Arc::new(move |turns: &[ChatMessage]| {
 			shape.summary_message(turns).content
@@ -343,6 +366,32 @@ impl PromptRequest {
 			content,
 		}
 	}
+}
+
+/// Cap a feedback idea so the system prompt cannot crowd out the
+/// conversation: at most `(ctx - 3000) * 3` bytes (~3 bytes/token minus
+/// room for prompt scaffolding and replies), cut at the last `\n## `
+/// heading boundary before the limit so sections stay whole. Returns
+/// the capped text and whether anything was cut.
+pub fn cap_idea_document(idea: &str, built_ctx: u32) -> (String, bool) {
+	const RESERVE_TOKENS: u32 = 3_000;
+	const BYTES_PER_TOKEN: usize = 3;
+	let max_bytes = (built_ctx.saturating_sub(RESERVE_TOKENS) as usize) * BYTES_PER_TOKEN;
+	if idea.len() <= max_bytes {
+		return (idea.to_string(), false);
+	}
+	// prefer cutting at the last heading boundary inside the budget;
+	// step back to a char boundary by hand (floor_char_boundary needs a
+	// newer Rust than the MSRV)
+	let mut limit = max_bytes.min(idea.len());
+	while limit > 0 && !idea.is_char_boundary(limit) {
+		limit -= 1;
+	}
+	let window = &idea[..limit];
+	let cut = window.rfind("\n## ").unwrap_or(window.len());
+	let mut capped = String::from(&idea[..cut]);
+	capped.push_str("\n\n[document shortened to fit the model]");
+	(capped, true)
 }
 
 /// An idea document without the assistant's synthesis appendix. Story
@@ -430,6 +479,7 @@ mod tests {
 			react_to_author: None,
 			react_to_is_current_user: false,
 			structured_feedback: false,
+			built_ctx: 16_384,
 		};
 		let content = &request.user_messages()[0].content;
 		assert!(content.contains("honest answer"), "kept: {content}");
@@ -450,6 +500,88 @@ mod tests {
 }
 
 #[cfg(test)]
+mod idea_cap_tests {
+	use super::{cap_idea_document, ChatType, PromptRequest};
+
+	fn request(chat_type: ChatType, summarize: bool) -> PromptRequest {
+		PromptRequest {
+			chat_type,
+			messages: Vec::new(),
+			summarize,
+			react_to: None,
+			react_to_author: None,
+			react_to_is_current_user: false,
+			structured_feedback: false,
+			built_ctx: 16_384,
+		}
+	}
+
+	fn big_idea() -> String {
+		let mut doc = String::from("# Huge idea\n\n");
+		for i in 0..5_000 {
+			doc.push_str(&format!("## Section {i}\n\nBody text for section {i}.\n\n"));
+		}
+		doc
+	}
+
+	#[test]
+	fn a_huge_idea_is_capped_on_a_heading_boundary() {
+		let ctx = 16_384u32;
+		let doc = big_idea();
+		assert!(doc.len() > 200_000, "fixture is 200 KB: {}", doc.len());
+		let (capped, was_capped) = cap_idea_document(&doc, ctx);
+		assert!(was_capped);
+		let max_bytes = (ctx as usize - 3_000) * 3;
+		assert!(
+			capped.len() <= max_bytes + 64,
+			"{} vs {max_bytes}",
+			capped.len()
+		);
+		assert!(
+			capped
+				.trim_end()
+				.ends_with("[document shortened to fit the model]"),
+			"{:?}",
+			capped.lines().last()
+		);
+		// the cut happened at a heading boundary: no partial section text
+		let before_marker = capped
+			.split("[document shortened")
+			.next()
+			.unwrap()
+			.trim_end();
+		assert!(
+			before_marker.ends_with('.'),
+			"cut mid-section: {:?}",
+			&before_marker[before_marker.len().saturating_sub(60)..]
+		);
+	}
+
+	#[test]
+	fn a_small_idea_is_untouched() {
+		let (capped, was_capped) = cap_idea_document("# Tiny\n\nbody", 16_384);
+		assert_eq!(capped, "# Tiny\n\nbody");
+		assert!(!was_capped);
+	}
+
+	#[test]
+	fn the_feedback_system_prompt_carries_the_capped_idea_and_flag() {
+		let mut req = request(ChatType::Feedback, false);
+		req.react_to = Some(big_idea());
+		req.built_ctx = 16_384;
+		let system = req.system_prompt();
+		let max_bytes = (16_384usize - 3_000) * 3;
+		assert!(
+			system.len() < max_bytes + 8_192,
+			"system prompt with the capped idea: {}",
+			system.len()
+		);
+		assert!(system.contains("[document shortened to fit the model]"));
+		assert!(req.idea_capped_for_ctx());
+	}
+}
+
+#[cfg(test)]
 mod contract_tests {
 	use super::*;
 
@@ -465,6 +597,7 @@ mod contract_tests {
 			react_to_author: None,
 			react_to_is_current_user: false,
 			structured_feedback: false,
+			built_ctx: 16_384,
 		}
 	}
 
