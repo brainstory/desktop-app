@@ -514,18 +514,28 @@ impl LocalLlm {
 			last_progress = std::time::Instant::now();
 		}
 
-		// Gemma-recommended sampling: top_k 64, top_p 0.95. Summaries use a
-		// lower temperature for more deterministic structure; an override
-		// (the malformed-summary retry) wins.
-		let temperature = temperature_override.unwrap_or(if summarize { 0.35 } else { 0.7 });
+		// The shared sampling profile (llm::Sampling): penalties and
+		// min_p sit ahead of temperature in the chain, per llama.cpp
+		// guidance; a temperature override (the malformed-summary retry)
+		// wins over the profile's value.
+		let sampling = crate::llm::sampling::effective(summarize);
+		let temperature = temperature_override.unwrap_or(sampling.temperature);
 		let seed = std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
 			.map(|d| d.subsec_nanos())
 			.unwrap_or(42);
 		let mut sampler = LlamaSampler::chain(
 			[
-				LlamaSampler::top_k(64),
-				LlamaSampler::top_p(0.95, 1),
+				LlamaSampler::penalties(
+					0,
+					sampling.repeat_last_n,
+					sampling.repeat_penalty,
+					0.0,
+					0.0,
+				),
+				LlamaSampler::top_k(sampling.top_k),
+				LlamaSampler::top_p(sampling.top_p, 1),
+				LlamaSampler::min_p(sampling.min_p, 1),
 				LlamaSampler::temp(temperature),
 				LlamaSampler::dist(seed),
 			],

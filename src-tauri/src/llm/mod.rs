@@ -56,6 +56,46 @@ pub fn neutralize_turn_markers(content: &str) -> String {
 		.replace("|>", "\\|>")
 }
 
+/// Sampling parameters for one generation: the local sampler chain and
+/// the external request body are built from the same values, so the two
+/// engines behave alike. Overridable at runtime via
+/// `<app data>/prompts/sampling.json`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sampling {
+	pub temperature: f32,
+	pub top_k: i32,
+	pub top_p: f32,
+	pub min_p: f32,
+	pub repeat_penalty: f32,
+	pub repeat_last_n: i32,
+}
+
+impl Sampling {
+	/// The production defaults: livelier for interview replies, more
+	/// deterministic for result documents.
+	pub fn for_request(summarize: bool) -> Sampling {
+		if summarize {
+			Sampling {
+				temperature: 0.35,
+				top_k: 40,
+				top_p: 0.9,
+				min_p: 0.05,
+				repeat_penalty: 1.05,
+				repeat_last_n: 256,
+			}
+		} else {
+			Sampling {
+				temperature: 0.7,
+				top_k: 64,
+				top_p: 0.95,
+				min_p: 0.05,
+				repeat_penalty: 1.1,
+				repeat_last_n: 64,
+			}
+		}
+	}
+}
+
 /// Context window assumed for an external endpoint until the user
 /// configures one (see the AI settings): a sane default for local
 /// OpenAI-compatible servers (Ollama, LM Studio).
@@ -188,6 +228,7 @@ pub fn fit_summary_turns(
 
 mod external;
 mod local;
+pub mod sampling;
 
 use std::sync::Arc;
 

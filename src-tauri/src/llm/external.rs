@@ -278,6 +278,7 @@ impl ExternalLlm {
 				cancel,
 				max_tokens,
 				temperature_override,
+				summary_render.is_some(),
 				on_chunk,
 				GenerationLimits::production(),
 			)
@@ -296,10 +297,12 @@ impl ExternalLlm {
 		cancel: &AtomicBool,
 		max_tokens: u32,
 		temperature_override: Option<f32>,
+		summarize: bool,
 		mut on_chunk: impl FnMut(String) + Send,
 		limits: GenerationLimits,
 	) -> Result<(String, Option<usize>), String> {
-		let temperature = temperature_override.unwrap_or(0.7);
+		let temperature = temperature_override
+			.unwrap_or_else(|| super::sampling::effective(summarize).temperature);
 		// (text, prompt-token count). External endpoints don't report their
 		// prompt tokenization, hence the None.
 		let mut body_messages = vec![];
@@ -314,13 +317,28 @@ impl ExternalLlm {
 			.client
 			.post(self.completions_url())
 			.header("User-Agent", crate::models::USER_AGENT)
-			.json(&serde_json::json!({
-				"model": self.model,
-				"messages": body_messages,
-				"stream": true,
-				"temperature": temperature,
-				"max_tokens": max_tokens,
-			}));
+			.json(&{
+				// the same sampling profile the local engine uses
+				let sampling = super::sampling::effective(summarize);
+				let mut body = serde_json::json!({
+					"model": self.model,
+					"messages": body_messages,
+					"stream": true,
+					"temperature": temperature,
+					"top_k": sampling.top_k,
+					"top_p": sampling.top_p,
+					"min_p": sampling.min_p,
+					"repeat_penalty": sampling.repeat_penalty,
+					"repeat_last_n": sampling.repeat_last_n,
+					"max_tokens": max_tokens,
+				});
+				// a temperature override (the malformed-summary retry)
+				// already replaced the profile's value above
+				if let Some(t) = temperature_override {
+					body["temperature"] = serde_json::json!(t);
+				}
+				body
+			});
 		if !self.api_key.is_empty() {
 			request = request.bearer_auth(&self.api_key);
 		}
@@ -1313,7 +1331,7 @@ mod external_stream_tests {
 		};
 		let result = tokio::time::timeout(
 			std::time::Duration::from_secs(5),
-			client.generate_with_limits("", &[], &cancel, 8, None, |_| {}, limits),
+			client.generate_with_limits("", &[], &cancel, 8, None, false, |_| {}, limits),
 		)
 		.await
 		.expect("the overall budget must end a trickling stream");
@@ -1561,7 +1579,7 @@ mod external_stream_tests {
 			..GenerationLimits::production()
 		};
 		let (output, _) = client
-			.generate_with_limits("", &[], &cancel, 8, None, |_| {}, limits)
+			.generate_with_limits("", &[], &cancel, 8, None, false, |_| {}, limits)
 			.await
 			.expect("an event exactly at the cap is valid");
 		assert_eq!(output.len(), n);
@@ -1583,7 +1601,7 @@ mod external_stream_tests {
 			..GenerationLimits::production()
 		};
 		let (output, _) = client
-			.generate_with_limits("", &[], &cancel, 8, None, |_| {}, limits)
+			.generate_with_limits("", &[], &cancel, 8, None, false, |_| {}, limits)
 			.await
 			.expect("output landing exactly at the cap is valid");
 		assert_eq!(output, "ab🧠cd");
@@ -1606,7 +1624,7 @@ mod external_stream_tests {
 			..GenerationLimits::production()
 		};
 		let (output, _) = client
-			.generate_with_limits("", &[], &cancel, 8, None, |_| {}, at_limit)
+			.generate_with_limits("", &[], &cancel, 8, None, false, |_| {}, at_limit)
 			.await
 			.expect("the emoji lands exactly at the cap");
 		assert_eq!(output, "ab🧠");
@@ -1624,7 +1642,16 @@ mod external_stream_tests {
 		};
 		let mut chunks = Vec::new();
 		let err = client
-			.generate_with_limits("", &[], &cancel, 8, None, |c| chunks.push(c), one_past)
+			.generate_with_limits(
+				"",
+				&[],
+				&cancel,
+				8,
+				None,
+				false,
+				|c| chunks.push(c),
+				one_past,
+			)
 			.await
 			.expect_err("one byte past the cap must fail");
 		assert!(

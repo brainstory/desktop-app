@@ -68,6 +68,11 @@ the session is often only a few messages long.
 
 ## Runtime overrides
 
+`sampling.json` in the same directory overrides the sampling profiles without a binary
+release: `{"reply": {...}, "summary": {...}}` with any of `temperature`, `top_k`,
+`top_p`, `min_p`, `repeat_penalty`, `repeat_last_n`. Out-of-range or unknown fields are
+ignored (and logged); the file is read once at startup.
+
 The prompts are compiled into the binary. At startup the app also looks for
 `<app data dir>/prompts/<name>.txt` (for example `story_result_system_message.txt`) and, when found,
 uses it instead of the built-in prompt, so a prompt fix can ship without a new release. The app data

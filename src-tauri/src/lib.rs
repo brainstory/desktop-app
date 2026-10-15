@@ -209,6 +209,7 @@ pub fn run() {
 			// interrupted by a quit continues from its .part next time.
 			models::sweep_stale_part_files(&data_dir.join("models"), &models::primary_hub_cache());
 			prompts::init_overrides(&data_dir);
+			llm::sampling::init_overrides(&data_dir);
 
 			let db = match open_database(&data_dir) {
 				Ok(db) => db,
