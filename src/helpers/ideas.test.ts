@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { IdeaListItem } from "@src/types";
 
 import {
 	isOwnIdea,
 	parseHeadingIndex,
 	stripNotesSection,
 	stripResultPreview,
-	cardSummaryPreview,
-	filterAndSortIdeas
+	cardSummaryPreview
 } from "./ideas";
 
 describe("cardSummaryPreview", () => {
@@ -134,73 +132,5 @@ describe("parseHeadingIndex", () => {
 		["past the last ## section", "3## x"]
 	])("rejects %s", (_label, text) => {
 		expect(parseHeadingIndex(text, sections)).toBeNull();
-	});
-});
-
-describe("filterAndSortIdeas", () => {
-	const idea = (overrides: Partial<IdeaListItem>): IdeaListItem => ({
-		id: Math.random().toString(36).slice(2),
-		summaryPreview: "",
-		createdAt: "2026-01-01T00:00:00",
-		...overrides
-	});
-	const library: IdeaListItem[] = [
-		idea({ id: "own-old", title: "Zebra plan", createdAt: "2026-01-01", isUnread: false }),
-		idea({ id: "own-new", title: "Aardvark idea", createdAt: "2026-03-01", isUnread: true }),
-		idea({
-			id: "shared",
-			title: "Shared thought",
-			creatorName: "Ada",
-			createdAt: "2026-02-01",
-			summaryPreview: "about zebras",
-			feedback: [idea({ id: "shared-draft", isDraft: true, draftSummary: "half said" })]
-		})
-	];
-
-	it("searches title, preview, draft summary and creator case-insensitively", () => {
-		expect(filterAndSortIdeas(library, "zebra", [], "newest").map((i) => i.id)).toEqual([
-			"shared",
-			"own-old"
-		]);
-		expect(filterAndSortIdeas(library, "ADA", [], "newest").map((i) => i.id)).toEqual([
-			"shared"
-		]);
-		expect(filterAndSortIdeas(library, "half said", [], "newest").map((i) => i.id)).toEqual([
-			"shared"
-		]);
-	});
-
-	it("combines filter chips with AND semantics, keeping draft parents reachable", () => {
-		expect(filterAndSortIdeas(library, "", ["drafts"], "newest").map((i) => i.id)).toEqual([
-			"shared"
-		]);
-		expect(filterAndSortIdeas(library, "", ["shared", "mine"], "newest")).toEqual([]);
-		expect(filterAndSortIdeas(library, "", ["unread"], "newest").map((i) => i.id)).toEqual([
-			"own-new"
-		]);
-	});
-
-	it("sorts newest-first by default and honors the other orders", () => {
-		expect(filterAndSortIdeas(library, "", [], "newest").map((i) => i.id)).toEqual([
-			"own-new",
-			"shared",
-			"own-old"
-		]);
-		expect(filterAndSortIdeas(library, "", [], "oldest").map((i) => i.id)).toEqual([
-			"own-old",
-			"shared",
-			"own-new"
-		]);
-		expect(filterAndSortIdeas(library, "", [], "title").map((i) => i.id)).toEqual([
-			"own-new",
-			"shared",
-			"own-old"
-		]);
-		// unread first, then the rest newest-first
-		expect(filterAndSortIdeas(library, "", [], "unread").map((i) => i.id)).toEqual([
-			"own-new",
-			"shared",
-			"own-old"
-		]);
 	});
 });
