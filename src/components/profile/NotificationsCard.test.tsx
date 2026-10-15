@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { NotificationsCard } from "./NotificationsCard";
@@ -35,6 +35,18 @@ describe("NotificationsCard", () => {
 		// the hour the picker edits is wall-clock time in the user's
 		// chosen zone, not the machine's
 		expect(screen.getByText("Asia/Tokyo time")).toBeInTheDocument();
+	});
+
+	it("edits the hour through the native time input", async () => {
+		const save = vi.fn(async () => true);
+		render(<NotificationsCard notificationsData={[reminder]} saveSettings={save} />);
+		const input = screen.getByLabelText("Daily intention reminder hour");
+		expect(input).toHaveValue("09:00");
+		// jsdom does not run the browser's time-widget; fireEvent the change
+		fireEvent.change(input, { target: { value: "17:00" } });
+		expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
+		await userEvent.click(screen.getByRole("button", { name: /save/i }));
+		expect(save).toHaveBeenCalledWith([expect.objectContaining({ value: "17:00:00" })]);
 	});
 
 	it("follows a timezone change without remounting", () => {

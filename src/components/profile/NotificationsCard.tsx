@@ -2,7 +2,6 @@ import { useId, useState } from "react";
 import type { NotificationSetting } from "@helpers/api/settings";
 
 import { Card } from "./ProfileCards";
-import TimePickerInput from "@components/global/time-picker/TimePickerInput";
 import { useDirtySave } from "@src/hooks/useDirtySave";
 
 import OnOffToggleButton from "@ds/OnOffToggleButton";
@@ -80,7 +79,6 @@ export function NotificationsCard({
 
 			if (field.valueType === "time") {
 				const hourDigit = Number((field.value ?? "00").split(":")[0]);
-				const hourAsDate = new Date(new Date().setHours(hourDigit, 0, 0, 0));
 				const titleId = `${titleIdBase}-title-${i}`;
 
 				return (
@@ -98,16 +96,33 @@ export function NotificationsCard({
 								onToggle={handleEnabledToggle}
 							/>
 							<div className="flex items-center flex-nowrap m-1 gap-1">
-								<TimePickerInput
-									picker="hours"
-									date={hourAsDate}
-									setDate={setHour}
+								{/* a native time input: the custom picker swallowed
+								    paste, IME and on-screen keyboards (its own
+								    onKeyDown handled every keystroke); step=3600
+								    keeps whole hours */}
+								<input
+									type="time"
+									step={3600}
+									value={`${String(hourDigit).padStart(2, "0")}:00`}
 									disabled={!field.enabled}
-									aria-label={`${field.title} reminder hour`}
+									aria-label={`${field.title} hour`}
+									onChange={(e) => {
+										// "" = cleared: keep the previous hour
+										const picked = e.target.value;
+										if (!picked) return;
+										setHour(
+											new Date(
+												new Date().setHours(
+													Number(picked.split(":")[0] || 0),
+													0,
+													0,
+													0
+												)
+											)
+										);
+									}}
+									className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 p-1.5 bg-white"
 								/>
-								<p className="font-mono tabular-nums text-sm" aria-hidden="true">
-									:00
-								</p>
 								{/* the hour the picker edits is wall-clock time in
 								the user's chosen zone, not the machine's */}
 								{timeZone && (
