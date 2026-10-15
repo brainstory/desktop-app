@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { mockInvoke } from "@src/test/mock-tauri";
+import { SnackbarProvider } from "@ds/Snackbar";
 import DraftIdeaCard from "./DraftIdeaCard";
 
 afterEach(() => {
@@ -16,8 +17,11 @@ describe("DraftIdeaCard delete", () => {
 	it("announces the armed state once, outside the labelled button", () => {
 		vi.useFakeTimers();
 		mockInvoke({});
-		render(<DraftIdeaCard id="d1" draftSummary="half a thought" />);
-
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="d1" draftSummary="half a thought" />
+			</SnackbarProvider>
+		);
 		const status = screen.getByRole("status");
 		expect(status).toBeEmptyDOMElement();
 
@@ -44,7 +48,11 @@ describe("DraftIdeaCard delete", () => {
 	it("deletes on the second click and tells the parent", async () => {
 		const onDeleted = vi.fn();
 		mockInvoke({ delete_idea: () => null });
-		render(<DraftIdeaCard id="d1" onDeleted={onDeleted} />);
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="d1" onDeleted={onDeleted} />
+			</SnackbarProvider>
+		);
 		fireEvent.click(deleteButton());
 		fireEvent.click(deleteButton());
 		await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("d1"));
@@ -58,7 +66,11 @@ describe("DraftIdeaCard delete", () => {
 				throw new Error("db locked");
 			}
 		});
-		render(<DraftIdeaCard id="d1" onDeleted={onDeleted} />);
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="d1" onDeleted={onDeleted} />
+			</SnackbarProvider>
+		);
 		fireEvent.click(deleteButton());
 		fireEvent.click(deleteButton());
 		expect(await screen.findByText("Error: Could not delete this draft")).toBeInTheDocument();
@@ -69,7 +81,11 @@ describe("DraftIdeaCard delete", () => {
 describe("DraftIdeaCard resume link", () => {
 	it("resumes an original idea draft by its id", () => {
 		mockInvoke({});
-		render(<DraftIdeaCard id="d1" draftSummary="half a thought" />);
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="d1" draftSummary="half a thought" />
+			</SnackbarProvider>
+		);
 		const link = screen.getByRole("link", { name: /half a thought/ });
 		expect(link).toHaveAttribute("href", "/chat?id=d1");
 		expect(link).toHaveTextContent("Draft");
@@ -93,7 +109,11 @@ describe("DraftIdeaCard resume link", () => {
 
 	it("leaves out 'Feedback on' where the idea is already on screen", () => {
 		mockInvoke({});
-		render(<DraftIdeaCard id="fd1" parentId="p1" draftSummary="more cake" />);
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="fd1" parentId="p1" draftSummary="more cake" />
+			</SnackbarProvider>
+		);
 		const link = screen.getByRole("link", { name: /Feedback draft/ });
 		expect(link).toHaveAttribute("href", "/chat?parentId=p1&id=fd1");
 		expect(link).not.toHaveTextContent("Feedback on:");
@@ -103,7 +123,11 @@ describe("DraftIdeaCard resume link", () => {
 describe("DraftIdeaCard contrast", () => {
 	it("draft summary text is stone-500 on white (4.8:1), not stone-400 (2.5:1)", () => {
 		mockInvoke({});
-		render(<DraftIdeaCard id="d1" draftSummary="half a thought" />);
+		render(
+			<SnackbarProvider>
+				<DraftIdeaCard id="d1" draftSummary="half a thought" />
+			</SnackbarProvider>
+		);
 		const summary = screen.getByText("half a thought");
 		expect(summary).toHaveClass("text-stone-500");
 		expect(summary).not.toHaveClass("text-stone-400");

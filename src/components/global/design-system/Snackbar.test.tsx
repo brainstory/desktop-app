@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useState } from "react";
 
-import { Snackbar, useSnackbar } from "./Snackbar";
+import { Snackbar, SnackbarProvider, useSnackbar } from "./Snackbar";
 
 /** Re-renders itself once, 2s in (past the midway point of the countdown). */
 function RerenderingHost({ onClose }: { onClose: () => void }) {
@@ -78,19 +78,22 @@ describe("Snackbar", () => {
 
 describe("useSnackbar", () => {
 	function Harness() {
-		const { openSnackbar, snackbars } = useSnackbar();
+		const { openSnackbar } = useSnackbar();
 		return (
 			<>
 				<button onClick={() => openSnackbar(true, "Saved it")}>ok</button>
 				<button onClick={() => openSnackbar(false, "Broke it")}>fail</button>
-				{snackbars}
 			</>
 		);
 	}
 
 	it("shows success and error messages independently until dismissed", async () => {
 		const user = (await import("@testing-library/user-event")).default.setup();
-		render(<Harness />);
+		render(
+			<SnackbarProvider>
+				<Harness />
+			</SnackbarProvider>
+		);
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: "ok" }));

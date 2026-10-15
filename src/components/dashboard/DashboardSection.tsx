@@ -8,7 +8,7 @@ import { isOwnIdea } from "@helpers/ideas";
 
 import LoadingAnimation from "@components/global/LoadingAnimation";
 import Button from "@ds/Button";
-import { useSnackbar } from "@ds/Snackbar";
+import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 import ErrorSection from "@components/error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
 
@@ -23,7 +23,7 @@ function DashboardSectionInner() {
 	/** a post-import refresh is in flight: dim the grid, keep it mounted */
 	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [errorFound, setErrorFound] = useState(false);
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 
 	useEffect(() => {
 		getAllIdeasApi()
@@ -115,7 +115,6 @@ function DashboardSectionInner() {
 
 	return (
 		<section>
-			{snackbars}
 			<div className="flex items-center justify-center relative">
 				<h1 className="mb-2 text-2xl font-bold tracking-tight text-center text-stone-900 md:text-2xl lg:text-4xl">
 					Dashboard
@@ -208,8 +207,10 @@ function DashboardSectionInner() {
 /** The dashboard island: a crash shows a recoverable section, not a blank page. */
 export default function DashboardSection() {
 	return (
-		<ErrorBoundary title="The dashboard hit a snag">
-			<DashboardSectionInner />
-		</ErrorBoundary>
+		<SnackbarProvider>
+			<ErrorBoundary title="The dashboard hit a snag">
+				<DashboardSectionInner />
+			</ErrorBoundary>
+		</SnackbarProvider>
 	);
 }

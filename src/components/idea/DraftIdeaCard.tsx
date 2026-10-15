@@ -39,7 +39,7 @@ export default function DraftIdeaCard({
 	const isFeedback = Boolean(parentId);
 	const href = isFeedback ? `/chat?parentId=${parentId}&id=${id}` : `/chat?id=${id}`;
 	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 
 	const handleDelete = (): void => {
 		if (!confirm()) return;
@@ -53,7 +53,6 @@ export default function DraftIdeaCard({
 
 	return (
 		<div className="relative h-auto w-80 sm:w-[275px] max-w-sm p-6 bg-white border-2 border-pink-200 rounded-lg shadow hover:shadow-lg hover:-translate-y-1 transition-transform">
-			{snackbars}
 			<a href={href} className="block">
 				<div className="float-left">
 					<span className="flex items-center justify-center mt-1 mr-2 w-6 h-6 bg-pink-100 text-pink-600 rounded-full -left-4 ring-8 ring-white">

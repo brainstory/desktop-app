@@ -23,7 +23,7 @@ import { finishedFeedback, isOwnIdea, parseHeadingIndex, stripNotesSection } fro
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 import ErrorSection from "../error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
-import { useSnackbar } from "@ds/Snackbar";
+import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 import { useIdeaReactions } from "./reactions/useIdeaReactions";
 
 function IdeaResultContentInner() {
@@ -50,7 +50,7 @@ function IdeaResultContentInner() {
 	// crossed (not a re-render on every resize event)
 	const isMdSizeOrLess = useMediaQuery("(max-width: 768px)");
 	const [isUnread, setIsUnread] = useState(false);
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 	// manual summary editing
 	const [isEditingSummary, setIsEditingSummary] = useState(false);
 	const [summaryDraft, setSummaryDraft] = useState("");
@@ -410,7 +410,6 @@ function IdeaResultContentInner() {
 	} else {
 		return (
 			<div className="h-full">
-				{snackbars}
 				<IdeaTitleBar
 					idea={idea}
 					isOwnIdea={isOwn}
@@ -504,8 +503,10 @@ function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 /** The idea page as an island root, behind a crash boundary. */
 export default function IdeaResultContent() {
 	return (
-		<ErrorBoundary title="This idea page hit a snag">
-			<IdeaResultContentInner />
-		</ErrorBoundary>
+		<SnackbarProvider>
+			<ErrorBoundary title="This idea page hit a snag">
+				<IdeaResultContentInner />
+			</ErrorBoundary>
+		</SnackbarProvider>
 	);
 }

@@ -22,7 +22,7 @@ import LoadingAnimation from "@components/global/LoadingAnimation";
 import ErrorSection from "@components/error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
 import Button from "@ds/Button";
-import { SUCCESS_COPY, useSnackbar } from "@ds/Snackbar";
+import { SUCCESS_COPY, SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
 
 const TAB_MAP: Record<string, number> = {
@@ -33,9 +33,11 @@ const TAB_MAP: Record<string, number> = {
 
 export default function Profile() {
 	return (
-		<ErrorBoundary title="The settings page hit a snag">
-			<ProfileInner />
-		</ErrorBoundary>
+		<SnackbarProvider>
+			<ErrorBoundary title="The settings page hit a snag">
+				<ProfileInner />
+			</ErrorBoundary>
+		</SnackbarProvider>
 	);
 }
 
@@ -53,7 +55,7 @@ function ProfileInner() {
 	const [dailyLogSettings, setDailyLogSettings] = useState<LogSettingsQuestion[]>([]);
 	const [presence, setPresence] = useState({ dock: true, tray: true });
 	const [quickCapture, setQuickCapture] = useState(true);
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 	const updates = useUpdatesEnabled(openSnackbar);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorFound, setErrorFound] = useState(false);
@@ -201,8 +203,6 @@ function ProfileInner() {
 
 	return (
 		<div className="flex flex-col items-center">
-			{snackbars}
-
 			{isLoading ? (
 				<LoadingAnimation text="Loading your settings..." />
 			) : errorFound ? (

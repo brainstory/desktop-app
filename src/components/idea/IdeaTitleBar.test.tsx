@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
+import { SnackbarProvider } from "@ds/Snackbar";
 import IdeaTitleBar from "./IdeaTitleBar";
 import type { IdeaDetail } from "@src/types";
 
@@ -14,7 +15,11 @@ const idea: IdeaDetail = {
 } as IdeaDetail;
 
 function renderBar(overrides: Partial<IdeaDetail> = {}) {
-	return render(<IdeaTitleBar idea={{ ...idea, ...overrides }} isOwnIdea={true} />);
+	return render(
+		<SnackbarProvider>
+			<IdeaTitleBar idea={{ ...idea, ...overrides }} isOwnIdea={true} />
+		</SnackbarProvider>
+	);
 }
 
 async function startEditing(user: ReturnType<typeof userEvent.setup>) {
@@ -223,7 +228,11 @@ describe("IdeaTitleBar actions", () => {
 	});
 
 	it("offers Give Feedback on someone else's idea instead of Add Note", () => {
-		render(<IdeaTitleBar idea={{ ...idea, creatorName: "Ada" }} isOwnIdea={false} />);
+		render(
+			<SnackbarProvider>
+				<IdeaTitleBar idea={{ ...idea, creatorName: "Ada" }} isOwnIdea={false} />
+			</SnackbarProvider>
+		);
 		expect(screen.getByRole("button", { name: "Give Feedback" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Add Note" })).not.toBeInTheDocument();
 	});

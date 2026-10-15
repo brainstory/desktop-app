@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useRef,
+	useState,
+	type ReactNode
+} from "react";
 
 export const SUCCESS_COPY = {
 	DEFAULT: "Success!",
@@ -36,7 +44,7 @@ export function Snackbar({ isSuccess, message, onClose, action }: SnackbarProps)
 	}, [message]);
 
 	const style = isSuccess
-		? "bg-green-600 z-50 fixed top-4 left-1/2 -translate-x-1/2 mt-0 p-4 pr-12 rounded-md shadow-lg text-center max-w-[90vw]"
+		? "bg-green-700 z-50 fixed top-4 left-1/2 -translate-x-1/2 mt-0 p-4 pr-12 rounded-md shadow-lg text-center max-w-[90vw]"
 		: "bg-red-600 z-50 fixed top-4 left-1/2 -translate-x-1/2 mt-0 p-4 pr-12 rounded-md shadow-lg text-center max-w-[90vw]";
 
 	return (
@@ -64,23 +72,31 @@ export function Snackbar({ isSuccess, message, onClose, action }: SnackbarProps)
 	);
 }
 
-/**
- * Success + error snackbar state for one screen. Render `snackbars`
- * where the Snackbar elements belong; `openSnackbar` (stable identity)
- * shows a message. A success and an error can be open at once, each
- * dismissing itself.
+/** What the island-wide snackbar host exposes: `openSnackbar` shows a
+ * message; the single host (mounted by SnackbarProvider) renders it.
+ * A success and an error can be open at once, each dismissing itself.
  *
- *   const { openSnackbar, snackbars } = useSnackbar();
+ *   const { openSnackbar } = useSnackbar();
  *   openSnackbar(false, "Could not save");
  */
-export function useSnackbar(): {
+interface SnackbarContextValue {
 	openSnackbar: (
 		isSuccess: boolean,
 		message: string,
 		action?: { label: string; href: string }
 	) => void;
-	snackbars: ReactNode;
-} {
+}
+
+const SnackbarContext = createContext<SnackbarContextValue>({
+	openSnackbar: () => {}
+});
+
+/**
+ * One snackbar host per island root. Without it, every card rendered
+ * its own fixed-position snackbar and two of them stacked on top of
+ * each other; with it, one queue per page.
+ */
+export function SnackbarProvider({ children }: { children: ReactNode }) {
 	const [successMessage, setSuccessMessage] = useState<string | null>(null);
 	const [successAction, setSuccessAction] = useState<{ label: string; href: string } | undefined>(
 		undefined
@@ -99,8 +115,9 @@ export function useSnackbar(): {
 		[]
 	);
 
-	const snackbars = (
-		<>
+	return (
+		<SnackbarContext.Provider value={{ openSnackbar }}>
+			{children}
 			{successMessage !== null && (
 				<Snackbar
 					isSuccess={true}
@@ -119,10 +136,12 @@ export function useSnackbar(): {
 					onClose={() => setErrorMessage(null)}
 				/>
 			)}
-		</>
+		</SnackbarContext.Provider>
 	);
+}
 
-	return { openSnackbar, snackbars };
+export function useSnackbar(): SnackbarContextValue {
+	return useContext(SnackbarContext);
 }
 
 export default {

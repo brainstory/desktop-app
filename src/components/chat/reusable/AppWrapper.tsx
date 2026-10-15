@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import ErrorBoundary from "@components/global/ErrorBoundary";
-import { useSnackbar } from "@ds/Snackbar";
+import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 
 export type SludgemanState = "idle" | "jump" | "wave";
 
@@ -15,9 +15,20 @@ export const AppContext = createContext<AppContextValue>({
 	setSludgeman: () => {}
 });
 
+/** The provider sits above this component's own useSnackbar call, so
+ * the island is split: the wrapper mounts the host, the inner consumes
+ * it. */
 export function AppWrapper({ children }: { children: ReactNode }) {
+	return (
+		<SnackbarProvider>
+			<AppWrapperInner>{children}</AppWrapperInner>
+		</SnackbarProvider>
+	);
+}
+
+function AppWrapperInner({ children }: { children: ReactNode }) {
 	const [sludgeman, setSludgeman] = useState<SludgemanState>("idle");
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 	// the AI status feed ($aiStatus) starts itself when a consumer
 	// subscribes; nothing to initialise here
 
@@ -42,7 +53,6 @@ export function AppWrapper({ children }: { children: ReactNode }) {
 	return (
 		<AppContext.Provider value={sharedState}>
 			<ErrorBoundary title="This session hit a snag">{children}</ErrorBoundary>
-			{snackbars}
 		</AppContext.Provider>
 	);
 }

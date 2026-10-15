@@ -37,7 +37,7 @@ export default function IdeaTitleBar({
 	isRegenerating = false,
 	feedbackCount = 0
 }: IdeaTitleBarProps) {
-	const { openSnackbar, snackbars } = useSnackbar();
+	const { openSnackbar } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
 	const [isNoteOpen, setIsNoteOpen] = useState(false);
 	const {
@@ -297,7 +297,6 @@ export default function IdeaTitleBar({
 
 	return (
 		<div className="px-5 pt-5 md:px-7 md:pt-7">
-			{snackbars}
 			<div className="flex flex-wrap gap-4 justify-between">
 				<div className="flex flex-wrap gap-4 justify-between">
 					{parentId && (
