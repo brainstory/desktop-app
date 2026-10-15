@@ -9,6 +9,10 @@ pub const TRANSCRIPTION_CANCELLED: &str = "transcription cancelled";
 pub struct SttEngine {
 	ctx: Arc<whisper_rs::WhisperContext>,
 	pub model_id: String,
+	/// whisper inference is not reentrant across threads on one context:
+	/// a re-record while a cancelled inference is still winding down
+	/// would run two at once, so transcriptions serialize
+	transcribe_lock: std::sync::Mutex<()>,
 }
 
 impl SttEngine {
@@ -19,6 +23,7 @@ impl SttEngine {
 		Ok(Self {
 			ctx: Arc::new(ctx),
 			model_id: model_id.to_string(),
+			transcribe_lock: std::sync::Mutex::new(()),
 		})
 	}
 
@@ -27,6 +32,31 @@ impl SttEngine {
 	/// subtag selects the whisper language. English-only models (the
 	/// `*.en` builds) always transcribe as English.
 	pub fn transcribe(&self, samples: &[f32], language: &str) -> Result<String, String> {
+		self.transcribe_cancellable(
+			samples,
+			language,
+			&std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+		)
+	}
+
+	/// [`Self::transcribe`] with a cancel token: checked before the run
+	/// (nothing to do) and by whisper itself during inference via the
+	/// abort callback, so a cancelled run actually stops decoding
+	/// instead of burning CPU beside the replacement recording.
+	pub fn transcribe_cancellable(
+		&self,
+		samples: &[f32],
+		language: &str,
+		cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+	) -> Result<String, String> {
+		if cancel.load(Ordering::Relaxed) {
+			return Err(TRANSCRIPTION_CANCELLED.into());
+		}
+		// one inference at a time (see the field docs)
+		let _serial = self
+			.transcribe_lock
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		let mut state = self.ctx.create_state().map_err(|e| e.to_string())?;
 		let mut params =
 			whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
@@ -42,10 +72,20 @@ impl SttEngine {
 		// hallucinations ("Thank you for watching!", subtitles credits)
 		// that whisper emits on silence and noise
 		params.set_suppress_nst(true);
+		// whisper polls this between chunks: a cancelled run aborts the
+		// decode instead of finishing a multi-minute transcript nobody
+		// will read
+		params.set_abort_callback_safe({
+			let flag = std::sync::Arc::clone(cancel);
+			move || flag.load(Ordering::Relaxed)
+		});
 
 		state
 			.full(params, samples)
 			.map_err(|e| format!("transcription failed: {e}"))?;
+		if cancel.load(Ordering::Relaxed) {
+			return Err(TRANSCRIPTION_CANCELLED.into());
+		}
 
 		let n_segments = state.full_n_segments();
 		let mut segments: Vec<String> = Vec::new();

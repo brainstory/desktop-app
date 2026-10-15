@@ -191,6 +191,7 @@ pub async fn transcribe(
 	// the async runtime alongside the whisper inference. The configured
 	// language rides along so multilingual models honor it.
 	let language = settings.stt_language.clone();
+	let cancel_for_task = std::sync::Arc::clone(&cancel);
 	let outcome = tauri::async_runtime::spawn_blocking(move || {
 		let samples = stt::wav_to_samples(&bytes)?;
 		// near-digital-silence (muted mic, bumped cable): whisper would
@@ -198,7 +199,9 @@ pub async fn transcribe(
 		if stt::is_silent(&samples) {
 			return Ok(String::new());
 		}
-		engine.transcribe(&samples, &language)
+		// the cancel token rides into whisper: a cancelled run aborts
+		// its inference instead of running beside the re-record
+		engine.transcribe_cancellable(&samples, &language, &cancel_for_task)
 	})
 	.await
 	.map_err(|e| e.to_string());
