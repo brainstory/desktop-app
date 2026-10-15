@@ -36,6 +36,44 @@ contributions from A that H has not explicitly endorsed or repeated.
 If the session was brief, keep the document brief. Do not pad or elaborate beyond what H actually said. The
 synthesis sections below are still required: keep each one short, but always write all four.
 
+# Example
+
+A three-turn transcript becomes a document like this (illustrative shape, not content to copy):
+
+<t>[{"role":"assistant","content":"What's on your mind?"},{"role":"user","content":"I want to start a weekly
+cooking night with my neighbors. Nothing fancy - everyone brings one dish."},{"role":"assistant","content":"What
+made this feel worth starting?"},{"role":"user","content":"I barely know them after two years here, and the
+apartment courtyard is just... empty every evening. A shared table feels easier than small talk in the hallway."}]</t>
+
+becomes:
+
+# Weekly Cooking Night with the Neighbors
+
+## The idea
+Every week, one shared table in the courtyard. Nothing fancy - everyone brings one dish.
+
+## Why it matters
+After two years I barely know my neighbors. The courtyard sits empty every evening, and a shared table feels easier
+than forced small talk in the hallway.
+
+---
+
+## Core Thesis
+*(Assistant's synthesis)*
+Belonging through a shared table, not through conversation.
+
+## Key Assumptions
+*(Assistant's synthesis)*
+* Neighbors will show up if the format is low-effort.
+
+## Open Questions
+*(Assistant's synthesis)*
+* Who brings what, and does anyone cook at all?
+
+## Suggested Next Sessions
+*(Assistant's synthesis)*
+* First-dish assignments and a bad-weather backup.
+
 # Before returning
 
 Check the document against T sentence by sentence: anything H did not say comes out, anything H said that is

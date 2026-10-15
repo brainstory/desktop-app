@@ -705,12 +705,17 @@ mod contract_tests {
 		// after `---` (or not at all) when the layout was only described
 		// in prose; the prompt now shows it, and it must stay the shape
 		// idea_without_synthesis cuts
-		let layout: String = STORY_RESULT_SYSTEM
-			.lines()
-			.skip_while(|l| l.trim() != "---")
-			.take_while(|l| l.is_empty() || l.starts_with("    "))
-			.map(|l| format!("{}\n", l.strip_prefix("    ").unwrap_or(l)))
-			.collect();
+		// the canonical (indented) layout block is the LAST `---` in the
+		// prompt; the few-shot example above also contains one
+		let layout: String = {
+			let lines: Vec<&str> = STORY_RESULT_SYSTEM.lines().collect();
+			let start = lines.iter().rposition(|l| l.trim() == "---").unwrap_or(0);
+			lines[start..]
+				.iter()
+				.take_while(|l| l.is_empty() || l.starts_with("    ") || l.trim() == "---")
+				.map(|l| format!("{}\n", l.strip_prefix("    ").unwrap_or(l)))
+				.collect()
+		};
 		for heading in [
 			"## Core Thesis",
 			"## Key Assumptions",
