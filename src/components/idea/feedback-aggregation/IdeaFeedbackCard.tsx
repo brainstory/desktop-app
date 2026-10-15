@@ -42,16 +42,18 @@ export default function IdeaFeedbackCard({
 	const isFocused = feedback.commentId != null && focusedIdea?.commentId === feedback.commentId;
 	const [isShowingMore, setIsShowingMore] = useState(false);
 
+	// Measure only while clamped: expanded, the text always fits, and a
+	// re-measure on focus changes would flip isTruncated off and drop
+	// the "show less" control out from under the reader.
 	useEffect(() => {
+		if (isShowingMore) return;
 		const { offsetHeight, scrollHeight } = ref.current || {};
+		setIsTruncated(Boolean(offsetHeight && scrollHeight && offsetHeight < scrollHeight));
+	}, [ref, isShowingMore, feedbackText]);
 
-		if (offsetHeight && scrollHeight && offsetHeight < scrollHeight) {
-			setIsTruncated(true);
-		} else {
-			setIsTruncated(false);
-		}
-
-		// Currently focused -> scroll into view
+	// Currently focused -> scroll into view (its own effect, keyed on the
+	// focused comment only)
+	useEffect(() => {
 		if (feedback.commentId != null && focusedIdea?.commentId === feedback.commentId) {
 			ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
 		}
@@ -71,7 +73,7 @@ export default function IdeaFeedbackCard({
 	// show-more toggle and the reactions OUTSIDE it - a button inside a
 	// button is invalid.
 	return (
-		<div id={ideaId} className={containerClasses}>
+		<div id={String(ideaId)} data-comment-id={feedback.commentId} className={containerClasses}>
 			<button
 				type="button"
 				className="w-full text-left cursor-pointer"

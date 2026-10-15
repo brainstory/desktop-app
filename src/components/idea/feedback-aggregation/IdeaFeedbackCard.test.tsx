@@ -65,6 +65,54 @@ describe("IdeaFeedbackCard", () => {
 		// reacting doesn't also activate the card
 		expect(focusSection).not.toHaveBeenCalled();
 	});
+
+	it("keeps the show-less control after expanding and focusing elsewhere", async () => {
+		// jsdom has no layout: pretend the clamped paragraph overflows
+		// (line-clamp-5 hides the surplus in a real browser)
+		const heights = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(80);
+		const scroll = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
+		// scrollIntoView is not implemented in jsdom
+		Element.prototype.scrollIntoView = vi.fn();
+		try {
+			// a long comment clamps; expanding shows everything; focusing
+			// another comment must not make the toggle disappear (the old
+			// re-measure ran expanded and flipped isTruncated off)
+			const long = {
+				...comment,
+				feedbackText: "A".repeat(400)
+			} as unknown as FeedbackComment;
+			const { rerender } = render(
+				<IdeaFeedbackCard
+					feedback={{ ...long, ideaId: "i1", hid: 1 }}
+					focusSection={() => {}}
+					myReactions={[]}
+					onToggleReaction={() => {}}
+				/>
+			);
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("button", { name: "show more" }));
+			expect(screen.getByText("show less")).toBeInTheDocument();
+
+			// a different comment gets focused
+			rerender(
+				<IdeaFeedbackCard
+					feedback={{ ...long, ideaId: "i1", hid: 1 }}
+					focusedIdea={{ ...long, ideaId: "other" }}
+					focusSection={() => {}}
+					myReactions={[]}
+					onToggleReaction={() => {}}
+				/>
+			);
+			expect(screen.getByText("show less")).toBeInTheDocument();
+
+			// collapsing brings the clamp back with the toggle
+			await user.click(screen.getByRole("button", { name: "show less" }));
+			expect(await screen.findByRole("button", { name: "show more" })).toBeInTheDocument();
+		} finally {
+			heights.mockRestore();
+			scroll.mockRestore();
+		}
+	});
 });
 
 describe("SectionCommenters", () => {
