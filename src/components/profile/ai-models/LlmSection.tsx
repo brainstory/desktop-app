@@ -121,12 +121,10 @@ export function LlmSection({
 				/>
 			</details>
 			{!usingExternal && (
-				<>
-					<h4 className="font-semibold text-stone-700 text-sm">
-						Models on this computer
-					</h4>
+				<div className="border border-stone-200 rounded-lg p-4 text-sm">
+					<h4 className="font-semibold text-stone-700">Models on this computer</h4>
 					<ModelList models={models} {...modelList} />
-					<div className="max-w-xs">
+					<div className="max-w-xs mt-3">
 						<label
 							htmlFor={ctxSelectId}
 							className="block mb-1 text-sm font-medium text-stone-900"
@@ -154,16 +152,16 @@ export function LlmSection({
 							{ctxHelp} Changing this reloads the model.
 						</p>
 					</div>
-				</>
+				</div>
 			)}
 			{usingExternal && (
-				<details className="mt-2">
-					<summary className="text-sm font-semibold text-stone-700 cursor-pointer">
+				<details className="border border-stone-200 rounded-lg p-4 text-sm">
+					<summary className="font-semibold cursor-pointer">
 						Models on this computer
 					</summary>
 					{/* external mode hides the active list: keep local models
 					    reachable so a downloaded one can be deleted */}
-					<div className="mt-2">
+					<div className="mt-3">
 						<ModelList models={models} {...modelList} />
 					</div>
 				</details>
