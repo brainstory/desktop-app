@@ -52,12 +52,17 @@ export function TextComposer({
 				</p>
 			</div>
 			<button
-				className="flex items-center h-[36px] w-[36px] ml-2 p-2 rounded-full bg-accent-600 text-white hover:bg-accent-700 focus:outline-none focus:ring focus:border-accent-400 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+				/* items-end on the row aligns the button with the bottom of
+				 * the text column, which includes the help line under the
+				 * textarea (mt-1 + one text-xs line = 20px) - lift the
+				 * button by exactly that so it lines up with the input
+				 * box itself */
+				className="flex items-center justify-center shrink-0 h-[36px] w-[36px] ml-2 mb-5 rounded-full bg-accent-600 text-white hover:bg-accent-700 focus:outline-none focus:ring focus:border-accent-400 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
 				aria-label="Send message"
 				aria-disabled={!canSend}
 				onClick={send}
 			>
-				<Icon name="send" className="w-8 h-8" ariaHidden />
+				<Icon name="send" className="w-5 h-5" ariaHidden />
 			</button>
 		</div>
 	);
