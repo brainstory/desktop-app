@@ -1,5 +1,30 @@
 //! Stored emoji reactions on idea sections and feedback comments.
 
+/// How many `#`/`##` sections the result document splits into - the
+/// exclusive upper bound for a section index. Same heading rules as
+/// the idea page's section splitting.
+fn section_count(result: &str) -> i64 {
+	let mut count = 0i64;
+	let mut has_content = false;
+	for line in result.lines() {
+		let trimmed = line.trim_start();
+		let is_heading =
+			(trimmed.starts_with("# ") && !trimmed.starts_with("##")) || trimmed.starts_with("## ");
+		if is_heading {
+			count += 1;
+			has_content = true;
+		}
+	}
+	// a document with no headings at all is one section (its body)
+	if has_content {
+		count
+	} else if !result.trim().is_empty() {
+		1
+	} else {
+		0
+	}
+}
+
 use rusqlite::{params, OptionalExtension};
 
 use super::{now_iso, Db};
@@ -23,15 +48,25 @@ impl Db {
 		}
 		let mut on = false;
 		self.with_tx(|conn| {
-			let exists: i64 = conn
+			let result: Option<String> = conn
 				.query_row(
-					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
+					"SELECT result FROM ideas WHERE id = ?1",
 					params![idea_id],
 					|row| row.get(0),
 				)
+				.optional()
 				.map_err(|e| format!("failed to read idea {idea_id}: {e}"))?;
-			if exists == 0 {
+			let Some(result) = result else {
 				return Err(format!("idea {idea_id} not found"));
+			};
+			// index is bounded by the document's actual section count,
+			// inside the transaction: a reaction can never land on a
+			// section that does not exist
+			let section_count = section_count(&result);
+			if section_index >= section_count {
+				return Err(format!(
+					"invalid section index {section_index} (the document has {section_count} sections)"
+				));
 			}
 			let removed = conn
 				.execute(

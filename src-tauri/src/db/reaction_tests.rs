@@ -13,7 +13,7 @@ fn idea(db: &Db, id: &str, idea_type: IdeaType, parent: Option<&str>) {
 		id,
 		title: id,
 		idea_type,
-		result: "## A\na\n\n## B\nb",
+		result: "# T\n\n## A\na\n\n## B\nb",
 		metadata: &json!({}),
 		parent_idea_id: parent,
 		..Default::default()
@@ -52,7 +52,7 @@ fn migrates_v4_database_to_reaction_tables() {
 			.unwrap();
 		}
 		conn.execute_batch(
-			"INSERT INTO ideas (id, created_at) VALUES ('old', '2026-01-01T00:00:00');",
+			"INSERT INTO ideas (id, created_at, result) VALUES ('old', '2026-01-01T00:00:00', '## A\\na');",
 		)
 		.unwrap();
 		conn.pragma_update(None, "user_version", 4).unwrap();
@@ -82,11 +82,27 @@ fn migrates_v4_database_to_reaction_tables() {
 	}
 	// existing rows are untouched and the new tables are usable
 	assert!(db.get_idea("old").unwrap().is_some());
-	assert!(db.toggle_section_reaction("old", 1, "👍").unwrap());
+	assert!(db.toggle_section_reaction("old", 0, "👍").unwrap());
 	drop(db);
 	// reopening a v5 file runs no step again
 	let db = Db::open(&path).expect("reopen v5");
 	assert_eq!(db.get_reactions("old").unwrap().sections.len(), 1);
+}
+
+#[test]
+fn section_index_is_bounded_by_the_document() {
+	let (db, _dir) = db();
+	idea(&db, "i", IdeaType::Original, None);
+	// "## A" (index 0-ish per the parser) and "## B" exist; index 5 does not
+	let err = db
+		.toggle_section_reaction("i", 5, "👍")
+		.expect_err("past the section count");
+	assert!(err.contains("invalid section index"), "{err}");
+	// negative stays rejected
+	let err = db
+		.toggle_section_reaction("i", -1, "👍")
+		.expect_err("negative index");
+	assert!(err.contains("invalid section index"), "{err}");
 }
 
 #[test]
@@ -227,8 +243,8 @@ fn imported_reactions_are_attributed_to_their_feedback() {
 	);
 	// only my own reactions are what an export carries
 	assert!(db.my_section_reactions("i").unwrap().is_empty());
-	assert!(db.toggle_section_reaction("i", 3, "🚀").unwrap());
-	assert_eq!(db.my_section_reactions("i").unwrap(), vec![shared(3, "🚀")]);
+	assert!(db.toggle_section_reaction("i", 0, "🚀").unwrap());
+	assert_eq!(db.my_section_reactions("i").unwrap(), vec![shared(0, "🚀")]);
 }
 
 #[test]

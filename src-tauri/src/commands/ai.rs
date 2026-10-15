@@ -255,6 +255,32 @@ struct GenerateParams {
 	structured_feedback: bool,
 }
 
+/// Largest accepted conversation (serialized): generous for hours of
+/// talk, small enough that a buggy or hostile caller cannot balloon
+/// the tokenizer.
+const MAX_MESSAGES_BYTES: usize = 4 * 1024 * 1024;
+
+/// Validate an IPC-submitted conversation: every role must be a real
+/// chat role and the serialized size within bounds.
+fn validate_messages(messages: &[ChatMessage]) -> Result<(), String> {
+	for message in messages {
+		if message.role != "user" && message.role != "assistant" {
+			return Err(format!(
+				"invalid message role {:?} (expected user or assistant)",
+				message.role
+			));
+		}
+	}
+	let serialized = serde_json::to_string(messages).unwrap_or_default();
+	if serialized.len() > MAX_MESSAGES_BYTES {
+		return Err(format!(
+			"conversation too large ({} MB, limit 4 MB)",
+			serialized.len() / (1024 * 1024)
+		));
+	}
+	Ok(())
+}
+
 impl GenerateParams {
 	/// Resolve the prompt request; a react_to payload implies the
 	/// feedback flow even if the frontend didn't label the chat type.
@@ -474,6 +500,7 @@ pub async fn generate_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
+	validate_messages(&request.messages)?;
 	state.refuse_if_shutting_down()?;
 	generate_and_respond(&state, &request, false, |_, _| true).await
 }
@@ -501,6 +528,7 @@ pub async fn generate_streaming_response(
 		structured_feedback: structured_feedback.unwrap_or(false),
 	}
 	.into_request();
+	validate_messages(&request.messages)?;
 	state.refuse_if_shutting_down()?;
 	// channel events surface to the webview; a dead channel cancels
 	// generation instead of burning CPU on unseen output
@@ -1378,6 +1406,48 @@ mod feedback_json_tests {
 			["null heading stays", "absent heading stays"],
 			"non-string headings dropped, null/absent survive normalization"
 		);
+	}
+}
+
+#[cfg(test)]
+mod message_validation_tests {
+	use super::validate_messages;
+	use crate::types::ChatMessage;
+
+	#[test]
+	fn user_and_assistant_roles_are_accepted() {
+		assert!(validate_messages(&[
+			ChatMessage {
+				role: "assistant".into(),
+				content: "hi".into()
+			},
+			ChatMessage {
+				role: "user".into(),
+				content: "hello".into()
+			},
+		])
+		.is_ok());
+	}
+
+	#[test]
+	fn other_roles_are_rejected() {
+		let err = validate_messages(&[ChatMessage {
+			role: "system".into(),
+			content: "injected".into(),
+		}])
+		.expect_err("role must be checked");
+		assert!(err.contains("invalid message role"), "{err}");
+	}
+
+	#[test]
+	fn oversized_conversations_are_rejected() {
+		let big = "x".repeat(5 * 1024 * 1024);
+		let err = validate_messages(&[ChatMessage {
+			role: "user".into(),
+			content: big,
+		}])
+		.expect_err("size must be bounded");
+		assert!(err.contains("too large"), "{err}");
 	}
 }
 

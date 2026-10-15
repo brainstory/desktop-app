@@ -1098,7 +1098,7 @@ mod tests {
 			id: "idea",
 			title: "Plan",
 			idea_type: IdeaType::Original,
-			result: "## One\na\n\n## Two\nb",
+			result: "# T\n\n## One\na\n\n## Two\nb",
 			metadata: &serde_json::json!({}),
 			..Default::default()
 		})
