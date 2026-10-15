@@ -1,6 +1,6 @@
 import { useStore } from "@nanostores/react";
 import { useEffect } from "react";
-import { $downloads, subscribeDownloads } from "./downloadStore";
+import { $downloads, clearDownloadFailure, subscribeDownloads } from "./downloadStore";
 
 /**
  * Sidebar shortcut to whatever download is in flight (or failed), so
@@ -12,8 +12,11 @@ import { $downloads, subscribeDownloads } from "./downloadStore";
 export default function DownloadProgressPill() {
 	// the pill is on every page: it is the feed's dependable subscriber
 	useEffect(() => subscribeDownloads(), []);
-	const { active, failures } = useStore($downloads);
-	const downloads = Object.entries(active);
+	const { active, paused, failures } = useStore($downloads);
+	// a paused download stays visible: Resume must be reachable from
+	// every page, not only the settings one
+	const downloads = [...Object.entries(active), ...Object.entries(paused)];
+	const pausedIds = new Set(Object.keys(paused));
 	const failed = Object.entries(failures);
 	if (downloads.length === 0 && failed.length === 0) return null;
 
@@ -22,9 +25,15 @@ export default function DownloadProgressPill() {
 	let detail = "";
 	let isError = false;
 	if (downloads.length === 1) {
-		const [, first] = downloads[0]!;
+		const [id, first] = downloads[0]!;
 		title = first.label;
-		detail = first.pct < 0 ? "downloading…" : `${Math.min(100, Math.floor(first.pct))}%`;
+		if (pausedIds.has(id)) {
+			detail =
+				first.pct >= 0 ? `Paused · ${Math.min(100, Math.floor(first.pct))}%` : "Paused";
+			icon = "pause-circle-outline";
+		} else {
+			detail = first.pct < 0 ? "downloading…" : `${Math.min(100, Math.floor(first.pct))}%`;
+		}
 	} else if (downloads.length > 1) {
 		title = `${downloads.length} models downloading`;
 	} else {
@@ -34,6 +43,7 @@ export default function DownloadProgressPill() {
 		detail = "Download failed — review";
 		isError = true;
 	}
+	const singleFailureId = failed.length === 1 ? failed[0]![0] : null;
 	const pct =
 		downloads.length === 1 && downloads[0]![1].pct >= 0
 			? Math.min(100, Math.floor(downloads[0]![1].pct))
@@ -62,6 +72,20 @@ export default function DownloadProgressPill() {
 					</span>
 				)}
 			</span>
+			{singleFailureId !== null && (
+				<button
+					type="button"
+					aria-label="Dismiss download failure"
+					className="shrink-0 rounded-full px-1.5 text-lg leading-none text-red-400 hover:text-red-600"
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						clearDownloadFailure(singleFailureId);
+					}}
+				>
+					×
+				</button>
+			)}
 		</a>
 	);
 }

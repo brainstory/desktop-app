@@ -156,6 +156,18 @@ export function LlmSection({
 					</div>
 				</>
 			)}
+			{usingExternal && (
+				<details className="mt-2">
+					<summary className="text-sm font-semibold text-stone-700 cursor-pointer">
+						Models on this computer
+					</summary>
+					{/* external mode hides the active list: keep local models
+					    reachable so a downloaded one can be deleted */}
+					<div className="mt-2">
+						<ModelList models={models} {...modelList} />
+					</div>
+				</details>
+			)}
 		</section>
 	);
 }

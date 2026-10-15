@@ -9,7 +9,7 @@
  * refetching anything; each action reloads only what it changed.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "@nanostores/react";
 import {
@@ -34,7 +34,9 @@ import {
 	clearDownloadFailure,
 	formatDownloadError,
 	seedDownloads,
-	subscribeDownloads
+	subscribeDownloads,
+	markDownloadStarting,
+	removeActiveDownload
 } from "@components/global/downloadStore";
 import { EVENTS, QUERY_PARAMS } from "@src/tauri/commands";
 
@@ -71,6 +73,11 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const [downloadLanded, setDownloadLanded] = useState(false);
 	const [backDismissed, setBackDismissed] = useState(false);
 	const [models, setModels] = useState<ModelsResponse>({ llm: [], stt: [] });
+	/** latest catalog for stable callbacks (see download) */
+	const modelsRef = useRef(models);
+	useEffect(() => {
+		modelsRef.current = models;
+	}, [models]);
 	const [settings, setSettings] = useState<AiSettingsResponse | null>(null);
 	/** the settings read failed: the card shows the error + a retry
 	 * instead of spinning on "Loading..." forever */
@@ -219,10 +226,18 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		(modelId: string): void => {
 			// a retry supersedes the recorded failure
 			clearDownloadFailure(modelId);
+			// instant feedback: the seed shows "downloading…" before the
+			// first backend progress event lands. The label is read
+			// through the ref so the callback keeps a stable identity.
+			const label =
+				modelsRef.current.llm.concat(modelsRef.current.stt).find((m) => m.id === modelId)
+					?.label ?? modelId;
+			markDownloadStarting(modelId, label);
 			downloadModelApi(modelId).invokePromise.catch((e) => {
 				// starting a download that's already running is harmless - the
 				// progress bar is already driven by backend events
 				if (!String(e).includes("already downloading")) {
+					removeActiveDownload(modelId);
 					openSnackbar(false, normalizeApiError(e));
 				}
 				refreshModels();

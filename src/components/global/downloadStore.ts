@@ -161,6 +161,29 @@ function applyEvent(event: ModelDownloadEvent): void {
 }
 
 /** Drop a recorded failure, e.g. when its row is retried. */
+/** Optimistically seed an in-flight download so the UI reacts the
+ * moment the button is pressed (backend progress events follow only
+ * once the transfer starts producing them). */
+export function markDownloadStarting(modelId: string, label: string): void {
+	const state = $downloads.get();
+	$downloads.set({
+		...state,
+		active: {
+			...state.active,
+			[modelId]: { pct: -1, label }
+		}
+	});
+}
+
+/** Drop an optimistic seed (the invoke failed before any event). */
+export function removeActiveDownload(modelId: string): void {
+	const state = $downloads.get();
+	if (!(modelId in state.active)) return;
+	const active = { ...state.active };
+	delete active[modelId];
+	$downloads.set({ ...state, active });
+}
+
 export function clearDownloadFailure(modelId: string): void {
 	const state = $downloads.get();
 	if (!(modelId in state.failures)) return;
