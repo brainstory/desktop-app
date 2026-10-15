@@ -1,8 +1,11 @@
 ---
 import BaseLayout from "@layouts/BaseLayout.astro";
+import PageSkeleton from "@layouts/PageSkeleton.astro";
 import DashboardSection from "@src/components/dashboard/DashboardSection";
 ---
 
 <BaseLayout title="Dashboard" showFooter>
-	<DashboardSection client:only="react" />
+	<DashboardSection client:only="react">
+	<PageSkeleton slot="fallback" />
+</DashboardSection>
 </BaseLayout>

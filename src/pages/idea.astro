@@ -1,8 +1,11 @@
 ---
 import IdeaResultContent from "@components/idea/IdeaResultContent";
+import PageSkeleton from "@layouts/PageSkeleton.astro";
 import BaseLayout from "@src/layouts/BaseLayout.astro";
 ---
 
 <BaseLayout title="Idea" hidePadding>
-	<IdeaResultContent client:only="react" />
+	<IdeaResultContent client:only="react">
+	<PageSkeleton slot="fallback" />
+</IdeaResultContent>
 </BaseLayout>

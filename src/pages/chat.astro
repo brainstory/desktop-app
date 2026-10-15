@@ -1,8 +1,11 @@
 ---
 import BaseLayout from "@layouts/BaseLayout.astro";
+import PageSkeleton from "@layouts/PageSkeleton.astro";
 import ChatApp from "@src/components/chat/ChatApp";
 ---
 
 <BaseLayout title="New Idea" hidePadding showFooter>
-	<ChatApp client:only="react" />
+	<ChatApp client:only="react">
+	<PageSkeleton slot="fallback" />
+</ChatApp>
 </BaseLayout>

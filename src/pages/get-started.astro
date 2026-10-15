@@ -1,8 +1,11 @@
 ---
+import PageSkeleton from "@layouts/PageSkeleton.astro";
 import BaseLayout from "@layouts/BaseLayout.astro";
 import GetStartedApp from "@src/components/chat/GetStartedApp";
 ---
 
 <BaseLayout title="Get Started" hidePadding showFooter>
-	<GetStartedApp client:only="react" />
+	<GetStartedApp client:only="react">
+	<PageSkeleton slot="fallback" />
+</GetStartedApp>
 </BaseLayout>

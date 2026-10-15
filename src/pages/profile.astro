@@ -1,4 +1,5 @@
 ---
+import PageSkeleton from "@layouts/PageSkeleton.astro";
 import BaseLayout from "@layouts/BaseLayout.astro";
 import ProfileComponent from "@components/profile/Profile";
 ---
@@ -11,5 +12,7 @@ import ProfileComponent from "@components/profile/Profile";
 			Settings
 		</h1>
 	</div>
-	<ProfileComponent client:only="react" />
+	<ProfileComponent client:only="react">
+	<PageSkeleton slot="fallback" />
+</ProfileComponent>
 </BaseLayout>

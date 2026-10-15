@@ -1,0 +1,34 @@
+---
+/**
+ * Static page skeleton shown until a client:only React island hydrates.
+ * Same shape as the real page (nav rail, card grid) so the layout does
+ * not jump: the island replaces it on mount. Pure HTML - no JS.
+ */
+const bars = [0, 60, 30, 80];
+---
+
+<div class="w-full max-w-5xl mx-auto p-4 md:p-8">
+	<div class="h-8 w-56 rounded bg-stone-200 animate-pulse mb-6"></div>
+	<div class="flex flex-wrap gap-5 justify-center sm:justify-start">
+		{
+			bars.map((delay) => (
+				<div
+					class="w-80 sm:w-[275px] min-h-[240px] bg-white rounded-lg border border-stone-200 p-6"
+				>
+					<div
+						class="h-6 w-3/4 rounded bg-stone-200 animate-pulse"
+						style={`animation-delay: ${delay}ms`}
+					/>
+					<div
+						class="h-4 w-1/2 rounded bg-stone-100 animate-pulse mt-3"
+						style={`animation-delay: ${delay}ms`}
+					/>
+					<div
+						class="h-4 w-2/3 rounded bg-stone-100 animate-pulse mt-2"
+						style={`animation-delay: ${delay}ms`}
+					/>
+				</div>
+			))
+		}
+	</div>
+</div>
