@@ -68,7 +68,7 @@ export default function StickyLoadingSection({
 		<div className="sticky bottom-0 bg-white border-t px-7 py-9">
 			{saveError !== null ? (
 				<div role="alert" className="text-center">
-					<h1 className={headingStyle}>Couldn&rsquo;t save your summary</h1>
+					<h2 className={headingStyle}>Couldn&rsquo;t save your summary</h2>
 					<p className="text-stone-700 mb-4">
 						{saveError} Your summary is still here &mdash; try saving it again.
 					</p>
@@ -80,7 +80,7 @@ export default function StickyLoadingSection({
 				</div>
 			) : generationStopped ? (
 				<div role="alert" className="text-center">
-					<h1 className={headingStyle}>Generation stopped early</h1>
+					<h2 className={headingStyle}>Generation stopped early</h2>
 					<p className="text-stone-700 mb-4">
 						The model stopped partway through writing your summary. Try again, or keep
 						what was written as your summary.
@@ -96,7 +96,7 @@ export default function StickyLoadingSection({
 				</div>
 			) : isFinishedGenerating ? (
 				<>
-					<h1 className={headingStyle}>
+					<h2 className={headingStyle}>
 						<ion-icon
 							name="checkmark-circle"
 							class="hydrated w-6 h-6 mr-2 align-middle text-green-600"
@@ -104,7 +104,7 @@ export default function StickyLoadingSection({
 							aria-label="Saved"
 						></ion-icon>
 						Finished! Saved your summary
-					</h1>
+					</h2>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
 					{ideaCapped && <IdeaCappedNotice />}
 					{cardsMissing && (
@@ -134,7 +134,7 @@ export default function StickyLoadingSection({
 				</>
 			) : (
 				<>
-					<h1 className={headingStyle}>Hang tight! Writing your thoughts down...</h1>
+					<h2 className={headingStyle}>Hang tight! Writing your thoughts down...</h2>
 					{truncated && <TruncationNotice droppedTurns={droppedTurns} />}
 					{ideaCapped && <IdeaCappedNotice />}
 					<LoadingAnimation

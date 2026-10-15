@@ -56,6 +56,21 @@ describe("TailwindComposedTabs", () => {
 		});
 	});
 
+	it("arrow keys skip a disabled tab instead of getting stuck", async () => {
+		const user = userEvent.setup();
+		const mixed = [
+			{ label: "Summary", content: <p>summary body</p> },
+			{ label: "Locked", content: <p>locked body</p>, disabled: true },
+			{ label: "Transcript", content: <p>transcript body</p> }
+		];
+		render(<TailwindComposedTabs data={mixed} activeTab={0} />);
+		screen.getByRole("tab", { name: "Summary" }).focus();
+		await user.keyboard("{ArrowRight}");
+		// the disabled middle tab is skipped entirely
+		expect(screen.getByRole("tabpanel")).toHaveTextContent("transcript body");
+		expect(screen.getByRole("tab", { selected: true })).toHaveTextContent("Transcript");
+	});
+
 	it("arrow keys move between tabs", async () => {
 		const user = userEvent.setup();
 		render(

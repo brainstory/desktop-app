@@ -127,30 +127,39 @@ function TailwindTab({
 	const tooltipId = `${idPrefix}-tab-${index}-tooltip`;
 	const hasTooltip = tooltipText !== "";
 
-	const moveFocus = (nextIndex: number) => {
-		// roving tabindex: focus (and select) the sibling tab button by id
-		const sibling = document.getElementById(`${idPrefix}-tab-${nextIndex}`);
-		sibling?.focus();
-		sibling?.click();
+	const moveFocus = (targetIndex: number, direction: 1 | -1) => {
+		// roving tabindex: focus (and select) the enabled tab at or after
+		// `targetIndex`. Disabled tabs are skipped (focusing them is a
+		// no-op that strands arrow navigation), looping at most one full
+		// lap; arrows pass their neighbour, Home/End the list edge.
+		for (let step = 0; step < tabCount; step++) {
+			const candidate = (targetIndex + direction * step + tabCount * 2) % tabCount;
+			const sibling = document.getElementById(`${idPrefix}-tab-${candidate}`);
+			if (sibling && !sibling.hasAttribute("disabled")) {
+				sibling.focus();
+				sibling.click();
+				return;
+			}
+		}
 	};
 
 	const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
 		switch (event.key) {
 			case "ArrowRight":
 				event.preventDefault();
-				moveFocus((index + 1) % tabCount);
+				moveFocus((index + 1) % tabCount, 1);
 				break;
 			case "ArrowLeft":
 				event.preventDefault();
-				moveFocus((index - 1 + tabCount) % tabCount);
+				moveFocus((index - 1 + tabCount) % tabCount, -1);
 				break;
 			case "Home":
 				event.preventDefault();
-				moveFocus(0);
+				moveFocus(0, 1);
 				break;
 			case "End":
 				event.preventDefault();
-				moveFocus(tabCount - 1);
+				moveFocus(tabCount - 1, -1);
 				break;
 		}
 	};

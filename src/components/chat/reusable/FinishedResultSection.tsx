@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import GeneratingResult from "@src/components/chat/generating-result/GeneratingResult";
 import StickyLoadingSection from "@src/components/chat/generating-result/StickyLoadingSection";
 
@@ -39,9 +40,26 @@ export default function FinishedResultSection({
 	cardsMissing,
 	ideaCapped
 }: FinishedResultSectionProps) {
+	// the summary swap changes the whole page: put focus somewhere
+	// meaningful instead of leaving it on the removed finish button
+	const headingRef = useRef<HTMLDivElement | null>(null);
+	useEffect(() => {
+		headingRef.current?.focus();
+	}, []);
+	useEffect(() => {
+		if (readyForFinish) {
+			// the CTA lives inside StickyLoadingSection; focus it by its
+			// stable id once the summary is saved
+			document.getElementById("summary-cta")?.focus();
+		}
+	}, [readyForFinish]);
 	return (
 		<section>
-			<div className="relative mx-auto w-full max-w-5xl lg:px-24 md:px-12 px-2 p-2">
+			<div
+				ref={headingRef}
+				tabIndex={-1}
+				className="relative mx-auto w-full max-w-5xl lg:px-24 md:px-12 px-2 p-2 focus:outline-none"
+			>
 				<div className="flex flex-col border border-stone-200 rounded-lg shadow my-4">
 					<GeneratingResult summary={result} isComplete={isComplete} />
 				</div>
