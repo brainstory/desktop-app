@@ -206,7 +206,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 							variant="pink"
 							disabled={isSaving}
 							onClick={onSubmit}
-							classes="mx-auto mt-auto justify-end w-[12rem]"
+							classes="mx-auto mt-auto w-[12rem]"
 						>
 							{isSaving && (
 								<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />

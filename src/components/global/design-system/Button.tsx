@@ -62,7 +62,12 @@ export default function Button({
 						children !== undefined ? "w-4 mr-2" : "justify-center w-6 h-6"
 					} ${iconClasses}`}
 				>
-					<Icon name={icon} />
+					{/* explicit size: an svg with only a viewBox and no
+					 * width/height collapses in the webview */}
+					<Icon
+						name={icon}
+						className={children !== undefined ? "w-4 h-4" : "w-full h-full"}
+					/>
 				</span>
 			)}
 			<span className="sr-only">{sr}</span>
