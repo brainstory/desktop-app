@@ -283,9 +283,14 @@ export function checkVendoredAssets(frontendRoot = root) {
 			problems.push("public/icons.svg is out of date");
 		}
 		const vendorDir = join(frontendRoot, "public", "vendor");
-		problems.push(
-			...diffTrees(join(staging, "vendor"), vendorDir).map((p) => `public/vendor ${p}`)
-		);
+		if (!existsSync(vendorDir)) {
+			// clearer than every vendored file reported missing
+			problems.push("public/vendor is missing");
+		} else {
+			problems.push(
+				...diffTrees(join(staging, "vendor"), vendorDir).map((p) => `public/vendor ${p}`)
+			);
+		}
 		return [...problems, ...unknown.map((name) => `unknown icon name: ${name}`)];
 	} finally {
 		rmSync(staging, { recursive: true, force: true });

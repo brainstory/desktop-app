@@ -2,12 +2,20 @@
 // they stay out of vitest's jsdom setup)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkVendoredAssets, iconNamesIn, replaceDir, vendorAssets } from "./vendor-assets.mjs";
 
-/** A throwaway frontend root with an ionicons install and a stale public/vendor/. */
+/** A throwaway frontend root with an ionicons svg dir and a stale public/vendor/. */
 function fakeFrontend(t, { withIonicons = true } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "vendor-assets-test-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -16,12 +24,9 @@ function fakeFrontend(t, { withIonicons = true } = {}) {
 	mkdirSync(join(dir, "public", "vendor"), { recursive: true });
 	writeFileSync(join(dir, "public", "vendor", "previous.txt"), "old build");
 	if (withIonicons) {
-		const dist = join(dir, "node_modules", "ionicons", "dist");
-		mkdirSync(join(dist, "ionicons"), { recursive: true });
-		mkdirSync(join(dist, "svg"), { recursive: true });
-		writeFileSync(join(dist, "ionicons", "ionicons.esm.js"), "// loader");
-		writeFileSync(join(dist, "ionicons", "p-abc.js"), "// chunk");
-		writeFileSync(join(dist, "svg", "add.svg"), "<svg/>");
+		const svgDir = join(dir, "node_modules", "ionicons", "dist", "svg");
+		mkdirSync(svgDir, { recursive: true });
+		writeFileSync(join(svgDir, "add.svg"), "<svg/>");
 	}
 	return dir;
 }
@@ -30,19 +35,25 @@ const stagingLeftovers = (dir) => readdirSync(dir).filter((f) => f.startsWith(".
 
 test("vendorAssets swaps a complete tree into public/vendor", (t) => {
 	const dir = fakeFrontend(t);
+	writeFileSync(join(dir, "src", "App.tsx"), '<Icon name="add" />\n');
 	vendorAssets(dir);
 	const vendor = join(dir, "public", "vendor");
-	assert.ok(existsSync(join(vendor, "ionicons", "ionicons.esm.js")));
-	assert.ok(existsSync(join(vendor, "ionicons", "svg", "add.svg")));
 	assert.ok(existsSync(join(vendor, "rive", "rive.wasm")));
+	assert.ok(
+		!existsSync(join(vendor, "ionicons")),
+		"only the sprite is built from ionicons; the web-component set is not vendored"
+	);
 	assert.ok(!existsSync(join(vendor, "previous.txt")), "stale files are replaced");
+	const sprite = readFileSync(join(dir, "public", "icons.svg"), "utf8");
+	assert.ok(sprite.includes('<symbol id="add"'), "the sprite carries the used icon");
 	assert.deepEqual(stagingLeftovers(dir), []);
 });
 
 test("a failed run leaves the previous public/vendor untouched", (t) => {
-	// node_modules without ionicons: vendoring throws part-way through
+	// node_modules without ionicons: the sprite build throws part-way through
 	const dir = fakeFrontend(t, { withIonicons: false });
-	assert.throws(() => vendorAssets(dir), /ENOENT/);
+	assert.throws(() => vendorAssets(dir), /ionicons is not installed/);
+	assert.ok(!existsSync(join(dir, "public", "icons.svg")), "nothing is published");
 	assert.ok(existsSync(join(dir, "public", "vendor", "previous.txt")));
 	assert.deepEqual(stagingLeftovers(dir), []);
 });
@@ -113,16 +124,14 @@ test("check mode passes on a fresh vendor tree", (t) => {
 test("check mode reports missing, stale and extra vendored files", (t) => {
 	const dir = fakeFrontend(t);
 	assert.deepEqual(checkVendoredAssets(dir), [
-		"public/vendor missing: ionicons/ionicons.esm.js",
-		"public/vendor missing: ionicons/p-abc.js",
-		"public/vendor missing: ionicons/svg/add.svg",
+		"public/icons.svg is missing",
 		"public/vendor missing: rive/rive.wasm",
 		"public/vendor missing: rive/rive_fallback.wasm",
 		"public/vendor unexpected: previous.txt"
 	]);
 	vendorAssets(dir);
-	writeFileSync(join(dir, "public", "vendor", "ionicons", "p-abc.js"), "// edited");
-	assert.deepEqual(checkVendoredAssets(dir), ["public/vendor out of date: ionicons/p-abc.js"]);
+	writeFileSync(join(dir, "public", "vendor", "rive", "rive.wasm"), "// edited");
+	assert.deepEqual(checkVendoredAssets(dir), ["public/vendor out of date: rive/rive.wasm"]);
 	rmSync(join(dir, "public", "vendor"), { recursive: true });
 	assert.deepEqual(checkVendoredAssets(dir), ["public/vendor is missing"]);
 });
