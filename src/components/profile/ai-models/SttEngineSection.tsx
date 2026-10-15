@@ -258,12 +258,12 @@ export function SttEngineSection({
 					</p>
 				)}
 			</div>
-			<div className="border border-stone-200 rounded-lg p-4 text-sm">
-				<h4 className="font-semibold text-stone-700">
-					{appleActive ? "Whisper model (fallback)" : "Whisper model"}
-				</h4>
-				<ModelList models={models} {...modelList} />
-			</div>
+			{/* model rows carry their own boxes; the list is a plain
+			    section like the LLM one */}
+			<h4 className="font-semibold text-stone-700 text-sm">
+				{appleActive ? "Whisper model (fallback)" : "Whisper model"}
+			</h4>
+			<ModelList models={models} {...modelList} />
 			<details
 				open={endpointOpen}
 				onToggle={(e) => setEndpointOpen(e.currentTarget.open)}

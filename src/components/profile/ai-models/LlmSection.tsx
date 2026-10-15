@@ -120,51 +120,41 @@ export function LlmSection({
 					openSnackbar={openSnackbar}
 				/>
 			</details>
+			{/* The model rows carry their own boxes; the list itself stays a
+			    plain section - no collapse, no outer wrapper (models must
+			    stay reachable in external mode too, so a downloaded one can
+			    be deleted) */}
+			<h4 className="font-semibold text-stone-700 text-sm">Models on this computer</h4>
+			<ModelList models={models} {...modelList} />
 			{!usingExternal && (
-				<div className="border border-stone-200 rounded-lg p-4 text-sm">
-					<h4 className="font-semibold text-stone-700">Models on this computer</h4>
-					<ModelList models={models} {...modelList} />
-					<div className="max-w-xs mt-3">
-						<label
-							htmlFor={ctxSelectId}
-							className="block mb-1 text-sm font-medium text-stone-900"
-						>
-							Context window
-						</label>
-						<select
-							id={ctxSelectId}
-							value={settings.llmCtxTokens}
-							onChange={(e) => save({ llmCtxTokens: Number(e.target.value) })}
-							className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
-						>
-							{CTX_OPTIONS.map((opt) => (
-								<option key={opt.value} value={opt.value}>
-									{opt.label}
-									{kvPerToken !== undefined
-										? ` - ${approxGb(
-												(opt.value === 0 ? 16384 : opt.value) * kvPerToken
-											)}`
-										: ""}
-								</option>
-							))}
-						</select>
-						<p className="text-sm text-stone-500 mt-1">
-							{ctxHelp} Changing this reloads the model.
-						</p>
-					</div>
+				<div className="max-w-xs">
+					<label
+						htmlFor={ctxSelectId}
+						className="block mb-1 text-sm font-medium text-stone-900"
+					>
+						Context window
+					</label>
+					<select
+						id={ctxSelectId}
+						value={settings.llmCtxTokens}
+						onChange={(e) => save({ llmCtxTokens: Number(e.target.value) })}
+						className="border border-stone-300 text-stone-900 text-sm rounded-lg focus:ring-accent-500 focus:border-accent-500 block w-full p-2 bg-white"
+					>
+						{CTX_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+								{kvPerToken !== undefined
+									? ` - ${approxGb(
+											(opt.value === 0 ? 16384 : opt.value) * kvPerToken
+										)}`
+									: ""}
+							</option>
+						))}
+					</select>
+					<p className="text-sm text-stone-500 mt-1">
+						{ctxHelp} Changing this reloads the model.
+					</p>
 				</div>
-			)}
-			{usingExternal && (
-				<details className="border border-stone-200 rounded-lg p-4 text-sm">
-					<summary className="font-semibold cursor-pointer">
-						Models on this computer
-					</summary>
-					{/* external mode hides the active list: keep local models
-					    reachable so a downloaded one can be deleted */}
-					<div className="mt-3">
-						<ModelList models={models} {...modelList} />
-					</div>
-				</details>
 			)}
 		</section>
 	);
