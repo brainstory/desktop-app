@@ -30,7 +30,13 @@ and the input/output contracts the app relies on were preserved.
 
 `story_interview_system_message`
 
-Original idea conversation.
+Original idea conversation. The compact variant (about 50 lines) used for small local
+models: a wall of rules crowds the conversation on a 2-4B model.
+
+`story_interview_system_message.large`
+
+The full-strategy interview prompt (modes, frameworks, thread tracking, response table)
+used for the larger local model and external endpoints.
 
 `story_interview_context_system_message`
 

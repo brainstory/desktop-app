@@ -90,6 +90,7 @@ fn real_prompts_work_end_to_end(llm: &LocalLlm) {
 		react_to_is_current_user: false,
 		structured_feedback: false,
 		built_ctx: 16_384,
+		model_is_large: false,
 	};
 	let (returned, streamed) = generate(llm, &chat);
 	assert_clean("interview chat reply", &returned, &streamed);
@@ -120,6 +121,7 @@ fn kv_cache_reuse_produces_completions_and_skips_prefix_decode(llm: &LocalLlm) {
 		react_to_is_current_user: false,
 		structured_feedback: false,
 		built_ctx: 16_384,
+		model_is_large: false,
 	};
 	let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let (first, prompt_tokens, _) = llm
@@ -234,6 +236,7 @@ fn oversized_payload_fit_probes(llm: &LocalLlm) {
 		react_to_is_current_user: false,
 		structured_feedback: false,
 		built_ctx: 16_384,
+		model_is_large: false,
 	};
 	let (returned, streamed) = generate(llm, &original);
 	assert_clean(
@@ -287,6 +290,7 @@ fn oversized_payload_fit_probes(llm: &LocalLlm) {
 		react_to_is_current_user: false,
 		structured_feedback: false,
 		built_ctx: 16_384,
+		model_is_large: false,
 	};
 	let cancel = Arc::new(AtomicBool::new(false));
 	let system = huge_idea.system_prompt();

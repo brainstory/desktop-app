@@ -55,6 +55,13 @@ fn context_budget_tokens(settings: &AiSettings) -> u32 {
 	}
 }
 
+/// Whether the model carries the long interview prompt: the E4B-class
+/// local model or an external endpoint (both handle a large system
+/// prompt without crowding the conversation).
+fn model_is_large(settings: &AiSettings) -> bool {
+	settings.uses_external_llm() || settings.llm_model.contains("E4B")
+}
+
 /// RAII counter for in-flight generations: a model switch (and the
 /// quick-capture shortcut) waits for these to drain instead of yanking
 /// the page or the engine's memory out from under a live generation.
@@ -251,6 +258,7 @@ impl GenerateParams {
 			structured_feedback: self.structured_feedback,
 			// refined against the settings before the prompt is built
 			built_ctx: crate::llm::DEFAULT_N_CTX,
+			model_is_large: false,
 		};
 		if request.react_to.is_some() && request.chat_type == ChatType::Original {
 			request.chat_type = ChatType::Feedback;
@@ -277,7 +285,9 @@ where
 {
 	let request = {
 		let mut request = request.clone();
-		request.built_ctx = context_budget_tokens(&state.ai_settings());
+		let settings = state.ai_settings();
+		request.built_ctx = context_budget_tokens(&settings);
+		request.model_is_large = model_is_large(&settings);
 		request
 	};
 	let idea_capped = request.idea_capped_for_ctx();
@@ -521,6 +531,7 @@ pub async fn regenerate_result(
 				react_to_is_current_user: false,
 				structured_feedback: false,
 				built_ctx: context_budget_tokens(&app_state.ai_settings()),
+				model_is_large: model_is_large(&app_state.ai_settings()),
 			};
 			// a feedback idea regenerates against its parent document
 			if request.chat_type == ChatType::Feedback {

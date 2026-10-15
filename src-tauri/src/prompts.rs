@@ -11,6 +11,8 @@ use crate::types::ChatMessage;
 // vice versa. See prompts/README.md.
 pub const STORY_INTERVIEW_SYSTEM: &str =
 	include_str!("../../prompts/story_interview_system_message.txt");
+pub const STORY_INTERVIEW_SYSTEM_LARGE: &str =
+	include_str!("../../prompts/story_interview_system_message.large.txt");
 pub const STORY_INTERVIEW_CONTEXT_SYSTEM: &str =
 	include_str!("../../prompts/story_interview_context_system_message.txt");
 pub const STORY_INTERVIEW_REACT_SYSTEM: &str =
@@ -27,6 +29,7 @@ pub const DAILY_INTENT_RESULT_SYSTEM: &str =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
 	StoryInterview,
+	StoryInterviewLarge,
 	StoryInterviewContext,
 	StoryInterviewReact,
 	StoryResult,
@@ -37,8 +40,9 @@ pub enum Prompt {
 
 impl Prompt {
 	/// Every prompt, in declaration order (so `p as usize` indexes it).
-	pub const ALL: [Prompt; 7] = [
+	pub const ALL: [Prompt; 8] = [
 		Prompt::StoryInterview,
+		Prompt::StoryInterviewLarge,
 		Prompt::StoryInterviewContext,
 		Prompt::StoryInterviewReact,
 		Prompt::StoryResult,
@@ -51,6 +55,7 @@ impl Prompt {
 	pub fn file_stem(self) -> &'static str {
 		match self {
 			Prompt::StoryInterview => "story_interview_system_message",
+			Prompt::StoryInterviewLarge => "story_interview_system_message.large",
 			Prompt::StoryInterviewContext => "story_interview_context_system_message",
 			Prompt::StoryInterviewReact => "story_interview_react_system_message",
 			Prompt::StoryResult => "story_result_system_message",
@@ -64,6 +69,7 @@ impl Prompt {
 	pub fn embedded(self) -> &'static str {
 		match self {
 			Prompt::StoryInterview => STORY_INTERVIEW_SYSTEM,
+			Prompt::StoryInterviewLarge => STORY_INTERVIEW_SYSTEM_LARGE,
 			Prompt::StoryInterviewContext => STORY_INTERVIEW_CONTEXT_SYSTEM,
 			Prompt::StoryInterviewReact => STORY_INTERVIEW_REACT_SYSTEM,
 			Prompt::StoryResult => STORY_RESULT_SYSTEM,
@@ -224,6 +230,9 @@ pub struct PromptRequest {
 	/// fills it from the settings; 0 = the app default). Drives the cap
 	/// on a pasted feedback idea.
 	pub built_ctx: u32,
+	/// True for models that carry the long interview prompt: the larger
+	/// local model or an external endpoint. Filled by the command layer.
+	pub model_is_large: bool,
 }
 
 impl PromptRequest {
@@ -245,6 +254,11 @@ impl PromptRequest {
 		}
 
 		match self.chat_type {
+			// small local models follow the compact prompt; the larger
+			// local model and external endpoints carry the full strategies
+			ChatType::Original if self.model_is_large => {
+				Prompt::StoryInterviewLarge.text().to_string()
+			}
 			ChatType::Original => Prompt::StoryInterview.text().to_string(),
 			ChatType::DailyIntent => Prompt::StoryInterviewContext.text().to_string(),
 			ChatType::Feedback => {
@@ -313,6 +327,7 @@ impl PromptRequest {
 			react_to_is_current_user: self.react_to_is_current_user,
 			structured_feedback: false,
 			built_ctx: self.built_ctx,
+			model_is_large: self.model_is_large,
 		};
 		Some(Arc::new(move |turns: &[ChatMessage]| {
 			shape.summary_message(turns).content
@@ -480,6 +495,7 @@ mod tests {
 			react_to_is_current_user: false,
 			structured_feedback: false,
 			built_ctx: 16_384,
+			model_is_large: false,
 		};
 		let content = &request.user_messages()[0].content;
 		assert!(content.contains("honest answer"), "kept: {content}");
@@ -513,6 +529,7 @@ mod idea_cap_tests {
 			react_to_is_current_user: false,
 			structured_feedback: false,
 			built_ctx: 16_384,
+			model_is_large: false,
 		}
 	}
 
@@ -598,6 +615,7 @@ mod contract_tests {
 			react_to_is_current_user: false,
 			structured_feedback: false,
 			built_ctx: 16_384,
+			model_is_large: false,
 		}
 	}
 
@@ -617,6 +635,33 @@ mod contract_tests {
 				"prompts/{name}_system_message.txt is empty"
 			);
 		}
+	}
+
+	#[test]
+	fn interview_prompts_stay_compact_for_small_models() {
+		// the compact variant is what small local models run: a wall of
+		// rules crowds the conversation and contradicts itself
+		assert!(
+			STORY_INTERVIEW_SYSTEM.len() < 3_000,
+			"story_interview_system_message.txt is {} bytes (budget 3000)",
+			STORY_INTERVIEW_SYSTEM.len()
+		);
+		// the large variant is the full-strategy version
+		assert!(STORY_INTERVIEW_SYSTEM_LARGE.len() > STORY_INTERVIEW_SYSTEM.len());
+	}
+
+	#[test]
+	fn large_models_get_the_long_interview_prompt() {
+		let mut req = request(ChatType::Original, false);
+		req.model_is_large = true;
+		assert_eq!(
+			req.system_prompt(),
+			STORY_INTERVIEW_SYSTEM_LARGE.to_string()
+		);
+		// small models keep the compact one
+		let mut small = request(ChatType::Original, false);
+		small.model_is_large = false;
+		assert_eq!(small.system_prompt(), STORY_INTERVIEW_SYSTEM.to_string());
 	}
 
 	#[test]
