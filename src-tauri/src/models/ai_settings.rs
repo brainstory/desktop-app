@@ -132,6 +132,10 @@ pub struct AiSettings {
 	/// (0 = the default, 8192). Drives the same prompt fitting the
 	/// local engine does.
 	pub ext_llm_ctx_tokens: u32,
+	/// which of the three secrets (if any) are currently served from the
+	/// plaintext DB fallback - computed once at load, so the settings
+	/// read does not probe the OS keychain three extra times
+	pub secrets_plaintext: [bool; 3],
 	pub stt_model: String,
 	/// Local or external transcription (see [`Self::uses_external_stt`]).
 	pub stt_mode: SttMode,
@@ -295,6 +299,14 @@ fn valid_llm_ctx(v: u32) -> bool {
 }
 
 impl AiSettings {
+	/// The three secrets in a fixed order (hf token, ext LLM key, ext
+	/// STT key) - the index into `secrets_plaintext`.
+	pub const SECRETS: [crate::secrets::Secret; 3] = [
+		crate::secrets::Secret::HfToken,
+		crate::secrets::Secret::ExtLlmApiKey,
+		crate::secrets::Secret::ExtSttApiKey,
+	];
+
 	pub fn load(db: &Db) -> Self {
 		let get = |k: &str| db.get_setting(k).unwrap_or_default();
 		let secret = |s: crate::secrets::Secret| crate::secrets::load(s, db).unwrap_or_default();
@@ -371,6 +383,10 @@ impl AiSettings {
 			ext_stt_base_url: get(setting::EXT_STT_BASE_URL),
 			ext_stt_api_key: secret(crate::secrets::Secret::ExtSttApiKey),
 			ext_stt_model: get(setting::EXT_STT_MODEL),
+			// one keychain probe per secret, here - the settings page reads
+			// this cached array instead of re-probing three more times
+			secrets_plaintext: Self::SECRETS
+				.map(|secret| crate::secrets::served_from_plaintext_fallback(secret, db)),
 		}
 	}
 

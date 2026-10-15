@@ -297,16 +297,9 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 		let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
 		let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
 		// Whether any stored secret is currently served from the plaintext
-		// DB fallback (no usable keychain): the form warns about it.
-		let secrets_plaintext = [
-			(&s.hf_token, crate::secrets::Secret::HfToken),
-			(&s.ext_llm_api_key, crate::secrets::Secret::ExtLlmApiKey),
-			(&s.ext_stt_api_key, crate::secrets::Secret::ExtSttApiKey),
-		]
-		.iter()
-		.any(|(value, secret)| {
-			!value.is_empty() && crate::secrets::served_from_plaintext_fallback(*secret, &state.db)
-		});
+		// DB fallback: computed once at load and cached with the settings
+		// (no extra keychain probes on every settings open).
+		let secrets_plaintext = s.secrets_plaintext.iter().any(|p| *p);
 		// camelCase to match the frontend's field access
 		Ok(serde_json::json!({
 			"llmMode": s.llm_mode.as_str(),

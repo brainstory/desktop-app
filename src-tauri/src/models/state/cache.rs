@@ -86,6 +86,11 @@ impl AppState {
 		patch(&mut working)?;
 		match working.save(&self.db, &latest) {
 			Ok(()) => {
+				// a secret may have moved between the keychain and the
+				// fallback row: recompute the cached flags (three probes,
+				// only on save) so the settings page reads fresh values
+				working.secrets_plaintext = AiSettings::SECRETS
+					.map(|secret| crate::secrets::served_from_plaintext_fallback(secret, &self.db));
 				let generation = self.ai_settings_generation.fetch_add(1, Ordering::SeqCst) + 1;
 				*cache = Some(working.clone());
 				Ok((working, generation))
