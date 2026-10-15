@@ -420,6 +420,7 @@ function IdeaResultContentInner() {
 					onEditSummary={startEditingSummary}
 					onRegenerateSummary={regenerateSummary}
 					isRegenerating={isRegenerating}
+					feedbackCount={finishedFeedback(ideaChildren ?? []).length}
 				/>
 				<TailwindComposedTabs
 					data={tabData}

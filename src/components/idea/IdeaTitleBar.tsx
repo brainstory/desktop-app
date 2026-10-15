@@ -21,6 +21,9 @@ interface IdeaTitleBarProps {
 	onRegenerateSummary?: () => void;
 	/** a regeneration is running */
 	isRegenerating?: boolean;
+	/** finished feedback items hanging off this idea: the delete
+	 * confirmation names what it cascades to */
+	feedbackCount?: number;
 }
 
 export default function IdeaTitleBar({
@@ -31,7 +34,8 @@ export default function IdeaTitleBar({
 	onTitleSaved,
 	onEditSummary,
 	onRegenerateSummary,
-	isRegenerating = false
+	isRegenerating = false,
+	feedbackCount = 0
 }: IdeaTitleBarProps) {
 	const { openSnackbar, snackbars } = useSnackbar();
 	const [exportState, setExportState] = useState<string | null>(null);
@@ -278,12 +282,14 @@ export default function IdeaTitleBar({
 				onClick={handleDelete}
 				classes={confirmingDelete ? "ring-red-400 text-red-600" : ""}
 			>
-				{confirmingDelete ? `Really delete? (${secondsLeft ?? 0}s)` : "Delete"}
+				{confirmingDelete
+					? `Delete idea${feedbackCount > 0 ? ` and ${feedbackCount} feedback item${feedbackCount === 1 ? "" : "s"}?` : "?"} (${secondsLeft ?? 0}s)`
+					: "Delete"}
 			</Button>,
 			// Announced once when armed, outside the button and not on
 			// every countdown tick
 			<span key="delete-status" role="status" className="sr-only">
-				{confirmingDelete ? CONFIRM_DELETE_ANNOUNCEMENT : ""}
+				{confirmingDelete ? `${CONFIRM_DELETE_ANNOUNCEMENT} This cannot be undone.` : ""}
 			</span>
 		);
 		return buttons;

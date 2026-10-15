@@ -169,15 +169,15 @@ describe("IdeaTitleBar delete", () => {
 			expect(status).toBeEmptyDOMElement();
 
 			fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-			const armed = screen.getByRole("button", { name: /Really delete\?/ });
-			expect(armed).toHaveTextContent("Really delete? (5s)");
+			const armed = screen.getByRole("button", { name: /Delete idea\?/ });
+			expect(armed).toHaveTextContent("Delete idea? (5s)");
 			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
 			expect(armed).not.toContainElement(status);
 
 			act(() => {
 				vi.advanceTimersByTime(2000);
 			});
-			expect(armed).toHaveTextContent("Really delete? (3s)");
+			expect(armed).toHaveTextContent("Delete idea? (3s)");
 			expect(status).toHaveTextContent("Click again to delete, resets in 5 seconds");
 
 			act(() => {
@@ -202,7 +202,7 @@ describe("IdeaTitleBar delete", () => {
 		try {
 			renderBar();
 			fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-			fireEvent.click(screen.getByRole("button", { name: /Really delete\?/ }));
+			fireEvent.click(screen.getByRole("button", { name: /Delete idea\?/ }));
 			await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard"));
 		} finally {
 			vi.unstubAllGlobals();
