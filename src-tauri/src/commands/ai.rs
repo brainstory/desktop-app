@@ -396,8 +396,9 @@ where
 	// non-streaming command intentionally skips the second pass, matching
 	// its previous behaviour.)
 	let mut structured = None;
+	let oid_for_cards = request.react_to.as_deref();
 	if request.summarize && request.structured_feedback {
-		structured = extract_feedback_json(&output);
+		structured = extract_feedback_json(&output, oid_for_cards);
 	} else if second_pass && request.summarize && request.chat_type == ChatType::Feedback {
 		// the prose is done and rendering; say what the extra wait is for
 		on_event(EmitKind::Status, "Building comment cards...");
@@ -418,7 +419,9 @@ where
 		)
 		.await;
 		match json_output {
-			Ok((json_output, _, _)) => structured = extract_feedback_json(&json_output),
+			Ok((json_output, _, _)) => {
+				structured = extract_feedback_json(&json_output, oid_for_cards)
+			}
 			// log instead of swallowing: a silently missing structured
 			// document is invisible in support logs
 			Err(e) => log::error!("structured feedback pass failed: {e}"),
@@ -933,7 +936,68 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 /// Unusable items (no feedback text, a non-string heading) and exact
 /// repeats of an earlier item are dropped: each item becomes a comment
 /// bubble on the idea.
-fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
+/// The `## ` section heading texts of an idea document, in order (the
+/// `#` title is not counted).
+fn oid_heading_texts(oid: &str) -> Vec<String> {
+	oid.lines()
+		.filter_map(|line| line.trim_start().strip_prefix("## "))
+		.map(str::trim)
+		.filter(|heading| !heading.is_empty())
+		.map(str::to_string)
+		.collect()
+}
+
+/// Canonicalize each item's `oid_heading_text` against the OID's actual
+/// `## ` sections: whatever the model produced (bare heading text, an
+/// already-indexed `1## Heading`, either case), match it
+/// case-insensitively and rewrite it as `<index>##<exact heading>`.
+/// Items that match nothing are dropped - unless the document has
+/// exactly one section, which they are then assigned to. Pure, for
+/// tests. The stored format is unchanged, so import/export and the
+/// frontend's heading resolver keep working.
+pub(crate) fn normalize_feedback_headings(items: &mut Vec<serde_json::Value>, sections: &[String]) {
+	let lower_sections: Vec<String> = sections.iter().map(|s| s.to_lowercase()).collect();
+	let normalize = |item: &mut serde_json::Value| -> bool {
+		let raw = item["oid_heading_text"]
+			.as_str()
+			.unwrap_or_default()
+			.to_string();
+		if raw.is_empty() {
+			return false;
+		}
+		// accept both shapes: "Heading" and "1## Heading"
+		let text = match raw.find("##") {
+			Some(idx) => raw[idx + 2..].trim(),
+			None => raw.trim(),
+		}
+		.to_string();
+		let matched = lower_sections
+			.iter()
+			.position(|s| *s == text.to_lowercase());
+		let index = match matched {
+			Some(i) => i,
+			// exactly one section: everything belongs to it
+			None if sections.len() == 1 => 0,
+			None => {
+				log::warn!("feedback item heading '{text}' matches no section; dropping the item");
+				return false;
+			}
+		};
+		item["oid_heading_text"] = serde_json::json!(format!("{}##{}", index + 1, sections[index]));
+		true
+	};
+	// retain_mut in place: Vec::retain only lends &T
+	let mut i = 0;
+	while i < items.len() {
+		if normalize(&mut items[i]) {
+			i += 1;
+		} else {
+			items.remove(i);
+		}
+	}
+}
+
+fn extract_feedback_json(text: &str, oid: Option<&str>) -> Option<serde_json::Value> {
 	let Some(mut value) = extract_json(text) else {
 		// length only: the output is the user's own feedback text
 		log::warn!(
@@ -950,6 +1014,13 @@ fn extract_feedback_json(text: &str) -> Option<serde_json::Value> {
 		}
 		Some(items) if items.is_array() => {
 			if let Some(items) = value["feedback_items"].as_array_mut() {
+				// pin each item to a real section before the dedup: the
+				// model was told to copy heading text, not count headings.
+				// No OID (never in the live flow): nothing to match
+				// against, keep the document as produced.
+				if let Some(oid) = oid {
+					normalize_feedback_headings(items, &oid_heading_texts(oid));
+				}
 				let mut seen = std::collections::HashSet::new();
 				items.retain(|item| {
 					// same member contract as the share import: non-empty
@@ -1104,13 +1175,61 @@ mod reply_trim_tests {
 }
 
 #[cfg(test)]
+mod feedback_heading_tests {
+	use super::{normalize_feedback_headings, oid_heading_texts};
+
+	fn items(json: &str) -> Vec<serde_json::Value> {
+		serde_json::from_str(json).expect("valid")
+	}
+
+	#[test]
+	fn heading_texts_are_the_sections_in_order() {
+		let oid = "# Title\n\n## Alpha\nbody\n\n## Beta\n\n# not a section\n\n## Gamma\n";
+		assert_eq!(oid_heading_texts(oid), vec!["Alpha", "Beta", "Gamma"]);
+	}
+
+	#[test]
+	fn bare_and_indexed_headings_are_normalized_to_index_and_exact_text() {
+		let sections = vec!["Alpha".to_string(), "Beta Plan".to_string()];
+		// the model copied the text exactly (the new prompt), already
+		// indexed it, or got the case wrong - all three resolve
+		let mut v = items(
+			r#"[{"oid_heading_text":"Beta Plan"},
+			    {"oid_heading_text":"1## Alpha"},
+			    {"oid_heading_text":"beta plan"}]"#,
+		);
+		normalize_feedback_headings(&mut v, &sections);
+		assert_eq!(v[0]["oid_heading_text"], "2##Beta Plan");
+		assert_eq!(v[1]["oid_heading_text"], "1##Alpha");
+		// the rewrite uses the document's exact casing, not the model's
+		assert_eq!(v[2]["oid_heading_text"], "2##Beta Plan");
+	}
+
+	#[test]
+	fn unmatched_items_drop_unless_there_is_one_section() {
+		let two = vec!["Alpha".to_string(), "Beta".to_string()];
+		let mut v = items(r#"[{"oid_heading_text":"Zeta","feedback_text":"f"}]"#);
+		normalize_feedback_headings(&mut v, &two);
+		assert!(v.is_empty(), "no match, two sections: dropped");
+
+		let one = vec!["The only section".to_string()];
+		let mut v = items(r#"[{"oid_heading_text":"anything","feedback_text":"f"}]"#);
+		normalize_feedback_headings(&mut v, &one);
+		assert_eq!(v[0]["oid_heading_text"], "1##The only section");
+	}
+}
+
+#[cfg(test)]
 mod feedback_json_tests {
 	use super::extract_feedback_json;
 
 	#[test]
 	fn accepts_wellformed_feedback_documents() {
-		let v = extract_feedback_json(r#"{"feedback_items": [{"oid_heading_text": "1## A"}]}"#)
-			.expect("valid");
+		let v = extract_feedback_json(
+			r#"{"feedback_items": [{"oid_heading_text": "1## A"}]}"#,
+			None,
+		)
+		.expect("valid");
 		assert!(v["feedback_items"].is_array());
 	}
 
@@ -1120,11 +1239,11 @@ mod feedback_json_tests {
 		// documents without them are valid and older ones that still
 		// carry labels keep loading
 		let item = r#"{"oid_heading_text": "1## A", "matched_spans": [], "feedback_text": "f", "confidence": "high", "priority": "medium", "relationships": []}"#;
-		let v = extract_feedback_json(&format!(r#"{{"feedback_items": [{item}]}}"#))
+		let v = extract_feedback_json(&format!(r#"{{"feedback_items": [{item}]}}"#), None)
 			.expect("no labels");
 		assert!(v["feedback_items"][0].get("labels").is_none());
 		let legacy = r#"{"feedback_items": [{"oid_heading_text": "1## A", "labels": [{"name": "agree", "emoji": "👍"}]}]}"#;
-		assert!(extract_feedback_json(legacy).is_some());
+		assert!(extract_feedback_json(legacy, None).is_some());
 	}
 
 	#[test]
@@ -1138,6 +1257,7 @@ mod feedback_json_tests {
 				{"oid_heading_text": "1## A", "matched_spans": ["x"], "feedback_text": "more ideas"},
 				{"oid_heading_text": "3## C", "matched_spans": [], "feedback_text": "more ideas"}
 			]}"#,
+			None,
 		)
 		.expect("valid");
 		let kept: Vec<(&str, &str)> = v["feedback_items"]
@@ -1156,7 +1276,7 @@ mod feedback_json_tests {
 
 	#[test]
 	fn empty_feedback_items_is_valid() {
-		assert!(extract_feedback_json(r#"{"feedback_items": []}"#).is_some());
+		assert!(extract_feedback_json(r#"{"feedback_items": []}"#, None).is_some());
 	}
 
 	/// Records every log line so a test can assert a failure was not
@@ -1186,7 +1306,7 @@ mod feedback_json_tests {
 		// a distinctive length so the line can't come from another test
 		let broken = "the model forgot the JSON entirely :(";
 		let expected = format!("not valid JSON ({} chars)", broken.chars().count());
-		assert!(extract_feedback_json(broken).is_none());
+		assert!(extract_feedback_json(broken, None).is_none());
 		let lines = CAPTURE.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
 		assert!(
 			lines
@@ -1198,9 +1318,9 @@ mod feedback_json_tests {
 
 	#[test]
 	fn rejects_missing_or_non_array_feedback_items() {
-		assert!(extract_feedback_json(r#"{"something": "else"}"#).is_none());
-		assert!(extract_feedback_json(r#"{"feedback_items": "nope"}"#).is_none());
-		assert!(extract_feedback_json("no json at all").is_none());
+		assert!(extract_feedback_json(r#"{"something": "else"}"#, None).is_none());
+		assert!(extract_feedback_json(r#"{"feedback_items": "nope"}"#, None).is_none());
+		assert!(extract_feedback_json("no json at all", None).is_none());
 	}
 
 	/// Members whose oid_heading_text is not a string (number/object)
@@ -1210,14 +1330,16 @@ mod feedback_json_tests {
 	/// headings stay (aggregation logs and skips those comments).
 	#[test]
 	fn non_string_heading_members_are_dropped() {
+		// no OID given: normalization is skipped, so the null/absent
+		// headings survive to the aggregation stage as before
 		let v = extract_feedback_json(
 			r#"{"feedback_items": [
 				{"oid_heading_text": 1, "matched_spans": [], "feedback_text": "one"},
 				{"oid_heading_text": {"n": 2}, "feedback_text": "two"},
 				{"oid_heading_text": null, "matched_spans": [], "feedback_text": "null heading stays"},
-				{"matched_spans": [], "feedback_text": "absent heading stays"},
-				{"oid_heading_text": "2## B", "matched_spans": [], "feedback_text": "kept"}
+				{"matched_spans": [], "feedback_text": "absent heading stays"}
 			]}"#,
+			None,
 		)
 		.expect("valid document");
 		let kept: Vec<&str> = v["feedback_items"]
@@ -1228,8 +1350,8 @@ mod feedback_json_tests {
 			.collect();
 		assert_eq!(
 			kept,
-			["null heading stays", "absent heading stays", "kept"],
-			"non-string headings dropped, everything else kept"
+			["null heading stays", "absent heading stays"],
+			"non-string headings dropped, null/absent survive normalization"
 		);
 	}
 }
