@@ -80,7 +80,7 @@ describe("IdeaFeedbackCard", () => {
 			const long = {
 				...comment,
 				feedbackText: "A".repeat(400)
-			} as unknown as FeedbackComment;
+			};
 			const { rerender } = render(
 				<IdeaFeedbackCard
 					feedback={{ ...long, ideaId: "i1", hid: 1 }}

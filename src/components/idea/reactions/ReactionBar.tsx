@@ -76,6 +76,9 @@ export default function ReactionBar({
 	className
 }: ReactionBarProps) {
 	const [isOpen, setIsOpen] = useState(false);
+	// scroll containers clip absolutely-positioned children: flip the
+	// picker upward when opening it downward would cross the pane's edge
+	const [flipUp, setFlipUp] = useState(false);
 	const pickerId = useId();
 	const wrapperRef = useRef<HTMLDivElement | null>(null);
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -96,6 +99,13 @@ export default function ReactionBar({
 	useEffect(() => {
 		if (!isOpen) return;
 		pickerRef.current?.querySelector("button")?.focus();
+
+		const wrapperBox = wrapperRef.current?.getBoundingClientRect();
+		// the closest scrollable pane, or the viewport when none scrolls
+		const paneBox = wrapperRef.current?.closest(".overflow-y-auto")?.getBoundingClientRect();
+		if (wrapperBox) {
+			setFlipUp(!paneBox || wrapperBox.bottom + 48 > paneBox.bottom);
+		}
 
 		const onKeyDown = (event: globalThis.KeyboardEvent): void => {
 			if (event.key === "Escape") {
@@ -170,7 +180,10 @@ export default function ReactionBar({
 						id={pickerId}
 						role="group"
 						aria-label="Pick a reaction"
-						className="absolute left-0 top-full z-40 mt-1 w-max max-w-[16rem] rounded-lg border border-stone-200 bg-white p-1.5 shadow-lg"
+						className={cn(
+							"absolute left-0 z-40 w-max max-w-[16rem] rounded-lg border border-stone-200 bg-white p-1.5 shadow-lg",
+							flipUp ? "bottom-full mb-1" : "top-full mt-1"
+						)}
 					>
 						<div className="flex flex-wrap gap-0.5">
 							{REACTIONS.map((reaction) => (
