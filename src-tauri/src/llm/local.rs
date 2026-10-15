@@ -444,12 +444,15 @@ impl LocalLlm {
 		// kv_tokens tracks what the cache holds, for the next turn's reuse.
 		let mut kv_tokens: Vec<llama_cpp_2::token::LlamaToken> = tokens.clone();
 		let mut decode_from = 0usize;
-		if let Some(saved) = self
+		// borrow the saved state, only consuming it once the restore
+		// succeeded: a failed restore must not destroy the cache
+		let saved_state = self
 			.kv_state
 			.lock()
 			.unwrap_or_else(|e| e.into_inner())
-			.take()
-		{
+			.take();
+		let mut restored = false;
+		if let Some(saved) = saved_state.as_ref() {
 			if let Some(plan) = plan_kv_reuse(&saved.tokens, &tokens) {
 				match ctx.state_seq_set(&saved.kv, 0) {
 					Ok(()) => {
@@ -463,6 +466,7 @@ impl LocalLlm {
 						} else {
 							decode_from = plan.decode_from;
 							kv_tokens = plan.tokens_after_prompt(&saved.tokens, &tokens);
+							restored = true;
 							log::info!(
 								"reusing KV cache: {decode_from} cached tokens, decoding {} new",
 								n_prompt - decode_from
@@ -472,6 +476,16 @@ impl LocalLlm {
 					Err(e) => {
 						log::warn!("KV restore failed; decoding full prompt: {e:?}");
 					}
+				}
+			}
+		}
+		if !restored {
+			// put an unrestored (or unusable) state back unless a later
+			// capture replaces it
+			if let Some(saved) = saved_state {
+				let mut slot = self.kv_state.lock().unwrap_or_else(|e| e.into_inner());
+				if slot.is_none() {
+					*slot = Some(saved);
 				}
 			}
 		}
@@ -485,20 +499,36 @@ impl LocalLlm {
 		// Decode the (possibly partial) prompt in chunks: cancel stays
 		// responsive and a stalled decode aborts instead of hanging the
 		// whole budget. The KV prefix is already in the context.
+		// A cancelled/failed generation keeps its decoded prompt cached:
+		// the next turn shares the whole prefix, so the retry (or the
+		// next message) only decodes its tail instead of starting over.
+		let capture_kv = |ctx: &llama_cpp_2::context::LlamaContext,
+		                  kv_tokens: &[llama_cpp_2::token::LlamaToken]| {
+			if let Ok(kv) = ctx.state_seq_get(0, llama_cpp_2::LlamaStateSeqFlags::empty()) {
+				*self.kv_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(GenerationState {
+					kv,
+					tokens: kv_tokens.to_vec(),
+				});
+			}
+		};
+
 		let mut batch = LlamaBatch::new(PROMPT_DECODE_CHUNK, 1);
 		for (offset, chunk) in tokens[decode_from..]
 			.chunks(PROMPT_DECODE_CHUNK)
 			.enumerate()
 		{
 			if cancel.load(Ordering::Relaxed) {
+				capture_kv(&ctx, &kv_tokens);
 				return Err("generation cancelled".into());
 			}
 			if last_progress.elapsed()
 				> std::time::Duration::from_secs(GENERATION_IDLE_TIMEOUT_SECS)
 			{
+				capture_kv(&ctx, &kv_tokens);
 				return Err(stalled());
 			}
 			if started.elapsed() > std::time::Duration::from_secs(GENERATION_MAX_TOTAL_SECS) {
+				capture_kv(&ctx, &kv_tokens);
 				return Err(overdue());
 			}
 			batch.clear();
@@ -557,14 +587,17 @@ impl LocalLlm {
 
 		loop {
 			if cancel.load(Ordering::Relaxed) {
+				capture_kv(&ctx, &kv_tokens);
 				return Err("generation cancelled".into());
 			}
 			if last_progress.elapsed()
 				> std::time::Duration::from_secs(GENERATION_IDLE_TIMEOUT_SECS)
 			{
+				capture_kv(&ctx, &kv_tokens);
 				return Err(stalled());
 			}
 			if started.elapsed() > std::time::Duration::from_secs(GENERATION_MAX_TOTAL_SECS) {
+				capture_kv(&ctx, &kv_tokens);
 				return Err(overdue());
 			}
 			let token = sampler.sample(&ctx, -1);
@@ -608,12 +641,7 @@ impl LocalLlm {
 
 		// Capture the KV for the next turn. Failures are non-fatal: the
 		// next call just re-decodes from scratch.
-		if let Ok(kv) = ctx.state_seq_get(0, llama_cpp_2::LlamaStateSeqFlags::empty()) {
-			*self.kv_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(GenerationState {
-				kv,
-				tokens: kv_tokens,
-			});
-		}
+		capture_kv(&ctx, &kv_tokens);
 
 		Ok((output, n_prompt, dropped_turns))
 	}
