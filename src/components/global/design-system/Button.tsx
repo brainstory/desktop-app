@@ -90,6 +90,11 @@ export default function Button({
 		// through the same spread (id, onClick, aria-*, ref, ...)
 		const anchorProps = props as React.ComponentProps<"a">;
 		return (
+			// the taint tracker cannot see through safeHref (a validating
+			// helper is never a sanitizer to it); the href here is only
+			// ever a same-app path or an absolute http(s) URL - see
+			// safeHref's tests
+			// codeql[js/client-side-unvalidated-url-redirection]
 			<a href={url} className={className} {...anchorProps}>
 				{content}
 			</a>
