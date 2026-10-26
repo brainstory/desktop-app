@@ -98,7 +98,11 @@ jobs:
         shell: bash
         run: |
           BASE="$(node -e "console.log(JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8')).version)")"
-          NIGHTLY="${BASE}-nightly.sha${GITHUB_SHA::7}"
+          # '+' not '-': must stay valid semver (tauri parses it; a purely
+          # numeric short SHA with a leading zero once broke the build, hence
+          # the 'sha' prefix) and the AppImage bundler rejects versions with
+          # '-' (allowed: alphanumeric, '.', '_', '+', '%', '{', '}', '~', '^')
+          NIGHTLY="${BASE}+nightly.sha${GITHUB_SHA::7}"
           echo "stamping nightly version $NIGHTLY"
           VERSION="$NIGHTLY" node -e "
             const fs = require('fs');
