@@ -1,13 +1,26 @@
+# Configuration for `cargo audit`, used by the "cargo audit" step in
+# .github/workflows/ci.yml (which runs from the repo root and audits
+# src-tauri/Cargo.lock).
+#
+# Currently ignored: the standalone zbus ecosystem crates (zbus_names,
+# zvariant, zvariant_derive) were merged back into zbus 6 and are unmaintained.
+# We still get them transitively through zbus 5 via tauri-plugin-notification,
+# tauri-plugin-opener, tauri-plugin-single-instance and keyring/secret-service.
+# Tracked upstream: https://github.com/tauri-apps/plugins-workspace/issues/3716
+# TODO: remove these ignores once the zbus 6 migration ships and reaches our
+# lockfile.
+
 [advisories]
 ignore = [
-  # glib 0.18.5 VariantStrIter unsoundness (informational). Pulled in by
-  # tauri 2 -> gtk ^0.18 on Linux only; patched only in glib >= 0.20, which
-  # no tauri 2.x can use. Nothing in src/ or in the twelve glib-dependent
-  # crates in Cargo.lock calls VariantStrIter. Revisit when tauri moves
-  # off gtk 0.18 (tauri 3).
-  "RUSTSEC-2024-0429",
-  # proc-macro-error is unmaintained (informational). Transitive via
-  # glib-macros 0.18 / gtk3-macros 0.18 on Linux only; upstream removed it
-  # in 0.19, which tauri 2's gtk 0.18 pin cannot use. Same revisit trigger.
-  "RUSTSEC-2024-0370",
+    "RUSTSEC-2026-0370", # zvariant is unmaintained
+    "RUSTSEC-2026-0371", # zbus_names is unmaintained
+    "RUSTSEC-2026-0372", # zvariant_derive is unmaintained
+    # glib 0.18.5 (unsound glib::VariantStrIter iterators) and
+    # proc-macro-error 1.0.4 (unmaintained, dead crate, no fixed release)
+    # both come in via the GTK3 tray stack tauri uses on Linux:
+    # tray-icon -> libappindicator -> gtk 0.18 -> atk/glib/glib-macros.
+    # gtk 0.18.x is the final GTK3 release line, so there is nothing to
+    # upgrade to until tauri drops libappindicator.
+    "RUSTSEC-2024-0370", # proc-macro-error is unmaintained
+    "RUSTSEC-2024-0429", # glib VariantStrIter unsoundness
 ]
