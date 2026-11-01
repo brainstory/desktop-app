@@ -129,6 +129,9 @@ function NavigationInner() {
 										iconClasses="mr-0.5"
 										full
 										href={button.href}
+										// the e2e smoke test drives the app through
+										// this entry point
+										data-testid="new-idea-button"
 									>
 										{button.text}
 									</Button>

@@ -36,6 +36,8 @@ export default function ChatIdeaMainSection({
 		<div className={`relative grid grid-cols-5 ${showTranscript ? "gap-3" : ""} grid-flow-row`}>
 			{!showTranscript && <div className="col-span-1" />}
 			<div
+				// the e2e smoke test asserts the sent message lands here
+				data-testid="transcript"
 				className={`relative col-span-5 ${
 					showTranscript ? "lg:col-span-3" : "lg:col-span-5"
 				}`}

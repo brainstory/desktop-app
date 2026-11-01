@@ -235,6 +235,9 @@ pnpm typecheck        # tsc --noEmit + astro check (strict)
 pnpm test             # vitest
 pnpm lint             # eslint
 pnpm vendor:check     # vendored icons/WASM complete, icon names valid
+
+# e2e smoke test (Linux only, needs tauri-driver + xvfb + a debug build):
+cd e2e && pnpm install && pnpm test
 ```
 
 The frontend is TypeScript (`.ts` / `.tsx`; `.astro` pages stay `.astro`).

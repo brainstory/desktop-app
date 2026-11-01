@@ -140,6 +140,38 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles ${{ matrix.bundles }} --config src-tauri/tauri.nightly.conf.json
 
+      # End-to-end smoke test (Linux only): tauri-driver drives the real
+      # debug binary through WebKitGTK under xvfb. Text-mode only - no
+      # model download, no LLM call. continue-on-error until the
+      # webkit2gtk-driver/tauri-driver combination proves stable in CI.
+      - name: Install e2e dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y webkit2gtk-driver xvfb
+          cargo install tauri-driver --locked
+
+      - name: Build debug binary (Linux)
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo build --locked
+
+      - name: Run e2e smoke test (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          cd e2e
+          pnpm install --frozen-lockfile || pnpm install
+          xvfb-run -a pnpm test
+
+      - name: Upload e2e screenshots (Linux)
+        if: runner.os == 'Linux' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-e2e-screenshots
+          path: e2e/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
       # The engine smoke test is the only guard that whisper.cpp and
       # llama.cpp actually RUN together in one process (the duplicate
       # ggml symbol tolerance). It needs real model files, so it runs

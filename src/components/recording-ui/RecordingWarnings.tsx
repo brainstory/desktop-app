@@ -40,6 +40,8 @@ export function TextComposer({
 					className="w-full text-sm px-4 py-2 border border-stone-200 rounded-md focus:outline-none focus:border-accent-500 resize-none md:resize-y read-only:bg-stone-50 read-only:text-stone-500"
 					placeholder="Type something..."
 					aria-label="Type your response"
+					// the e2e smoke test types here
+					data-testid="composer"
 					readOnly={disabled}
 					aria-disabled={disabled}
 					rows={5}
@@ -61,6 +63,7 @@ export function TextComposer({
 				aria-label="Send message"
 				aria-disabled={!canSend}
 				onClick={send}
+				data-testid="send-button"
 			>
 				<Icon name="send" className="w-5 h-5" ariaHidden />
 			</button>
