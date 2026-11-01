@@ -576,7 +576,10 @@ pub async fn regenerate_result(
 				model_is_large: model_is_large(&app_state.ai_settings()),
 			};
 			// a feedback idea regenerates against its parent document
-			if request.chat_type == ChatType::Feedback {
+			if matches!(
+				request.chat_type,
+				ChatType::Feedback | ChatType::Continuation
+			) {
 				if let Some(parent_id) = app_state.db.idea_parent_id(&idea_id)? {
 					if let Some(parent) = app_state.db.get_idea(&parent_id)? {
 						request.react_to = parent.result;

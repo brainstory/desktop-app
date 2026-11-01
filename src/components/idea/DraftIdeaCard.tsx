@@ -2,6 +2,7 @@ import { useStore } from "@nanostores/react";
 import { formatISO8601ToHumanReadable } from "../../helpers/helpers";
 import { $userState } from "@components/global/userStore";
 import { deleteIdeaApi } from "@helpers/api/idea";
+import { continuationChatUrl } from "@helpers/ideas";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick } from "@src/hooks/useTimeout";
 import { useSnackbar } from "@ds/Snackbar";
 import Icon from "@ds/Icon";
@@ -14,6 +15,7 @@ interface DraftIdeaCardProps {
 	 * The chat page only runs a feedback chat with ?parentId=, so resuming
 	 * needs it next to the draft's id. */
 	parentId?: string | null;
+	isContinuation?: boolean;
 	/** Title of that idea, shown as "Feedback on: ..." (omit it where the
 	 * idea is already on screen) */
 	parentTitle?: string | null;
@@ -27,6 +29,7 @@ export default function DraftIdeaCard({
 	createdAt,
 	draftSummary,
 	parentId,
+	isContinuation = false,
 	parentTitle,
 	onDeleted
 }: DraftIdeaCardProps) {
@@ -38,7 +41,11 @@ export default function DraftIdeaCard({
 		timezone ?? undefined
 	);
 	const isFeedback = Boolean(parentId);
-	const href = isFeedback ? `/chat?parentId=${parentId}&id=${id}` : `/chat?id=${id}`;
+	const href = isContinuation
+		? continuationChatUrl({ draftId: id })
+		: isFeedback
+			? `/chat?parentId=${encodeURIComponent(parentId!)}&id=${encodeURIComponent(id)}`
+			: `/chat?id=${encodeURIComponent(id)}`;
 	const { isConfirming: confirmingDelete, secondsLeft, confirm } = useConfirmClick();
 	const { openSnackbar } = useSnackbar();
 
@@ -61,7 +68,11 @@ export default function DraftIdeaCard({
 					</span>
 				</div>
 				<h3 className="mb-2 text-xl font-semibold tracking-tight text-stone-900">
-					{isFeedback ? "Feedback draft" : "Draft"}
+					{isContinuation
+						? "Continuation draft"
+						: isFeedback
+							? "Feedback draft"
+							: "Draft"}
 				</h3>
 				{isFeedback && parentTitle != null && (
 					<p className="mb-2 text-sm font-medium text-accent-700 break-words line-clamp-2">

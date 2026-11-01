@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
 
 import { getUserDailyStatusApi } from "@helpers/api/user";
-import { linkIdeaLogApi } from "@helpers/api/idea";
+import { getIdeaApi, linkIdeaLogApi } from "@helpers/api/idea";
 import { getQueryParam } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 import { CHAT_TYPE, type ChatType } from "@src/const";
 
 import { ChatSection } from "./ChatSection";
 import { AppWrapper } from "@components/chat/reusable/AppWrapper";
 import DailyIntentModal from "@components/form/DailyIntentModal";
+import ErrorSection from "@components/error/ErrorSection";
 
 /** Resolve the chat mode from the URL once, inside the component (module
  * scope would read window.location at import time and make the module
@@ -18,6 +20,9 @@ function chatTypeFromParams(): ChatType {
 	if (getQueryParam(QUERY_PARAMS.dailyIntent) === "true") {
 		return CHAT_TYPE.DAILY_INTENT;
 	}
+	if (getQueryParam(QUERY_PARAMS.mode) === CHAT_TYPE.CONTINUATION) {
+		return CHAT_TYPE.CONTINUATION;
+	}
 	if (parentId) {
 		return CHAT_TYPE.FEEDBACK;
 	}
@@ -26,8 +31,45 @@ function chatTypeFromParams(): ChatType {
 
 export default function ChatApp() {
 	const isDailyIntent = getQueryParam(QUERY_PARAMS.dailyIntent) === "true";
-	const chatType = chatTypeFromParams();
-	const parentId = getQueryParam(QUERY_PARAMS.parentId);
+	const urlChatType = chatTypeFromParams();
+	const urlParentId = getQueryParam(QUERY_PARAMS.parentId);
+	const initialDraftId = getQueryParam(QUERY_PARAMS.id);
+	// Only a continuation draft link without its parent (the library card
+	// knows the draft but not the parent) needs the stored type and
+	// parent before the chat mounts; every other link carries them, and
+	// the draft loader fetches the draft itself.
+	const needsDraftLookup = Boolean(
+		initialDraftId && urlChatType === CHAT_TYPE.CONTINUATION && !urlParentId
+	);
+	const [draftMode, setDraftMode] = useState<{ type: ChatType; parentId: string | null } | null>(
+		null
+	);
+	const [draftLookupError, setDraftLookupError] = useState<string | null>(null);
+	const [draftModeLoaded, setDraftModeLoaded] = useState(!needsDraftLookup);
+	useEffect(() => {
+		if (!needsDraftLookup || !initialDraftId) return;
+		let current = true;
+		getIdeaApi(initialDraftId)
+			.then((idea) => {
+				if (!current) return;
+				const type =
+					Object.values(CHAT_TYPE).find((value) => value === idea.type) ??
+					CHAT_TYPE.ORIGINAL;
+				setDraftMode({ type, parentId: idea.parentIdea?.id ?? null });
+			})
+			.catch((err) => {
+				console.error("could not load draft", initialDraftId, err);
+				if (current) setDraftLookupError(describeError(err).message);
+			})
+			.finally(() => {
+				if (current) setDraftModeLoaded(true);
+			});
+		return () => {
+			current = false;
+		};
+	}, [needsDraftLookup, initialDraftId]);
+	const chatType = draftMode?.type ?? urlChatType;
+	const parentId = draftMode ? draftMode.parentId : urlParentId;
 	const isFromGuide = getQueryParam(QUERY_PARAMS.topic);
 	const [logId, setLogId] = useState<string | null | undefined>(undefined);
 	const [draftId, setDraftId] = useState(getQueryParam(QUERY_PARAMS.id));
@@ -135,18 +177,35 @@ export default function ChatApp() {
 				/>
 			)}
 			{/* key field so that rerender happens if daily intent draft idea found */}
-			<ChatSection
-				key={draftId}
-				dailyStatusLoading={isDailyIntent && logId === undefined}
-				dailyLogId={logId}
-				draftId={draftId ?? undefined}
-				chatType={chatType}
-				parentIdParam={parentId}
-				fromGuideParam={isFromGuide}
-				conversationEndCallbacks={() => {
-					// end-of-session survey intentionally not part of the desktop app
-				}}
-			/>
+			{draftLookupError !== null ? (
+				<ErrorSection
+					title="Draft idea not found"
+					paragraphs={[
+						"This draft could not be opened. It may have been deleted.",
+						draftLookupError
+					]}
+					showRestartHint
+				/>
+			) : draftModeLoaded && chatType === CHAT_TYPE.CONTINUATION && !parentId ? (
+				<p role="alert" className="p-6">
+					This continuation has no parent idea and cannot be opened.
+				</p>
+			) : (
+				draftModeLoaded && (
+					<ChatSection
+						key={draftId}
+						dailyStatusLoading={isDailyIntent && logId === undefined}
+						dailyLogId={logId}
+						draftId={draftId ?? undefined}
+						chatType={chatType}
+						parentIdParam={parentId}
+						fromGuideParam={isFromGuide}
+						conversationEndCallbacks={() => {
+							// end-of-session survey intentionally not part of the desktop app
+						}}
+					/>
+				)
+			)}
 		</AppWrapper>
 	);
 }

@@ -1,3 +1,8 @@
+/// The user message recorded when someone asks for a different question
+/// (mirrors ASK_A_DIFFERENT_QUESTION in src/const.ts; a test keeps the
+/// two in sync): meta, not an answer, so titles and exports skip it.
+pub const ASK_A_DIFFERENT_QUESTION: &str = "Ask me a different question!";
+
 /// A single message in a conversation transcript.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ChatMessage {
@@ -7,7 +12,7 @@ pub struct ChatMessage {
 
 /// What kind of idea a row is. Stored in `ideas.idea_type` and sent over
 /// IPC / in share files as the snake_case strings "original",
-/// "feedback" and "daily_intent".
+/// "feedback", "continuation" and "daily_intent".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdeaType {
@@ -16,6 +21,8 @@ pub enum IdeaType {
 	Original,
 	/// a reaction to another idea (`parent_idea_id` is set)
 	Feedback,
+	/// a new session continuing an existing idea
+	Continuation,
 	/// the day's intention
 	DailyIntent,
 }
@@ -25,6 +32,7 @@ impl IdeaType {
 		match self {
 			Self::Original => "original",
 			Self::Feedback => "feedback",
+			Self::Continuation => "continuation",
 			Self::DailyIntent => "daily_intent",
 		}
 	}
@@ -216,13 +224,25 @@ pub struct ModelStatus {
 
 #[cfg(test)]
 mod tests {
-	use super::IdeaType;
+	use super::{IdeaType, ASK_A_DIFFERENT_QUESTION};
+
+	#[test]
+	fn skip_message_matches_the_frontend_constant() {
+		let frontend = include_str!("../../src/const.ts");
+		assert!(
+			frontend.contains(&format!(
+				"export const ASK_A_DIFFERENT_QUESTION = \"{ASK_A_DIFFERENT_QUESTION}\";"
+			)),
+			"src/const.ts and types.rs disagree on the skip message"
+		);
+	}
 
 	#[test]
 	fn idea_types_travel_as_the_stored_strings() {
 		for (ty, raw) in [
 			(IdeaType::Original, "original"),
 			(IdeaType::Feedback, "feedback"),
+			(IdeaType::Continuation, "continuation"),
 			(IdeaType::DailyIntent, "daily_intent"),
 		] {
 			assert_eq!(ty.as_str(), raw);

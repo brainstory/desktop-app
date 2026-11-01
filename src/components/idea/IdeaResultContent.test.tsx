@@ -122,7 +122,9 @@ describe("IdeaResultContent ownership", () => {
 			get_idea_children: () => ({ ideas: [] })
 		});
 		render(<IdeaResultContent />);
-		expect(await screen.findByRole("button", { name: "Export" })).toBeInTheDocument();
+		expect(
+			await screen.findByRole("button", { name: "Share with another Brainstory user" })
+		).toBeInTheDocument();
 	});
 
 	it("an imported idea (creatorName set) is not own", async () => {
@@ -133,7 +135,9 @@ describe("IdeaResultContent ownership", () => {
 		});
 		render(<IdeaResultContent />);
 		expect(await screen.findByText("Created by Ada")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Share with another Brainstory user" })
+		).not.toBeInTheDocument();
 	});
 });
 
@@ -155,6 +159,18 @@ function feedbackChild(id: string, result: string, overrides: Record<string, unk
 }
 
 describe("IdeaResultContent feedback tab", () => {
+	it("does not count continuation children as feedback", async () => {
+		mockInvoke({
+			get_idea: () => rawIdea(),
+			get_reactions: () => noReactions,
+			get_idea_children: () => ({
+				ideas: [feedbackChild("continued", "# Continued", { type: "continuation" })]
+			})
+		});
+		render(<IdeaResultContent />);
+		expect(await screen.findByRole("tab", { name: "Feedback" })).toBeDisabled();
+	});
+
 	it("counts only finished feedback, not an unfinished draft", async () => {
 		mockInvoke({
 			get_idea: () => rawIdea(),

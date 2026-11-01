@@ -107,6 +107,96 @@ describe("ChatApp resuming a feedback draft", () => {
 	});
 });
 
+describe("continuation draft routing", () => {
+	beforeEach(() => localStorage.clear());
+	afterEach(() => {
+		window.history.replaceState(null, "", "/");
+		cleanup();
+		cleanStores($aiStatus);
+	});
+	it("starts an explicitly selected continuation on its parent", async () => {
+		window.history.replaceState(null, "", "/chat?mode=continuation&parentId=party");
+		mockInvoke({
+			get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } }),
+			get_idea: () => parent,
+			generate_streaming_response: () => ({ response: "What next?" }),
+			create_idea: () => ({ id: "new-continuation" }),
+			update_idea: () => ({ id: "new-continuation" })
+		});
+		render(<ChatApp />);
+		expect(
+			await screen.findByText("What would you like to explore further about your idea?")
+		).toBeInTheDocument();
+		const user = userEvent.setup();
+		const typeInstead = screen.queryByText("Type instead");
+		if (typeInstead) await user.click(typeInstead);
+		await user.type(screen.getByLabelText("Type your response"), "Explore the plan{Enter}");
+		expect(await screen.findByText("What next?")).toBeInTheDocument();
+		expect(calls("generate_streaming_response").at(-1)?.[1]).toMatchObject({
+			chatType: "continuation",
+			reactTo: parent.result
+		});
+	});
+	it("restores the parent of a continuation draft opened from the library card", async () => {
+		window.history.replaceState(null, "", "/chat?mode=continuation&id=continued");
+		mockInvoke({
+			get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } }),
+			get_idea: (args) =>
+				(args as { ideaId: string }).ideaId === "continued"
+					? { ...feedbackDraft, id: "continued", type: "continuation" }
+					: parent,
+			generate_streaming_response: () => ({ response: "What next?" }),
+			update_idea: () => ({ id: "continued" })
+		});
+		render(<ChatApp />);
+		expect(await screen.findByText("Who else should come?")).toBeInTheDocument();
+		const user = userEvent.setup();
+		const typeInstead = screen.queryByText("Type instead");
+		if (typeInstead) await user.click(typeInstead);
+		await user.type(screen.getByLabelText("Type your response"), "More ideas{Enter}");
+		await screen.findByText("What next?");
+		expect(calls("generate_streaming_response").at(-1)?.[1]).toMatchObject({
+			chatType: "continuation",
+			reactTo: parent.result
+		});
+	});
+});
+
+describe("draft link lookups", () => {
+	beforeEach(() => localStorage.clear());
+	afterEach(() => {
+		window.history.replaceState(null, "", "/");
+		cleanup();
+		cleanStores($aiStatus);
+	});
+	it("reports a continuation draft that can't be loaded instead of a missing parent", async () => {
+		window.history.replaceState(null, "", "/chat?mode=continuation&id=gone");
+		mockInvoke({
+			get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } }),
+			get_idea: () => {
+				throw new Error("idea gone not found");
+			}
+		});
+		render(<ChatApp />);
+		expect(await screen.findByText("Draft idea not found")).toBeInTheDocument();
+		expect(screen.queryByText(/has no parent idea/)).not.toBeInTheDocument();
+	});
+	it("fetches a plain draft only once", async () => {
+		window.history.replaceState(null, "", "/chat?parentId=party&id=fb-draft");
+		mockInvoke({
+			get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } }),
+			get_idea: (args) =>
+				(args as { ideaId: string }).ideaId === "fb-draft" ? feedbackDraft : parent
+		});
+		render(<ChatApp />);
+		expect(await screen.findByText("Who else should come?")).toBeInTheDocument();
+		const draftFetches = calls("get_idea").filter(
+			([, args]) => (args as { ideaId: string }).ideaId === "fb-draft"
+		);
+		expect(draftFetches).toHaveLength(1);
+	});
+});
+
 describe("ChatApp daily intent log handling", () => {
 	beforeEach(() => {
 		localStorage.clear();

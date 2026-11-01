@@ -62,6 +62,7 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 
 export interface RawFeedbackChild {
 	id: string;
+	type?: string;
 	title?: string;
 	result?: string;
 	created_at: string;
@@ -130,6 +131,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 	return response?.ideas.map((idea) => {
 		return {
 			id: idea.id,
+			type: idea?.type,
 			title: idea?.title,
 			summaryPreview: stripResultPreview(idea?.result),
 			// an unfinished feedback session (no result yet)
@@ -220,8 +222,12 @@ export function regenerateResultApi(ideaId: string): {
 }
 
 /** Replace an idea's summary with a manually edited one. */
-export function setIdeaResultApi(ideaId: string, result: string): Promise<null> {
-	return invokeCommand("setIdeaResult", { ideaId, result });
+export function setIdeaResultApi(
+	ideaId: string,
+	result: string,
+	expectedPreviousResult?: string
+): Promise<null> {
+	return invokeCommand("setIdeaResult", { ideaId, result, expectedPreviousResult });
 }
 
 /** Update an idea title saved in the database.

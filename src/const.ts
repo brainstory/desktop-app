@@ -66,6 +66,7 @@ export const MIN_CONVERSATION_LENGTH_BEFORE_SAVE: Record<string, number> = {
 export const CHAT_TYPE = {
 	ORIGINAL: "original",
 	FEEDBACK: "feedback",
+	CONTINUATION: "continuation",
 	DAILY_INTENT: "daily_intent"
 } as const;
 export type ChatType = (typeof CHAT_TYPE)[keyof typeof CHAT_TYPE];

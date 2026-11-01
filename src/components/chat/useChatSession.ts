@@ -9,6 +9,7 @@ import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import {
 	CONVERSATION_STATE,
+	CHAT_TYPE,
 	ASK_A_DIFFERENT_QUESTION,
 	type ChatSaveState,
 	type ChatType,
@@ -274,6 +275,11 @@ export function useChatSession(
 	// and effect dependencies
 	const respondTo = useCallback(
 		async (conversation: ChatMessage[]): Promise<CoachResponseOutcome> => {
+			if (chatType === CHAT_TYPE.CONTINUATION && !parentIdea?.summary) {
+				onError("The parent document is not available yet. Try again after it loads.");
+				dispatch({ type: "coachFailed" });
+				return "failed";
+			}
 			dispatch({ type: "coachRequested" });
 			// Streamed: the reply renders piece by piece (a partial reply is
 			// session state only - the conversation, and with it the
@@ -451,6 +457,10 @@ export function useChatSession(
 
 	/** Generate idea summary result */
 	const handleGetResult = () => {
+		if (chatType === CHAT_TYPE.CONTINUATION && !parentIdea?.summary) {
+			onError("The parent document is not available yet. Try again after it loads.");
+			return;
+		}
 		if (!ideaId) {
 			onError("Still saving this session - try again in a moment.", "save");
 			return;
@@ -474,7 +484,11 @@ export function useChatSession(
 			if (generation?.idea_truncated) {
 				dispatch({ type: "resultIdeaCapped" });
 			}
-			if (parentIdea && (structuredResult === null || structuredResult === undefined)) {
+			if (
+				chatType === CHAT_TYPE.FEEDBACK &&
+				parentIdea &&
+				(structuredResult === null || structuredResult === undefined)
+			) {
 				// the prose saved fine; only the comment cards failed
 				dispatch({ type: "resultCardsMissing" });
 			}

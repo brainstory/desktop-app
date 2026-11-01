@@ -201,6 +201,9 @@ impl Db {
 	/// because the activity happened on the author's machine.
 	pub fn insert_idea(&self, idea: NewIdea<'_>) -> Result<(), String> {
 		self.with_tx(|conn| {
+			if idea.idea_type == IdeaType::Continuation && idea.parent_idea_id.is_none() {
+				return Err("continuation requires a parent idea".into());
+			}
 			if let Some(parent_id) = idea.parent_idea_id {
 				let exists: i64 = conn
 					.query_row(
@@ -330,16 +333,30 @@ impl Db {
 	/// feedback document no longer matches edited prose, so it is
 	/// cleared. Title and transcript stay.
 	pub fn set_idea_result(&self, id: &str, result: &str) -> Result<(), String> {
+		self.set_idea_result_checked(id, result, None)
+	}
+
+	pub fn set_idea_result_checked(
+		&self,
+		id: &str,
+		result: &str,
+		expected: Option<&str>,
+	) -> Result<(), String> {
 		self.with_tx(|conn| {
-			let exists: i64 = conn
-				.query_row(
-					"SELECT EXISTS(SELECT 1 FROM ideas WHERE id = ?1)",
-					params![id],
-					|row| row.get(0),
-				)
-				.map_err(|e| format!("failed to read idea {id}: {e}"))?;
-			if exists == 0 {
-				return Err(format!("idea {id} not found"));
+			let (current, metadata): (String, String) = conn.query_row(
+				"SELECT result, idea_metadata FROM ideas WHERE id = ?1", params![id],
+				|row| Ok((row.get(0)?, row.get(1)?)),
+			).optional().map_err(|e| format!("failed to read idea {id}: {e}"))?
+				.ok_or_else(|| format!("idea {id} not found"))?;
+			if expected.is_some_and(|previous| previous != current) {
+				return Err("This document changed. Reopen the idea before editing.".into());
+			}
+			let has_dependencies: bool = conn.query_row(
+				"SELECT EXISTS(SELECT 1 FROM ideas WHERE parent_idea_id = ?1 AND idea_type != 'continuation') OR EXISTS(SELECT 1 FROM section_reactions WHERE idea_id = ?1)",
+				params![id], |row| row.get(0),
+			).map_err(|e| format!("failed to check idea dependencies: {e}"))?;
+			if has_dependencies || Self::notes_from_metadata(&metadata).is_some() {
+				return Err("Editing is unavailable while this idea has feedback, reactions, or notes.".into());
 			}
 			conn.execute(
 				"UPDATE ideas SET result = ?1, structured_result = NULL WHERE id = ?2",
@@ -626,14 +643,30 @@ impl Db {
 					.map_err(|e| format!("failed to delete idea: {e}"))?;
 				ids
 			};
-			// a missing id deletes nothing (but still cleans up any
-			// orphans a pre-foreign-key database left under it)
-			deleted = subtree.iter().any(|sid| sid.as_str() == id);
 			// json_each binds the whole set as one parameter; splicing
 			// ids into the SQL text would let an id containing SQL
 			// syntax change the statement
 			let ids = serde_json::to_string(&subtree)
 				.map_err(|e| format!("failed to delete idea: {e}"))?;
+			// continuations are separate ideas of their own: deleting the
+			// idea they continue must not take them along silently
+			let continuation_descendants: i64 = conn
+				.query_row(
+					"SELECT count(*) FROM ideas
+					 WHERE id IN (SELECT value FROM json_each(?1))
+					 AND id != ?2 AND idea_type = 'continuation'",
+					params![ids, id],
+					|row| row.get(0),
+				)
+				.map_err(|e| format!("failed to check continuations: {e}"))?;
+			if continuation_descendants > 0 {
+				return Err(
+					"Delete this idea's continuation sessions first; they are linked to it.".into(),
+				);
+			}
+			// a missing id deletes nothing (but still cleans up any
+			// orphans a pre-foreign-key database left under it)
+			deleted = subtree.iter().any(|sid| sid.as_str() == id);
 			for sql in [
 				"UPDATE daily SET intent_idea_id = NULL
 				 WHERE intent_idea_id IN (SELECT value FROM json_each(?1))",
@@ -742,14 +775,15 @@ impl Db {
 		.map(Option::flatten)
 	}
 
-	/// Lightweight existence + title lookup (no transcript parsing). Used
-	/// on hot paths like idea autosave. `Ok(None)` = row missing.
-	pub fn get_idea_title(&self, id: &str) -> Result<Option<String>, String> {
+	/// Lightweight existence + title lookup (no transcript parsing), with
+	/// whether the idea already has a result (is finished). Used on hot
+	/// paths like idea autosave. `Ok(None)` = row missing.
+	pub fn get_idea_title(&self, id: &str) -> Result<Option<(String, bool)>, String> {
 		let conn = self.lock();
 		conn.query_row(
-			"SELECT title FROM ideas WHERE id = ?1",
+			"SELECT title, result != '' FROM ideas WHERE id = ?1",
 			params![id],
-			|row| row.get::<_, String>(0),
+			|row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
 		)
 		.optional()
 		.map_err(|e| format!("failed to read idea {id}: {e}"))
@@ -807,6 +841,11 @@ impl Db {
 			std::collections::HashMap::new();
 		let mut ideas: Vec<IdeaItem> = Vec::new();
 		for (parent_id, mut idea) in rows {
+			if idea.r#type.as_deref() == Some(IdeaType::Continuation.as_str()) {
+				idea.feedback = Some(Vec::new());
+				ideas.push(idea);
+				continue;
+			}
 			match parent_id {
 				Some(parent_id) => {
 					children.entry(parent_id).or_default().push(idea);

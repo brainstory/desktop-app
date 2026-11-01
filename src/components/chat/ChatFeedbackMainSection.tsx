@@ -20,6 +20,8 @@ interface ChatFeedbackMainSectionProps {
 	/** the early wrap-up is creating/saving the session */
 	isWrappingUp: boolean;
 	minConversationLenForEnd: number;
+	/** false hides both finish buttons (no answer worth saving yet) */
+	canFinish?: boolean;
 	children?: ReactNode;
 }
 
@@ -33,6 +35,7 @@ export default function ChatFeedbackMainSection({
 	handleEarlyFinish,
 	isWrappingUp,
 	minConversationLenForEnd,
+	canFinish = true,
 	children
 }: ChatFeedbackMainSectionProps) {
 	const stickyStyle = "sticky bottom-0 bg-white border-t";
@@ -46,7 +49,7 @@ export default function ChatFeedbackMainSection({
 			>
 				<div className={`flex justify-center flex-col gap-2`}>{children}</div>
 				<div className="flex flex-col items-center">
-					{currConversation.length >= minConversationLenForEnd ? (
+					{!canFinish ? null : currConversation.length >= minConversationLenForEnd ? (
 						<EndChatButton
 							conversationState={conversationState}
 							handleGetResult={handleGetResult}

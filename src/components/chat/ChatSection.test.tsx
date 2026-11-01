@@ -195,6 +195,8 @@ describe("ChatSection", () => {
 		it("keeps the text after an AI failure and resends it without duplicating it", async () => {
 			let attempts = 0;
 			mockChat({
+				create_idea: () => ({ id: "idea-1" }),
+				update_idea: () => ({ id: "idea-1" }),
 				generate_streaming_response: () => {
 					attempts++;
 					// the first send fails twice (call + its one retry)
@@ -370,7 +372,7 @@ describe("ChatSection", () => {
 		mockChat({
 			create_idea: () => ({ id: "idea-1" }),
 			// a slow write: the navigation must wait for it
-			update_idea: () => new Promise<void>((res) => (landSave = res)),
+			update_idea: () => new Promise((res) => (landSave = () => res({ id: "idea-1" }))),
 			generate_streaming_response: () => ({ response: "and then?" })
 		});
 		// jsdom blocks real navigation: swap in an observable location
@@ -409,13 +411,89 @@ describe("ChatSection", () => {
 				landSave();
 				await Promise.resolve();
 			});
-			expect(window.location.href).toBe("/dashboard");
+			await waitFor(() => expect(window.location.href).toBe("/dashboard"));
 		} finally {
 			Object.defineProperty(window, "location", {
 				configurable: true,
 				value: originalLocation
 			});
 		}
+	});
+
+	it("lets a second click leave when the session can't be saved", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockChat({
+			create_idea: () => {
+				throw "database is locked";
+			},
+			generate_streaming_response: () => ({ response: "and then?" })
+		});
+		const originalLocation = window.location;
+		Object.defineProperty(window, "location", {
+			configurable: true,
+			value: { ...originalLocation, href: "http://localhost/chat" }
+		});
+		try {
+			render(
+				<>
+					<a href="/dashboard">Library</a>
+					<ChatSection
+						chatType="daily_intent"
+						dailyLogId={null}
+						conversationEndCallbacks={() => {}}
+					/>
+				</>
+			);
+			await sendTyped("a calm day");
+			expect(await screen.findByText("and then?")).toBeInTheDocument();
+
+			const user = userEvent.setup();
+			await user.click(screen.getByRole("link", { name: "Library" }));
+			// held back, and the user is told why
+			expect(
+				await screen.findByText(/click the link again to leave without them/)
+			).toBeInTheDocument();
+			expect(window.location.href).toBe("http://localhost/chat");
+
+			await user.click(screen.getByRole("link", { name: "Library" }));
+			expect(window.location.href).toBe("/dashboard");
+		} finally {
+			Object.defineProperty(window, "location", {
+				configurable: true,
+				value: originalLocation
+			});
+			vi.mocked(console.error).mockRestore();
+		}
+	});
+
+	it("offers no finish while every answer is a skip", async () => {
+		mockChat({
+			create_idea: () => ({ id: "idea-1" }),
+			update_idea: () => ({ id: "idea-1" }),
+			generate_streaming_response: () => ({ response: "something else?" })
+		});
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("Ask me a different question!");
+		expect(await screen.findByText("something else?")).toBeInTheDocument();
+		// at the minimum length, but nothing to save: no finish button, and
+		// Cmd+Enter doesn't start a wrap-up that could never end
+		expect(screen.queryByRole("button", { name: "Generate Summary & Save" })).toBeNull();
+		const user = userEvent.setup();
+		await user.keyboard("{Meta>}{Enter}{/Meta}");
+		expect(screen.queryByText(/Wrapping up/)).toBeNull();
+		expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")).toHaveLength(0);
+
+		// a real answer brings the finish back (the composer is already open)
+		await user.type(screen.getByLabelText("Type your response"), "a calm day{Enter}");
+		expect(
+			await screen.findByRole("button", { name: "Generate Summary & Save" })
+		).toBeInTheDocument();
 	});
 
 	it("retries a failed autosave from the banner", async () => {
@@ -599,7 +677,7 @@ describe("ChatSection", () => {
 			await sendTyped("a quick thought");
 			expect(await screen.findByText("tell me more")).toBeInTheDocument();
 			expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "create_idea")).toHaveLength(
-				0
+				1
 			);
 
 			const user = userEvent.setup();

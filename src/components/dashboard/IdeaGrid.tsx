@@ -4,6 +4,7 @@ import DraftIdeaCard from "@components/idea/DraftIdeaCard";
 
 import { useState } from "react";
 import type { IdeaListItem } from "@src/types";
+import { isContinuation } from "@helpers/ideas";
 
 interface IdeaGridProps {
 	userIdeas?: IdeaListItem[] | null;
@@ -58,6 +59,7 @@ export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 							<DraftIdeaCard
 								key={`draft-${idea.id}`}
 								id={idea.id}
+								isContinuation={isContinuation(idea)}
 								createdAt={idea.createdAt}
 								draftSummary={idea.draftSummary}
 								parentId={parent?.id}

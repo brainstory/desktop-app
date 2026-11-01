@@ -1,6 +1,7 @@
 import type { IdeaDetail } from "@src/types";
 import { useState, useRef, useEffect } from "react";
 import { updateIdeaTitleApi, deleteIdeaApi } from "@helpers/api/idea";
+import { continuationChatUrl, isContinuation } from "@helpers/ideas";
 import { exportIdeaApi, shortenHomePath } from "@helpers/api/share";
 import { CONFIRM_DELETE_ANNOUNCEMENT, useConfirmClick, useTimeout } from "@src/hooks/useTimeout";
 import Button from "@ds/Button";
@@ -145,7 +146,12 @@ export default function IdeaTitleBar({
 			})
 			.catch((err) => {
 				console.error("delete failed", err);
-				openSnackbar(false, "Error: Could not delete this idea");
+				openSnackbar(
+					false,
+					typeof err === "string" && err.includes("continuation")
+						? err
+						: "Error: Could not delete this idea"
+				);
 			});
 	};
 
@@ -167,6 +173,19 @@ export default function IdeaTitleBar({
 				</Button>
 			);
 		}
+		if (isOwnIdea && (!parentId || isContinuation(idea)) && idea.summary?.trim()) {
+			buttons.push(
+				<Button
+					variant="pink"
+					key="continue-thinking"
+					onClick={() => {
+						window.location.href = continuationChatUrl({ parentId: idea.id });
+					}}
+				>
+					Continue thinking
+				</Button>
+			);
+		}
 		if (isOwnIdea && !parentId) {
 			buttons.push(
 				<Button variant="pink" key="add-note" onClick={() => setIsNoteOpen(true)}>
@@ -174,7 +193,7 @@ export default function IdeaTitleBar({
 				</Button>
 			);
 		}
-		if (isOwnIdea) {
+		if (isOwnIdea && !isContinuation(idea)) {
 			buttons.push(
 				<Button variant="pink" key="export" onClick={handleExport}>
 					{exportState === "exporting"
@@ -185,7 +204,7 @@ export default function IdeaTitleBar({
 								? "Export failed"
 								: parentId
 									? "Export Feedback"
-									: "Export"}
+									: "Share with another Brainstory user"}
 				</Button>
 			);
 		}

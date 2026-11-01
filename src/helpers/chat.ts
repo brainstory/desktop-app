@@ -35,6 +35,8 @@ export function getFirstPrompt(
 	let firstPrompt = "Hi, how's it going? What's on your mind?";
 	if (chatType === CHAT_TYPE.FEEDBACK) {
 		firstPrompt = `Would you like to extend this idea, react to specific points, or walk through the idea with me point by point?`;
+	} else if (chatType === CHAT_TYPE.CONTINUATION) {
+		firstPrompt = "What would you like to explore further about your idea?";
 	} else if (chatType === CHAT_TYPE.DAILY_INTENT) {
 		firstPrompt = "Walk me through how you want your day to go.";
 	} else if (isQotd) {

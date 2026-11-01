@@ -1,4 +1,27 @@
 import type { CreatorInfo } from "@src/types";
+import { CHAT_TYPE } from "@src/const";
+import { QUERY_PARAMS } from "@src/tauri/commands";
+
+/** The chat link for a continuation session: a new one on `parentId`,
+ * or a draft resumed by `draftId`. A draft link without its parent is
+ * resolved by the chat page from the stored draft. */
+export function continuationChatUrl({
+	parentId,
+	draftId
+}: {
+	parentId?: string | null;
+	draftId?: string;
+}): string {
+	const params = new URLSearchParams({ [QUERY_PARAMS.mode]: CHAT_TYPE.CONTINUATION });
+	if (parentId) params.set(QUERY_PARAMS.parentId, parentId);
+	if (draftId) params.set(QUERY_PARAMS.id, draftId);
+	return `/chat?${params.toString()}`;
+}
+
+/** Whether an idea (or idea list item) is a continuation session. */
+export function isContinuation(idea: { type?: string | null }): boolean {
+	return idea.type === CHAT_TYPE.CONTINUATION;
+}
 
 /**
  * An "own" idea is one without creator attribution: imported ideas and

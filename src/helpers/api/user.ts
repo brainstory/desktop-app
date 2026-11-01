@@ -67,6 +67,7 @@ export interface RawIdeaItem {
 function toIdeaListItem(idea: RawIdeaItem): IdeaListItem {
 	return {
 		id: idea.id,
+		type: idea.type,
 		title: idea?.title,
 		summaryPreview: stripResultPreview(idea?.result),
 		// explicit draft flag: the old "summaryPreview === '...'" sentinel

@@ -41,6 +41,7 @@ export interface CreatorInfo {
 /** Item in the library grid (getAllIdeasApi). */
 export interface IdeaListItem extends CreatorInfo {
 	id: string;
+	type?: string | null;
 	title?: string | null;
 	summaryPreview: string;
 	/** true while the session has no generated result yet */
@@ -75,6 +76,7 @@ export interface IdeaNote {
 /** Feedback child item returned by getIdeaChildrenApi. */
 export interface IdeaFeedbackItem extends CreatorInfo {
 	id: string;
+	type?: string | null;
 	title?: string | null;
 	summaryPreview: string;
 	/** true while the feedback session has no generated result yet */

@@ -246,6 +246,7 @@ pub async fn set_idea_result(
 	app: tauri::AppHandle,
 	idea_id: String,
 	result: String,
+	expected_previous_result: Option<String>,
 ) -> Result<(), String> {
 	let result = result.trim().to_string();
 	if result.is_empty() {
@@ -255,7 +256,9 @@ pub async fn set_idea_result(
 		let state = app.state::<AppState>();
 		state.refuse_if_shutting_down()?;
 		ensure_within("result", &result, MAX_RESULT_BYTES)?;
-		state.db.set_idea_result(&idea_id, &result)
+		state
+			.db
+			.set_idea_result_checked(&idea_id, &result, expected_previous_result.as_deref())
 	})
 	.await
 }
@@ -341,10 +344,11 @@ pub async fn create_idea(
 		// (The parent's existence is verified inside insert_idea's
 		// transaction, so a concurrent delete can't create an orphan.)
 
-		let mut title = String::new();
-		if !result.is_empty() {
-			title = title_from_result(&result);
-		}
+		let title = if !result.is_empty() {
+			title_from_result(&result)
+		} else {
+			draft_title(&transcript)
+		};
 		if idea_type == IdeaType::DailyIntent {
 			state
 				.db
@@ -399,21 +403,8 @@ pub async fn update_idea(
 		// the whole transcript; not-found is enforced inside the update
 		// transaction (a concurrent delete can no longer slip past the
 		// check).
-		let existing_title = state.db.get_idea_title(&id)?;
-		let mut derived_title = title;
-		if derived_title.is_none() {
-			if let Some(r) = &result {
-				if !r.is_empty()
-					&& existing_title
-						.as_deref()
-						.unwrap_or_default()
-						.trim()
-						.is_empty()
-				{
-					derived_title = Some(title_from_result(r));
-				}
-			}
-		}
+		let existing = state.db.get_idea_title(&id)?;
+		let derived_title = title_for_update(title, result.as_deref(), existing);
 		// The daily-intent completion (when a nonempty result finishes an
 		// idea that is today's intent) rides the same transaction inside
 		// update_idea, so a failure there can't leave the result saved
@@ -601,6 +592,47 @@ pub fn enabled_log_ids(state: &AppState) -> Vec<i64> {
 		.unwrap_or_else(|| DEFAULT_LOG_QUESTIONS.iter().map(|(id, _, _)| *id).collect())
 }
 
+/// The title an update_idea call saves: an explicit title wins. The
+/// first nonempty result (the finish) replaces the provisional draft
+/// title (the opening answer) with the document's heading; once the idea
+/// is finished, its title (possibly renamed by the user) stays unless it
+/// is empty. `existing` is (title, has_result), None for a missing row.
+fn title_for_update(
+	title: Option<String>,
+	result: Option<&str>,
+	existing: Option<(String, bool)>,
+) -> Option<String> {
+	if title.is_some() {
+		return title;
+	}
+	let result = result.filter(|r| !r.is_empty())?;
+	let (existing_title, finished) = existing.unwrap_or_default();
+	(!finished || existing_title.trim().is_empty()).then(|| title_from_result(result))
+}
+
+/// Provisional title of an unfinished idea: its first real answer.
+fn draft_title(transcript: &[crate::types::ChatMessage]) -> String {
+	transcript
+		.iter()
+		.find(|message| {
+			let content = message.content.trim();
+			message.role == "user"
+				&& !content.is_empty()
+				&& content != crate::types::ASK_A_DIFFERENT_QUESTION
+		})
+		.map(|message| {
+			message
+				.content
+				.split_whitespace()
+				.collect::<Vec<_>>()
+				.join(" ")
+				.chars()
+				.take(60)
+				.collect()
+		})
+		.unwrap_or_default()
+}
+
 fn title_from_result(result: &str) -> String {
 	for line in result.lines() {
 		let trimmed = line.trim();
@@ -623,7 +655,7 @@ fn title_from_result(result: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::{enabled_log_ids, ensure_within, title_from_result};
+	use super::{draft_title, enabled_log_ids, ensure_within, title_for_update, title_from_result};
 	use crate::AppState;
 
 	fn state() -> (AppState, tempfile::TempDir) {
@@ -662,6 +694,56 @@ mod tests {
 				.iter()
 				.map(|(id, _, _)| *id)
 				.collect::<Vec<_>>()
+		);
+	}
+
+	#[test]
+	fn draft_title_uses_first_meaningful_answer() {
+		let message = |role: &str, content: &str| crate::types::ChatMessage {
+			role: role.into(),
+			content: content.into(),
+		};
+		assert_eq!(
+			draft_title(&[
+				message("assistant", "Question"),
+				message("user", crate::types::ASK_A_DIFFERENT_QUESTION),
+				message("user", "  A   useful\nidea  ")
+			]),
+			"A useful idea"
+		);
+		assert_eq!(
+			draft_title(&[message("user", &"x".repeat(80))])
+				.chars()
+				.count(),
+			60
+		);
+	}
+
+	#[test]
+	fn finishing_replaces_the_draft_title_but_keeps_a_finished_one() {
+		let doc = Some("# Garden Plan\n\nbody");
+		let draft = || Some(("um so I was thinking about my garden".to_string(), false));
+		// the finish: draft title -> document heading
+		assert_eq!(
+			title_for_update(None, doc, draft()).as_deref(),
+			Some("Garden Plan")
+		);
+		// transcript-only autosave: untouched
+		assert_eq!(title_for_update(None, None, draft()), None);
+		assert_eq!(title_for_update(None, Some(""), draft()), None);
+		// an explicit title always wins
+		assert_eq!(
+			title_for_update(Some("Mine".into()), doc, draft()).as_deref(),
+			Some("Mine")
+		);
+		// already finished (maybe renamed): kept, unless empty
+		assert_eq!(
+			title_for_update(None, doc, Some(("Renamed".into(), true))),
+			None
+		);
+		assert_eq!(
+			title_for_update(None, doc, Some((" ".into(), true))).as_deref(),
+			Some("Garden Plan")
 		);
 	}
 

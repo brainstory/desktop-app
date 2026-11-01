@@ -216,10 +216,15 @@ describe("IdeaTitleBar delete", () => {
 });
 
 describe("IdeaTitleBar actions", () => {
+	it("offers continuation only for owned completed ideas", () => {
+		renderBar({ summary: "# My idea" });
+		expect(screen.getByRole("button", { name: "Continue thinking" })).toBeInTheDocument();
+	});
+
 	it("keeps the export note out of the button row so the buttons share one height", () => {
 		renderBar();
 		const row = screen.getByRole("group");
-		for (const name of ["Add Note", "Export", "Delete"]) {
+		for (const name of ["Add Note", "Share with another Brainstory user", "Delete"]) {
 			// each action is a direct child of the row: wrapping one in a
 			// column with the note made the stretched row double height
 			expect(screen.getByRole("button", { name }).parentElement).toBe(row);

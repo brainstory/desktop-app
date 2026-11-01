@@ -94,6 +94,63 @@ fn set_idea_result_replaces_text_and_clears_structured() {
 }
 
 #[test]
+fn manual_edit_guards_dependencies_and_stale_results() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).unwrap();
+	db.create_daily_intent_idea("i1", "", "old", &[], &serde_json::json!({}))
+		.unwrap();
+	db.update_idea(
+		"i1",
+		None,
+		None,
+		None,
+		Some(&serde_json::json!({"cards": []})),
+	)
+	.unwrap();
+	assert!(db
+		.set_idea_result_checked("i1", "new", Some("stale"))
+		.is_err());
+	assert_eq!(
+		db.get_idea("i1").unwrap().unwrap().result.as_deref(),
+		Some("old")
+	);
+	assert!(db
+		.get_idea("i1")
+		.unwrap()
+		.unwrap()
+		.structured_result
+		.is_some());
+
+	db.insert_idea(NewIdea {
+		id: "continuation",
+		parent_idea_id: Some("i1"),
+		idea_type: IdeaType::Continuation,
+		..Default::default()
+	})
+	.unwrap();
+	db.set_idea_result_checked("i1", "new", Some("old"))
+		.unwrap();
+	db.insert_idea(NewIdea {
+		id: "feedback",
+		parent_idea_id: Some("i1"),
+		idea_type: IdeaType::Feedback,
+		..Default::default()
+	})
+	.unwrap();
+	assert!(db.set_idea_result("i1", "bad").is_err());
+	db.delete_idea("feedback").unwrap();
+	db.lock().execute("INSERT INTO section_reactions (idea_id, section_index, emoji, created_at) VALUES ('i1', 0, '👍', 'x')", []).unwrap();
+	assert!(db.set_idea_result("i1", "bad").is_err());
+	db.lock()
+		.execute("DELETE FROM section_reactions WHERE idea_id = 'i1'", [])
+		.unwrap();
+	db.add_idea_note("i1", "note").unwrap();
+	let before = db.get_idea("i1").unwrap().unwrap().result;
+	assert!(db.set_idea_result("i1", "bad").is_err());
+	assert_eq!(db.get_idea("i1").unwrap().unwrap().result, before);
+}
+
+#[test]
 fn stash_previous_result_keeps_one_undo_level() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");
@@ -921,6 +978,49 @@ fn delete_idea_removes_the_whole_feedback_subtree() {
 }
 
 #[test]
+fn continuation_is_linked_listed_and_protected_from_parent_deletion() {
+	let (path, _dir) = temp_db_path();
+	let db = Db::open(&path).unwrap();
+	let meta = serde_json::json!({});
+	for (id, ty, parent) in [
+		("parent", IdeaType::Original, None),
+		("next", IdeaType::Continuation, Some("parent")),
+	] {
+		db.insert_idea(NewIdea {
+			id,
+			idea_type: ty,
+			parent_idea_id: parent,
+			metadata: &meta,
+			..Default::default()
+		})
+		.unwrap();
+	}
+	assert_eq!(db.get_idea_children("parent").unwrap()[0].id, "next");
+	let listed = db.list_ideas().unwrap();
+	assert_eq!(listed.len(), 2);
+	assert!(listed
+		.iter()
+		.find(|i| i.id == "parent")
+		.unwrap()
+		.feedback
+		.as_ref()
+		.unwrap()
+		.is_empty());
+	assert!(db.delete_idea("parent").is_err());
+	assert!(db.get_idea("next").unwrap().is_some());
+	assert!(db.delete_idea("next").unwrap());
+	assert!(db.delete_idea("parent").unwrap());
+	assert!(db
+		.insert_idea(NewIdea {
+			id: "orphan",
+			idea_type: IdeaType::Continuation,
+			metadata: &meta,
+			..Default::default()
+		})
+		.is_err());
+}
+
+#[test]
 fn insert_idea_rejects_a_missing_parent() {
 	let (path, _dir) = temp_db_path();
 	let db = Db::open(&path).expect("open");
@@ -990,8 +1090,8 @@ fn get_idea_title_is_a_lightweight_read() {
 	})
 	.unwrap();
 	assert_eq!(
-		db.get_idea_title("t1").unwrap().as_deref(),
-		Some("The Title")
+		db.get_idea_title("t1").unwrap(),
+		Some(("The Title".to_string(), true))
 	);
 	assert_eq!(db.get_idea_title("missing").unwrap(), None);
 }

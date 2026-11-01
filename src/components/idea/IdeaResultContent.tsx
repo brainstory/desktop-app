@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { getIdeaApi, getIdeaChildrenApi, markIdeaReadApi } from "@helpers/api/idea";
+import {
+	getIdeaApi,
+	getIdeaChildrenApi,
+	markIdeaReadApi,
+	setIdeaResultApi
+} from "@helpers/api/idea";
 import type { IdeaDetail, IdeaFeedbackItem, FeedbackComment } from "@src/types";
 
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
@@ -11,8 +16,16 @@ import IdeaTranscript from "./IdeaTranscript";
 import IdeaBranches from "./IdeaBranches";
 import IdeaNotes from "./IdeaNotes";
 import { getQueryParam } from "@helpers/helpers";
+import { describeError } from "@helpers/describeError";
 import { QUERY_PARAMS } from "@src/tauri/commands";
-import { finishedFeedback, isOwnIdea, parseHeadingIndex, stripNotesSection } from "@helpers/ideas";
+import {
+	continuationChatUrl,
+	finishedFeedback,
+	isContinuation,
+	isOwnIdea,
+	parseHeadingIndex,
+	stripNotesSection
+} from "@helpers/ideas";
 import ErrorSection from "../error/ErrorSection";
 import ErrorBoundary from "@components/global/ErrorBoundary";
 import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
@@ -34,7 +47,11 @@ function IdeaResultContentInner() {
 	const [idea, setIdea] = useState<IdeaDetail>({ id: "" });
 	const [parentIdea, setParentIdea] = useState<IdeaDetail["parentIdea"]>(null);
 	const [errorFound, setErrorFound] = useState(false);
+	const [editingDocument, setEditingDocument] = useState(false);
+	const [documentDraft, setDocumentDraft] = useState("");
+	const [savingDocument, setSavingDocument] = useState(false);
 	const [ideaChildren, setIdeaChildren] = useState<IdeaFeedbackItem[] | null>(null);
+	const [continuations, setContinuations] = useState<IdeaFeedbackItem[]>([]);
 	const [headingIdxToComments, setHeadingIdxToComments] = useState<
 		Record<number, FeedbackComment[]>
 	>({});
@@ -78,8 +95,9 @@ function IdeaResultContentInner() {
 		])
 			.then(([res, children]) => {
 				if (isCurrent) {
+					setContinuations(children.filter(isContinuation));
 					const [updateIdeaChildren, updateOidHeadingToFeedbackComments] = mapComments(
-						children,
+						children.filter((child) => !isContinuation(child)),
 						res.resultJson ?? []
 					);
 					setIdeaChildren(updateIdeaChildren);
@@ -89,12 +107,14 @@ function IdeaResultContentInner() {
 					const ideaContent: IdeaDetail = {
 						id,
 						title: res.title,
+						type: res.type,
 						summary: res.summary,
 						transcript: res.transcript,
 						isUnread: res.isUnread,
 						creatorEmail: res.creatorEmail,
 						creatorName: res.creatorName,
-						resultJson: res.resultJson
+						resultJson: res.resultJson,
+						notes: res.notes
 					};
 
 					if (res?.parentIdea) {
@@ -127,33 +147,78 @@ function IdeaResultContentInner() {
 		document.title = `${savedTitle || "Idea"} | Brainstory`;
 	}, []);
 
-	/** Refresh the document after an out-of-band edit (an added note).
-	 * Silent: the current view stays until the fresh copy arrives. */
-	const reloadIdea = useCallback(() => {
-		const id = ideaId ?? "";
-		if (!id) return;
-		getIdeaApi(id)
-			.then((res) => {
-				setIdea((prev) => ({
-					...prev,
-					title: res.title,
-					summary: res.summary,
-					transcript: res.transcript,
-					resultJson: res.resultJson,
-					isUnread: res.isUnread,
-					creatorEmail: res.creatorEmail,
-					creatorName: res.creatorName,
-					notes: res.notes
-				}));
-			})
-			.catch((err) => {
-				console.error("failed to refresh the idea after a note was added", err);
-				openSnackbar(
-					false,
-					"The note was saved, but refreshing the page failed - reopen the idea to see it."
-				);
-			});
-	}, [ideaId, openSnackbar]);
+	/** Refresh the document after an out-of-band edit (an added note, a
+	 * saved document edit). Silent: the current view stays until the
+	 * fresh copy arrives. */
+	const reloadIdea = useCallback(
+		(
+			failureMessage = "The note was saved, but refreshing the page failed - reopen the idea to see it."
+		) => {
+			const id = ideaId ?? "";
+			if (!id) return;
+			getIdeaApi(id)
+				.then((res) => {
+					setIdea((prev) => ({
+						...prev,
+						title: res.title,
+						summary: res.summary,
+						transcript: res.transcript,
+						resultJson: res.resultJson,
+						isUnread: res.isUnread,
+						creatorEmail: res.creatorEmail,
+						creatorName: res.creatorName,
+						notes: res.notes
+					}));
+				})
+				.catch((err) => {
+					console.error("failed to refresh the idea after an edit", err);
+					openSnackbar(false, failureMessage);
+				});
+		},
+		[ideaId, openSnackbar]
+	);
+
+	const copyMarkdown = async () => {
+		try {
+			await navigator.clipboard.writeText(idea.summary ?? "");
+			openSnackbar(true, "Copied as Markdown");
+		} catch (err) {
+			console.error("copy failed", err);
+			openSnackbar(false, "Error: Could not copy Markdown");
+		}
+	};
+
+	// The backend refuses an edit while feedback, section reactions or
+	// notes point into the document (their section indices and quoted
+	// spans would drift); hide the button instead of letting the user
+	// type an edit that can't be saved. The backend re-checks at save
+	// time, inside the write's transaction.
+	const editBlocked =
+		ideaChildren === null ||
+		ideaChildren.length > 0 ||
+		sectionReactions.length > 0 ||
+		(idea.notes?.length ?? 0) > 0;
+
+	const saveDocument = async () => {
+		if (!ideaId || savingDocument || !documentDraft.trim()) return;
+		setSavingDocument(true);
+		try {
+			// the expected previous text makes the backend refuse a save
+			// over a document that changed since it was opened
+			await setIdeaResultApi(ideaId, documentDraft, idea.summary ?? "");
+		} catch (err) {
+			console.error("document save failed", err);
+			openSnackbar(false, `Error: ${describeError(err).message}`);
+			setSavingDocument(false);
+			return;
+		}
+		setEditingDocument(false);
+		setSavingDocument(false);
+		openSnackbar(true, "Document saved");
+		reloadIdea(
+			"The document was saved, but refreshing the page failed - reopen the idea to see it."
+		);
+	};
 
 	// each entry carries its own ?tab= param so the URL values always
 	// match the tabs that actually exist (a feedback idea has no feedback
@@ -170,7 +235,7 @@ function IdeaResultContentInner() {
 			: (idea.resultJson ?? []);
 	const summaryMarkdown = notes.length > 0 ? stripNotesSection(idea.summary ?? "") : idea.summary;
 	const notesBlock =
-		notes.length > 0 && ideaId ? (
+		!editingDocument && notes.length > 0 && ideaId ? (
 			<IdeaNotes ideaId={ideaId} notes={notes} onChanged={reloadIdea} />
 		) : null;
 	const tabData: {
@@ -182,13 +247,26 @@ function IdeaResultContentInner() {
 	}[] =
 		// feedback pages use the compact two-pane layout; regular ideas
 		// the sectioned three-pane one
-		parentIdea
+		parentIdea && !isContinuation(idea)
 			? [
 					{
 						label: "Summary",
 						param: "summary",
 						content: (
 							<>
+								{idea.summary?.trim() && (
+									<div className="px-7 py-3">
+										<button
+											type="button"
+											className="text-sm underline"
+											onClick={() => {
+												void copyMarkdown();
+											}}
+										>
+											Copy as Markdown
+										</button>
+									</div>
+								)}
 								<IdeaSummary content={summaryMarkdown} />
 								{notesBlock}
 							</>
@@ -206,14 +284,83 @@ function IdeaResultContentInner() {
 						param: "summary",
 						content: (
 							<>
-								<IdeaSection
-									resultSections={documentSections}
-									headingIdxToComments={headingIdxToComments}
-									sectionReactions={sectionReactions}
-									onToggleSectionReaction={toggleSectionReaction}
-									commentReactions={commentReactions}
-									onToggleCommentReaction={toggleCommentReaction}
-								/>
+								{idea.summary?.trim() && (
+									<div className="flex flex-wrap items-center gap-3 px-7 py-3">
+										<button
+											type="button"
+											className="text-sm underline"
+											onClick={() => {
+												void copyMarkdown();
+											}}
+										>
+											Copy as Markdown
+										</button>
+										{isOwn && !editingDocument && !editBlocked && (
+											<button
+												type="button"
+												className="text-sm underline"
+												onClick={() => {
+													setDocumentDraft(idea.summary ?? "");
+													setEditingDocument(true);
+												}}
+											>
+												Edit document
+											</button>
+										)}
+									</div>
+								)}
+								{editingDocument ? (
+									<div className="px-7 pb-7">
+										<label
+											htmlFor="document-markdown"
+											className="block text-sm mb-2"
+										>
+											Document Markdown
+										</label>
+										<textarea
+											id="document-markdown"
+											className="w-full min-h-96 border border-stone-300 rounded p-3 text-sm"
+											value={documentDraft}
+											onChange={(event) =>
+												setDocumentDraft(event.target.value)
+											}
+											disabled={savingDocument}
+										/>
+										<p className="text-sm text-stone-500 my-2">
+											Editing is unavailable if this idea has feedback,
+											reactions, or notes.
+										</p>
+										<div className="flex gap-3">
+											<button
+												type="button"
+												className="underline text-sm"
+												onClick={() => {
+													void saveDocument();
+												}}
+												disabled={savingDocument || !documentDraft.trim()}
+											>
+												Save changes
+											</button>
+											<button
+												type="button"
+												className="underline text-sm"
+												onClick={() => setEditingDocument(false)}
+												disabled={savingDocument}
+											>
+												Cancel
+											</button>
+										</div>
+									</div>
+								) : (
+									<IdeaSection
+										resultSections={documentSections}
+										headingIdxToComments={headingIdxToComments}
+										sectionReactions={sectionReactions}
+										onToggleSectionReaction={toggleSectionReaction}
+										commentReactions={commentReactions}
+										onToggleCommentReaction={toggleCommentReaction}
+									/>
+								)}
 								{notesBlock}
 							</>
 						)
@@ -225,7 +372,7 @@ function IdeaResultContentInner() {
 					}
 				];
 
-	if (!parentIdea) {
+	if (!parentIdea || isContinuation(idea)) {
 		// The tab opens for any child, an unfinished draft included (the
 		// tab is where that draft is resumed from), but the count is only
 		// the finished feedback.
@@ -284,6 +431,43 @@ function IdeaResultContentInner() {
 					onTitleSaved={handleTitleSaved}
 					feedbackCount={finishedFeedback(ideaChildren ?? []).length}
 				/>
+				{isContinuation(idea) && parentIdea && (
+					<p className="px-7 py-2 text-sm">
+						Continued from{" "}
+						<a
+							className="underline"
+							href={`/idea?id=${encodeURIComponent(parentIdea.id)}`}
+						>
+							{parentIdea.title || "an idea"}
+						</a>
+					</p>
+				)}
+				{continuations.length > 0 && (
+					<section className="px-7 py-3" aria-label="Continuation sessions">
+						<h2 className="font-semibold">Continued thinking</h2>
+						<ul>
+							{continuations.map((child) => (
+								<li key={child.id}>
+									<a
+										className="underline"
+										href={
+											child.isDraft
+												? continuationChatUrl({
+														parentId: ideaId,
+														draftId: child.id
+													})
+												: `/idea?id=${encodeURIComponent(child.id)}`
+										}
+									>
+										{child.isDraft
+											? "Resume continuation draft"
+											: child.title || "Untitled continuation"}
+									</a>
+								</li>
+							))}
+						</ul>
+					</section>
+				)}
 				<TailwindComposedTabs
 					data={tabData}
 					activeTab={activeTab}

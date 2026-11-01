@@ -65,7 +65,7 @@ describe("useIdeaPersistence", () => {
 		expect(creates).toBe(2);
 	});
 
-	it("requestCreate creates below the minimum and a later request retries", async () => {
+	it("creates on the first answer below the minimum and requestCreate retries a failure", async () => {
 		let creates = 0;
 		mockInvoke({
 			create_idea: () => {
@@ -76,19 +76,16 @@ describe("useIdeaPersistence", () => {
 			update_idea: () => ({ id: "idea-1" })
 		});
 		const onError = vi.fn();
-		// one answered exchange, below a minimum of 4: nothing is created yet
+		// One answered exchange is enough even below a minimum of 4.
+		const conversation = [q1, a1];
 		const { result } = renderHook(() =>
 			useIdeaPersistence(
-				[q1, a1],
+				conversation,
 				"",
 				options({ minLength: 4, chatType: "original", onError })
 			)
 		);
-		expect(result.current.readyToCreateIdea).toBe(false);
-		expect(callsTo("create_idea")).toHaveLength(0);
-
-		// the early wrap-up asks for the idea anyway
-		act(() => result.current.requestCreate());
+		expect(result.current.readyToCreateIdea).toBe(true);
 		await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
 		expect(result.current.ideaId).toBeUndefined();
 
@@ -96,6 +93,34 @@ describe("useIdeaPersistence", () => {
 		act(() => result.current.requestCreate());
 		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
 		expect(creates).toBe(2);
+	});
+
+	it("ignores empty and sentinel answers and waits for the daily log", async () => {
+		mockInvoke({ create_idea: () => ({ id: "idea-1" }) });
+		const { rerender, result } = renderHook(
+			({ conversation, dailyLogId }) =>
+				useIdeaPersistence(conversation, "", options({ dailyLogId })),
+			{
+				initialProps: {
+					conversation: [
+						q1,
+						{ role: "user", content: "  " },
+						{ role: "user", content: "Ask me a different question!" }
+					] as ChatMessage[],
+					dailyLogId: null as string | null | undefined
+				}
+			}
+		);
+		expect(callsTo("create_idea")).toHaveLength(0);
+		rerender({ conversation: [q1, a1], dailyLogId: undefined });
+		expect(callsTo("create_idea")).toHaveLength(0);
+		expect(result.current.hasUnsavedChanges()).toBe(true);
+		rerender({ conversation: [q1, a1], dailyLogId: "log-1" });
+		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
+		expect(callsTo("create_idea")[0]![1]).toMatchObject({
+			transcript: [q1, a1],
+			logId: "log-1"
+		});
 	});
 
 	it("creates the idea exactly once under StrictMode, even if the conversation moves on", async () => {
@@ -118,6 +143,39 @@ describe("useIdeaPersistence", () => {
 		});
 		await waitFor(() => expect(result.current.ideaId).toBe("idea-1"));
 		expect(callsTo("create_idea")).toHaveLength(1);
+	});
+
+	it("waits for creation before navigating and rejects if creation fails", async () => {
+		let rejectCreate!: (error: Error) => void;
+		mockInvoke({
+			create_idea: () =>
+				new Promise((_resolve, reject) => {
+					rejectCreate = reject;
+				})
+		});
+		const conversation = [q1, a1];
+		const { result } = renderHook(() => useIdeaPersistence(conversation, "", options()));
+		expect(result.current.hasUnsavedChanges()).toBe(true);
+		let settled = false;
+		const idle = result.current.whenIdle().then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+				throw new Error("not saved");
+			}
+		);
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(settled).toBe(false);
+		await act(async () => {
+			rejectCreate(new Error("db locked"));
+			await expect(idle).rejects.toThrow("not saved");
+		});
+		expect(result.current.hasUnsavedChanges()).toBe(true);
+		expect(result.current.saveState).toBe("Autosave failed");
 	});
 
 	it("assigns the idea id without pushing a history entry", async () => {

@@ -104,7 +104,10 @@ export function ChatSection({
 	const fetchParentIdea = (parentId: string): void => {
 		getIdeaApi(parentId)
 			.then((res) => {
-				document.title = `Feedback for "${res.title}"`;
+				document.title =
+					chatType === CHAT_TYPE.CONTINUATION
+						? `Continue thinking about "${res.title}"`
+						: `Feedback for "${res.title}"`;
 				// creatorName is only set on ideas imported from someone else;
 				// without it the model is told the user wrote the idea
 				setParentIdea({
@@ -162,12 +165,23 @@ export function ChatSection({
 
 	// Cmd/Ctrl+Enter ends the session once there is something to end
 	// with (the same condition that shows a finish button)
-	const canFinish = currConversation.length >= minConversationLenForCreateAndEnd && !result;
+	// (only skips so far = nothing to save: the create would never run and
+	// a wrap-up would wait on it forever)
+	const hasSomethingToFinish = Boolean(persistence.ideaId) || persistence.hasMeaningfulAnswer;
+	const canFinish =
+		currConversation.length >= minConversationLenForCreateAndEnd &&
+		!result &&
+		hasSomethingToFinish;
+
+	/** a link whose navigation was held back by a failed save: clicking
+	 * it again leaves without the unsaved changes */
+	const leaveAnywayHrefRef = useRef<string | null>(null);
 
 	// Sidebar links are full-document navigations: a pending autosave
 	// would be dropped (the pagehide flush is fire-and-forget). Intercept
 	// plain left-clicks on in-page anchors while anything is unsaved,
-	// wait for the writes to land, then continue the navigation.
+	// wait for the writes to land, then continue the navigation. When the
+	// save can't land, say so and let a second click leave anyway.
 	useEffect(() => {
 		const onClick = (event: MouseEvent) => {
 			if (
@@ -187,11 +201,21 @@ export function ChatSection({
 			if (!href || !href.startsWith("/") || href.startsWith("//")) return;
 			if (!persistence.hasUnsavedChanges()) return;
 			event.preventDefault();
+			if (leaveAnywayHrefRef.current === href) {
+				window.location.href = href;
+				return;
+			}
 			void (async () => {
 				try {
 					await persistence.whenIdle();
-				} finally {
 					window.location.href = href;
+				} catch {
+					leaveAnywayHrefRef.current = href;
+					setChatError({
+						message:
+							"Your latest changes are not saved yet. Retry saving, or click the link again to leave without them.",
+						source: "save"
+					});
 				}
 			})();
 		};
@@ -201,22 +225,27 @@ export function ChatSection({
 
 	// after the draft loader: its status decides whether input waits
 	const restoringDraft = draftStatus === "loading";
-	const micBlockedReason = dailyStatusLoading
-		? "Loading today's status…"
-		: restoringDraft
-			? "Restoring your draft…"
-			: llmBlocked
-				? "Set up AI to begin"
-				: sttBlocked
-					? "Speech model needed"
+	const loadingContinuation = chatType === CHAT_TYPE.CONTINUATION && !parentIdea;
+	const micBlockedReason = loadingContinuation
+		? "Loading the original idea…"
+		: dailyStatusLoading
+			? "Loading today's status…"
+			: restoringDraft
+				? "Restoring your draft…"
+				: llmBlocked
+					? "Set up AI to begin"
+					: sttBlocked
+						? "Speech model needed"
+						: undefined;
+	const sendBlockedReason = loadingContinuation
+		? "Loading the original idea…"
+		: dailyStatusLoading
+			? "Loading today's status…"
+			: restoringDraft
+				? "Restoring your draft…"
+				: llmBlocked
+					? "Set up AI to reply"
 					: undefined;
-	const sendBlockedReason = dailyStatusLoading
-		? "Loading today's status…"
-		: restoringDraft
-			? "Restoring your draft…"
-			: llmBlocked
-				? "Set up AI to reply"
-				: undefined;
 
 	/** Wrap up the session and generate its summary. The summary needs
 	 * the idea to exist, so a session without one is created first; the
@@ -226,6 +255,9 @@ export function ChatSection({
 	 * instead of dead-ending "Generate Summary" on a session without an
 	 * idea id. */
 	const finishSession = useCallback(() => {
+		// nothing to save or summarize yet: the create waits for a real
+		// answer, so wrapping up now would spin forever
+		if (!hasSomethingToFinish) return;
 		if (persistence.ideaId) {
 			session.handleGetResult();
 			return;
@@ -233,7 +265,7 @@ export function ChatSection({
 		finishAfterCreateRef.current = true;
 		setIsWrappingUp(true);
 		persistence.requestCreate();
-	}, [persistence, session]);
+	}, [persistence, session, hasSomethingToFinish]);
 
 	// the keyboard twin of the finish buttons (Cmd/Ctrl+Enter)
 	useEffect(() => {
@@ -286,7 +318,9 @@ export function ChatSection({
 			<ErrorSection
 				title="Idea not found"
 				paragraphs={[
-					"The idea you were giving feedback on no longer exists in this library."
+					chatType === CHAT_TYPE.CONTINUATION
+						? "The idea you wanted to continue no longer exists in this library."
+						: "The idea you were giving feedback on no longer exists in this library."
 				]}
 			/>
 		);
@@ -301,10 +335,11 @@ export function ChatSection({
 		const lastUserContent = session.canReviseLastAnswer
 			? currConversation[currConversation.length - 2]!.content
 			: null;
+		const feedbackParent = chatType === CHAT_TYPE.FEEDBACK ? parentIdea : undefined;
 		const mainSectionChildren = [
 			<AssistantResponseText
 				key="assistant-response"
-				styleSetting={parentIdea && "feedback"}
+				styleSetting={feedbackParent && "feedback"}
 				content={aiMessageContent}
 				enableSkip={enableSkip}
 				handleSkipQuestion={session.askADifferentQuestion}
@@ -320,7 +355,7 @@ export function ChatSection({
 			) : null,
 			<ChatRecorder
 				key="chat-recorder"
-				isCompressed={Boolean(parentIdea)}
+				isCompressed={Boolean(feedbackParent)}
 				conversationState={session.conversationState}
 				dispatch={dispatch}
 				currConversation={currConversation}
@@ -356,7 +391,7 @@ export function ChatSection({
 					progress={aiStatus.llm.progress}
 				/>
 				<ChatTopBar
-					parentIdea={parentIdea}
+					parentIdea={feedbackParent}
 					showTranscript={showTranscript}
 					setShowTranscript={setShowTranscript}
 					leftButtonIcon={
@@ -367,17 +402,18 @@ export function ChatSection({
 					leftButtonHref="/get-started"
 					saveState={persistence.saveState}
 				/>
-				{parentIdea ? (
+				{feedbackParent ? (
 					<ChatFeedbackMainSection
 						showTranscript={showTranscript}
 						setShowTranscript={setShowTranscript}
-						parentIdea={parentIdea}
+						parentIdea={feedbackParent}
 						currConversation={currConversation}
 						conversationState={session.conversationState}
 						handleGetResult={finishSession}
 						handleEarlyFinish={finishSession}
 						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
+						canFinish={hasSomethingToFinish}
 					>
 						{mainSectionChildren}
 					</ChatFeedbackMainSection>
@@ -391,6 +427,7 @@ export function ChatSection({
 						handleEarlyFinish={finishSession}
 						isWrappingUp={isWrappingUp}
 						minConversationLenForEnd={minConversationLenForCreateAndEnd}
+						canFinish={hasSomethingToFinish}
 					>
 						{mainSectionChildren}
 					</ChatIdeaMainSection>

@@ -140,7 +140,10 @@ interface CommandSignatures {
 	};
 	markIdeaRead: { args: IdeaIdArgs; result: unknown };
 	linkIdeaLog: { args: { ideaId: string; logId: string }; result: null };
-	setIdeaResult: { args: { ideaId: string; result: string }; result: null };
+	setIdeaResult: {
+		args: { ideaId: string; result: string; expectedPreviousResult?: string };
+		result: null;
+	};
 	getInputDevice: { args: undefined; result: { name: string } };
 	listInputDevices: { args: undefined; result: { name: string; isDefault: boolean }[] };
 	setInputDevice: { args: { name?: string }; result: null };
@@ -238,6 +241,7 @@ export const QUERY_PARAMS = {
 	qotd: "qotd",
 	tab: "tab",
 	parentId: "parentId",
+	mode: "mode",
 	dailyIntent: "dailyIntent",
 	/** where to go back to after a detour (same-app path only) */
 	return: "return"

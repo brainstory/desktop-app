@@ -4,7 +4,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::commands::run_blocking;
 use crate::reactions::{is_valid_reaction, SharedSectionReaction};
-use crate::types::IdeaType;
+use crate::types::{IdeaType, ASK_A_DIFFERENT_QUESTION};
 use crate::AppState;
 
 // Trust model: share files are plain JSON the user received however they
@@ -429,11 +429,6 @@ pub async fn export_idea(
 		"kind": payload.kind_label(),
 	}))
 }
-
-/// The user message recorded when someone asks for a different question
-/// (mirrors ASK_A_DIFFERENT_QUESTION in src/const.ts): meta, not an
-/// answer, so transcript exports skip it.
-const ASK_A_DIFFERENT_QUESTION: &str = "Ask me a different question!";
 
 /// Build the Markdown document for an idea export: `# title`, the
 /// result document, and (optionally) the transcript as question/answer

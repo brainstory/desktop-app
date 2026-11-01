@@ -6,7 +6,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@src/types";
-import { CHAT_SAVE_STATE, CHAT_TYPE, type ChatSaveState, type ChatType } from "@src/const";
+import {
+	ASK_A_DIFFERENT_QUESTION,
+	CHAT_SAVE_STATE,
+	CHAT_TYPE,
+	type ChatSaveState,
+	type ChatType
+} from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
 import { normalizeApiError } from "@helpers/helpers";
 import { describeError } from "@helpers/describeError";
@@ -49,13 +55,11 @@ export function useIdeaPersistence(
 
 	const [ideaId, setIdeaId] = useState<string | undefined>(initialIdeaId);
 	const [saveState, setSaveState] = useState<ChatSaveState>(CHAT_SAVE_STATE.WAITING);
-	/** create the idea even below the usual minimum (an early wrap-up
-	 * asked for it); a later request retries a failed create */
-	const [forceCreate, setForceCreate] = useState(false);
 	const [createAttempt, setCreateAttempt] = useState(0);
 
 	// refs so the effects see live values without re-running
 	const creatingIdeaRef = useRef(false);
+	const createPromiseRef = useRef<Promise<void> | null>(null);
 	const conversationLengthRef = useRef(conversation.length);
 	const fetchedParentRef = useRef<string | null>(null);
 	/** the idea this session created: the draft loader must not re-fetch
@@ -114,22 +118,18 @@ export function useIdeaPersistence(
 			const job = pendingSaveRef.current;
 			pendingSaveRef.current = null;
 			if (!job) return;
-			savesInFlightRef.current += 1;
 			// the same snapshot reached the database while this job waited
 			// in the pending slot (e.g. the create-completion handoff):
 			// writing it again would be redundant
 			if (job.conversation === persistedRef.current) return;
+			savesInFlightRef.current += 1;
 			setSaveState(CHAT_SAVE_STATE.SAVING);
 			try {
 				await updateIdeaApi(job.ideaId, job.conversation);
 				persistedRef.current = job.conversation;
 				// a newer save is queued: leave the label to it
 				if (pendingSaveRef.current) return;
-				// don't show SAVED visual for saving the user message so
-				// the switch from SAVING to SAVED doesn't happen twice
-				if (job.conversation[job.conversation.length - 1]?.role === "assistant") {
-					setSaveState(CHAT_SAVE_STATE.SUCCESS);
-				}
+				setSaveState(CHAT_SAVE_STATE.SUCCESS);
 			} catch (e) {
 				// keep the failed job recoverable (a newer queued save
 				// supersedes it; ??= leaves that untouched)
@@ -184,11 +184,11 @@ export function useIdeaPersistence(
 	// until today's status is known: undefined means the read is still in
 	// flight (null means "no log today", which is allowed to proceed).
 	const dailyLogPending = chatType === CHAT_TYPE.DAILY_INTENT && dailyLogId === undefined;
-	// derived: an idea must be created as soon as the conversation is long
-	// enough and no idea row exists yet - or right away when an early
-	// wrap-up requested it
-	const readyToCreateIdea =
-		!ideaId && !dailyLogPending && (conversation.length >= minLength || forceCreate);
+	const hasMeaningfulAnswer = conversation.some((message) => {
+		const content = message.content.trim();
+		return message.role === "user" && content !== "" && content !== ASK_A_DIFFERENT_QUESTION;
+	});
+	const readyToCreateIdea = !ideaId && !dailyLogPending && hasMeaningfulAnswer;
 
 	// create-once effect: the guard prevents a second create while one is
 	// in flight (StrictMode double-invoke, conversation updates). The
@@ -198,7 +198,8 @@ export function useIdeaPersistence(
 		if (readyToCreateIdea && !creatingIdeaRef.current) {
 			creatingIdeaRef.current = true;
 			const createdWith = conversation;
-			createIdeaApi(result, createdWith, chatType, parentIdParam, dailyLogId)
+			setSaveState(CHAT_SAVE_STATE.SAVING);
+			const create = createIdeaApi(result, createdWith, chatType, parentIdParam, dailyLogId)
 				.then((createdIdeaId) => {
 					creatingIdeaRef.current = false;
 					createdIdeaIdRef.current = createdIdeaId;
@@ -221,6 +222,7 @@ export function useIdeaPersistence(
 					// obsolete after teardown: the document may belong to a
 					// new session, so no history/URL updates from here on
 					if (!aliveRef.current) return;
+					if (newest === createdWith) setSaveState(CHAT_SAVE_STATE.SUCCESS);
 					setIdeaId(createdIdeaId);
 					const url = new URL(window.location.href);
 					const params = new URLSearchParams(url.search);
@@ -234,12 +236,14 @@ export function useIdeaPersistence(
 					creatingIdeaRef.current = false;
 					// the ref keeps the callback out of the deps: this effect
 					// must not re-run (and re-create) on every parent render
+					if (aliveRef.current) setSaveState(CHAT_SAVE_STATE.FAILED);
 					onErrorRef.current(
 						`Could not save this session: ${describeError(err).message || normalizeApiError(err)}`
 					);
 					// readyToCreateIdea stays true; the next conversation
 					// update re-runs this effect and retries creation
 				});
+			createPromiseRef.current = create;
 		}
 		// `result` is intentionally not a dependency: it cannot become
 		// non-empty before the idea exists (the summary is only generated
@@ -292,17 +296,22 @@ export function useIdeaPersistence(
 	 * away now would drop it (the pagehide flush is fire-and-forget). */
 	const hasUnsavedChanges = useCallback(
 		() =>
+			creatingIdeaRef.current ||
+			(!ideaId && hasMeaningfulAnswer) ||
 			pendingSaveRef.current !== null ||
 			debounceRef.current !== null ||
 			savesInFlightRef.current > 0,
-		[]
+		[ideaId, hasMeaningfulAnswer]
 	);
 
 	/** Re-send the transcript after a failed autosave. The latest
 	 * conversation wins: whatever failed, the retry persists the newest
 	 * state rather than the stale failed snapshot. */
 	const retryAutosave = useCallback(() => {
-		if (!ideaId) return;
+		if (!ideaId) {
+			setCreateAttempt((attempt) => attempt + 1);
+			return;
+		}
 		pendingSaveRef.current = {
 			ideaId,
 			conversation: latestConversationRef.current
@@ -312,14 +321,21 @@ export function useIdeaPersistence(
 
 	/** Flush anything queued and resolve once every save has landed. */
 	const whenIdle = useCallback(async (): Promise<void> => {
+		await createPromiseRef.current;
 		flushAutosave();
 		await saveQueueRef.current;
-	}, [flushAutosave]);
+		if (
+			(!ideaId && hasMeaningfulAnswer && !createdIdeaIdRef.current) ||
+			pendingSaveRef.current
+		) {
+			throw new Error("Changes have not been saved");
+		}
+	}, [flushAutosave, ideaId, hasMeaningfulAnswer]);
 
-	/** Ask for the idea to be created now, below the usual minimum (the
-	 * early wrap-up path). Repeated calls retry a failed create. */
+	/** Ask for the idea to be created now (the wrap-up path). The create
+	 * itself only runs once there is a meaningful answer; repeated calls
+	 * retry a failed create. */
 	const requestCreate = useCallback(() => {
-		setForceCreate(true);
 		setCreateAttempt((attempt) => attempt + 1);
 	}, []);
 
@@ -329,6 +345,9 @@ export function useIdeaPersistence(
 		saveState,
 		setSaveState,
 		readyToCreateIdea,
+		/** a user answer other than "Ask me a different question" exists:
+		 * nothing is saved (and no session can be finished) without one */
+		hasMeaningfulAnswer,
 		requestCreate,
 		retryAutosave,
 		hasUnsavedChanges,

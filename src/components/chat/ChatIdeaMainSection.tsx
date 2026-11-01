@@ -16,6 +16,8 @@ interface ChatIdeaMainSectionProps {
 	/** the early wrap-up is creating/saving the session */
 	isWrappingUp: boolean;
 	minConversationLenForEnd: number;
+	/** false hides both finish buttons (no answer worth saving yet) */
+	canFinish?: boolean;
 	children?: ReactNode;
 }
 
@@ -27,6 +29,7 @@ export default function ChatIdeaMainSection({
 	handleEarlyFinish,
 	isWrappingUp,
 	minConversationLenForEnd,
+	canFinish = true,
 	children
 }: ChatIdeaMainSectionProps) {
 	return (
@@ -40,7 +43,7 @@ export default function ChatIdeaMainSection({
 				<div className={`flex justify-center flex-col m-6 md:max-w-[50vw] md:mx-auto`}>
 					{children}
 				</div>
-				{currConversation.length >= minConversationLenForEnd ? (
+				{!canFinish ? null : currConversation.length >= minConversationLenForEnd ? (
 					<EndChatButton
 						conversationState={conversationState}
 						handleGetResult={handleGetResult}
