@@ -11,7 +11,10 @@
 
 [package]
 edition = "2021"
-rust-version = "1.88.0"
+# bump together with rust-toolchain.toml (the pinned toolchain this must agree with)
+# bump together with rust-toolchain.toml (the pinned toolchain this must
+# agree with); three parts because build.rs parses it with semver
+rust-version = "1.98.0"
 name = "whisper-rs-sys"
 version = "0.15.0"
 build = "build.rs"

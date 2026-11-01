@@ -300,7 +300,7 @@ pub fn default_stt_engine(db: &Db) -> SpeechEngine {
 /// Valid `llm_ctx_tokens` values: 0 (the app default) or a multiple of
 /// 1024 within 8192..=131072.
 fn valid_llm_ctx(v: u32) -> bool {
-	v == 0 || (v % 1024 == 0 && (8192..=131072).contains(&v))
+	v == 0 || (v.is_multiple_of(1024) && (8192..=131072).contains(&v))
 }
 
 /// Upper bound on an incoming secret string (HuggingFace token, external

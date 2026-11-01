@@ -763,10 +763,7 @@ pub(super) fn truncate_body(body: &str) -> String {
 	if body.len() > 300 {
 		// Slice at a char boundary: byte 300 can land mid-UTF-8-character
 		// for a non-ASCII error body, and a plain [..300] would panic.
-		let mut cut = 300;
-		while !body.is_char_boundary(cut) {
-			cut -= 1;
-		}
+		let cut = body.floor_char_boundary(300);
 		format!("{}...", &body[..cut])
 	} else {
 		body.to_string()
@@ -778,11 +775,7 @@ pub(super) fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
 	if s.len() <= max_bytes {
 		return s;
 	}
-	let mut cut = max_bytes;
-	while !s.is_char_boundary(cut) {
-		cut -= 1;
-	}
-	&s[..cut]
+	&s[..s.floor_char_boundary(max_bytes)]
 }
 
 #[cfg(test)]

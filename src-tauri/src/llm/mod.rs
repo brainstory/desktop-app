@@ -691,6 +691,19 @@ mod tests {
 	}
 
 	#[test]
+	fn a_multibyte_reasoning_tail_never_splits_a_character() {
+		// reasoning longer than the kept tail drains the buffer at a
+		// byte offset that lands inside a three-byte character: the
+		// floor must keep the remainder valid UTF-8, and the closing
+		// tag still has to be recognized afterwards
+		let long_reasoning = "日".repeat(200);
+		assert_eq!(
+			run(&["<think>", &long_reasoning, "</think>answer"]),
+			"answer"
+		);
+	}
+
+	#[test]
 	fn partial_open_tag_stays_literal() {
 		assert_eq!(run(&["a < b", " and c"]), "a < b and c");
 	}

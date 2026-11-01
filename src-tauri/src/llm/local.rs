@@ -900,12 +900,13 @@ impl ThinkFilter {
 			if self.in_think {
 				let Some(i) = self.buffer.find(THINK_CLOSE) else {
 					// Reasoning so far; keep only a tail large enough to
-					// still catch a closing tag split across pieces.
-					let mut cut = self.buffer.len().saturating_sub(THINK_CLOSE.len() - 1);
-					while !self.buffer.is_char_boundary(cut) {
-						cut -= 1;
-					}
-					self.buffer.drain(..cut);
+					// still catch a closing tag split across pieces,
+					// floored to a char boundary so a multi-byte
+					// character in the reasoning is never split.
+					let keep_from = self.buffer.floor_char_boundary(
+						self.buffer.len().saturating_sub(THINK_CLOSE.len() - 1),
+					);
+					self.buffer.drain(..keep_from);
 					break;
 				};
 				self.buffer.drain(..i + THINK_CLOSE.len());

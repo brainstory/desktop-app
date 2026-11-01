@@ -422,12 +422,9 @@ pub fn cap_idea_document(idea: &str, built_ctx: u32) -> (String, bool) {
 		return (idea.to_string(), false);
 	}
 	// prefer cutting at the last heading boundary inside the budget;
-	// step back to a char boundary by hand (floor_char_boundary needs a
-	// newer Rust than the MSRV)
-	let mut limit = max_bytes.min(idea.len());
-	while limit > 0 && !idea.is_char_boundary(limit) {
-		limit -= 1;
-	}
+	// floor back to a char boundary so a multi-byte character is never
+	// split (the byte cap can land mid-UTF-8-character)
+	let limit = idea.floor_char_boundary(max_bytes.min(idea.len()));
 	let window = &idea[..limit];
 	let cut = window.rfind("\n## ").unwrap_or(window.len());
 	let mut capped = String::from(&idea[..cut]);
@@ -598,6 +595,29 @@ mod idea_cap_tests {
 			"cut mid-section: {:?}",
 			&before_marker[before_marker.len().saturating_sub(60)..]
 		);
+	}
+
+	#[test]
+	fn a_byte_cap_that_lands_mid_character_cuts_at_the_character_edge() {
+		// no "\n## " headings, so the cap falls on the raw byte limit -
+		// which must floor to a char boundary, never split a character
+		let ctx = 4_096u32;
+		let doc = format!("ab{}", "日".repeat(60_000));
+		let (capped, was_capped) = cap_idea_document(&doc, ctx);
+		assert!(was_capped);
+		let max_bytes = (ctx as usize - 3_000) * 3;
+		let body = capped.trim_end();
+		assert!(
+			body.ends_with("[document shortened to fit the model]"),
+			"{:?}",
+			body.lines().last()
+		);
+		// the text before the marker ends on a whole 日, not a slice of one
+		let kept = body
+			.strip_suffix("\n\n[document shortened to fit the model]")
+			.expect("marker follows a blank line");
+		assert!(kept.ends_with('日'), "cut: {:?}", &kept[kept.len() - 6..]);
+		assert!(kept.len() < max_bytes);
 	}
 
 	#[test]

@@ -5,7 +5,8 @@ description = "Brainstory - think out loud, locally"
 license = "GPL-3.0-only"
 repository = "https://github.com/brainstory/desktop-app"
 edition = "2021"
-rust-version = "1.82"
+# bump together with rust-toolchain.toml (the pinned toolchain this must agree with)
+rust-version = "1.98"
 
 [lib]
 name = "brainstory_lib"
