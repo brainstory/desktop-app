@@ -1,12 +1,9 @@
 import { invokeCommand } from "@src/tauri/invoke";
+import type { UserSettings } from "@src/tauri/generated/UserSettings";
 
-export interface LogSettingsQuestion {
-	id: number;
-	label: string;
-	questionText: string;
-	enabled: boolean;
-}
-
+/** The daily-reminder row in the settings form: the mapped shape the
+ * cards consume (the backend's NotificationSettingsItem is snake_case
+ * with value_type). */
 export interface NotificationSetting {
 	title: string;
 	description?: string | null;
@@ -15,24 +12,21 @@ export interface NotificationSetting {
 	enabled: boolean;
 }
 
+/** A daily-log question row in the settings form. */
+export interface LogSettingsQuestion {
+	id: number;
+	label: string;
+	questionText: string;
+	enabled: boolean;
+}
+
 export interface UserSettingsResponse {
 	user: {
 		name?: string | null;
 		timezone?: string | null;
 	};
-	dailyLog: {
-		id: number;
-		label: string;
-		questionText: string;
-		enabled: boolean;
-	}[];
-	notifications: {
-		title: string;
-		description?: string | null;
-		value?: string | null;
-		valueType: string;
-		enabled: boolean;
-	}[];
+	dailyLog: LogSettingsQuestion[];
+	notifications: NotificationSetting[];
 	presence: {
 		dock: boolean;
 		tray: boolean;
@@ -44,25 +38,9 @@ export interface UserSettingsResponse {
 	quickCapture: boolean;
 }
 
-/** User settings as serialized by the backend (snake_case). */
-export interface RawUserSettings {
-	user: { name?: string; timezone?: string };
-	log: { id: number; label: string; text: string; enabled: boolean }[];
-	notifications: {
-		title: string;
-		description?: string;
-		value?: string;
-		value_type: string;
-		enabled: boolean;
-	}[];
-	presence: { dock: boolean; tray: boolean };
-	updates?: { enabled: boolean };
-	quickCapture?: boolean;
-}
-
 /** Get user settings */
 export async function getUserSettingsApi(): Promise<UserSettingsResponse> {
-	const response = await invokeCommand("getUserSettings");
+	const response: UserSettings = await invokeCommand("getUserSettings");
 
 	const user = {
 		name: response.user?.name,

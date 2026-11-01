@@ -10,20 +10,20 @@
 
 import type { Channel } from "@tauri-apps/api/core";
 import type { ChatMessage } from "@src/types";
-import type { GenerationResult } from "@helpers/chat";
-import type { RawFeedbackChild, RawIdea } from "@helpers/api/idea";
-import type { RawDailyStatus, RawIdeaItem, RawUser } from "@helpers/api/user";
-import type { DailyLogQuestion, LogAnswerItem } from "@helpers/api/forms";
-import type { RawUserSettings } from "@helpers/api/settings";
-import type {
-	AiSettingsResponse,
-	AppleSttStatus,
-	DownloadEvent,
-	EngineStatus,
-	ModelsResponse
-} from "@helpers/api/models";
+import type { GenerationResult } from "@src/tauri/generated/GenerationResult";
+import type { IdeaItem } from "@src/tauri/generated/IdeaItem";
+import type { UserData } from "@src/tauri/generated/UserData";
+import type { DailyStatus } from "@src/tauri/generated/DailyStatus";
+import type { LogAnswerItem } from "@src/tauri/generated/LogAnswerItem";
+import type { LogQuestionItem } from "@src/tauri/generated/LogQuestionItem";
+import type { UserSettings } from "@src/tauri/generated/UserSettings";
+import type { AiSettingsResponse } from "@src/tauri/generated/AiSettingsResponse";
+import type { DownloadEvent } from "@src/tauri/generated/DownloadEvent";
+import type { EngineStatus } from "@src/tauri/generated/EngineStatus";
+import type { ModelStatus } from "@src/tauri/generated/ModelStatus";
+import type { IdeaReactions } from "@src/tauri/generated/IdeaReactions";
+import type { AppleSttStatus } from "@helpers/api/models";
 import type { ExportIdeaResult, ImportShareResult } from "@helpers/api/share";
-import type { IdeaReactions } from "@helpers/api/reactions";
 import type { ChatType } from "@src/const";
 
 export const COMMANDS = {
@@ -112,11 +112,11 @@ type ModelIdArgs = { modelId: string };
  * `invokeCommand` (tauri/invoke.ts) so both are checked.
  */
 interface CommandSignatures {
-	getUser: { args: undefined; result: RawUser };
-	getDailyStatus: { args: undefined; result: RawDailyStatus };
-	getAllIdeas: { args: undefined; result: { ideas: RawIdeaItem[] } };
-	getIdea: { args: IdeaIdArgs; result: RawIdea };
-	getIdeaChildren: { args: IdeaIdArgs; result: { ideas: RawFeedbackChild[] } };
+	getUser: { args: undefined; result: UserData };
+	getDailyStatus: { args: undefined; result: DailyStatus };
+	getAllIdeas: { args: undefined; result: { ideas: IdeaItem[] } };
+	getIdea: { args: IdeaIdArgs; result: IdeaItem };
+	getIdeaChildren: { args: IdeaIdArgs; result: { ideas: IdeaItem[] } };
 	createIdea: {
 		args: {
 			result: string;
@@ -165,7 +165,7 @@ interface CommandSignatures {
 		args: { ideaId: string; noteId: string };
 		result: { id: string; noteId: string };
 	};
-	getLogQuestions: { args: undefined; result: { log: DailyLogQuestion[] } };
+	getLogQuestions: { args: undefined; result: { log: LogQuestionItem[] } };
 	submitLog: { args: { log: LogAnswerItem[] }; result: { id: string } };
 	// registered on the Rust side but not called by the frontend
 	getSurveyFields: { args: undefined; result: unknown };
@@ -184,7 +184,7 @@ interface CommandSignatures {
 	startVoiceCapture: { args: undefined; result: void };
 	stopVoiceCapture: { args: undefined; result: ArrayBuffer };
 	stopAndTranscribe: { args: undefined; result: { transcript: string } };
-	getUserSettings: { args: undefined; result: RawUserSettings };
+	getUserSettings: { args: undefined; result: UserSettings };
 	saveUserSettings: { args: Record<string, unknown>; result: { id: string } };
 	setAppPresence: { args: { dock: boolean; tray: boolean }; result: void };
 	setQuickCaptureEnabled: { args: { enabled: boolean }; result: void };
@@ -194,7 +194,7 @@ interface CommandSignatures {
 	saveAiSettings: { args: { ai: object }; result: void };
 	testLlmEndpoint: { args: { apiKey?: string } | undefined; result: string };
 	testSttEndpoint: { args: { apiKey?: string } | undefined; result: string };
-	listModels: { args: undefined; result: ModelsResponse };
+	listModels: { args: undefined; result: { llm: ModelStatus[]; stt: ModelStatus[] } };
 	getRuntimeStatus: { args: undefined; result: { llm: EngineStatus; stt: EngineStatus } };
 	getAppleSttStatus: { args: undefined; result: AppleSttStatus };
 	getFreeDiskSpace: { args: undefined; result: number };

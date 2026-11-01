@@ -62,19 +62,26 @@ pub struct IdeaItem {
 	pub id: String,
 	pub title: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub result: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub r#type: Option<String>,
 	pub created_at: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub creator_email: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub creator_name: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub is_unread: Option<bool>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub transcript: Option<Vec<ChatMessage>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub shared_with_users: Option<Vec<String>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	#[ts(type = "unknown", optional)]
@@ -85,10 +92,13 @@ pub struct IdeaItem {
 	/// the user's structured notes (see [`IdeaNote`]); absent when there
 	/// are none
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub notes: Option<Vec<IdeaNote>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub parent_idea: Option<Box<IdeaItem>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub feedback: Option<Vec<IdeaItem>>,
 }
 
@@ -98,6 +108,7 @@ pub struct IdeaItem {
 pub struct UserData {
 	pub name: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub timezone: Option<String>,
 	pub created_at: String,
 }
@@ -107,18 +118,23 @@ pub struct UserData {
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct DailyStatus {
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub log_id: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub intent_idea_id: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub survey_id: Option<String>,
 	pub is_completed: bool,
+	#[ts(type = "number")]
 	pub streak: i64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ts_rs::TS)]
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogAnswerItem {
+	#[ts(type = "number")]
 	pub id: i64,
 	pub value: bool,
 }
@@ -127,10 +143,12 @@ pub struct LogAnswerItem {
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogQuestionItem {
+	#[ts(type = "number")]
 	pub id: i64,
 	pub text: String,
 	pub label: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub value: Option<bool>,
 }
 
@@ -138,6 +156,7 @@ pub struct LogQuestionItem {
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogSettingsItem {
+	#[ts(type = "number")]
 	pub id: i64,
 	pub label: String,
 	pub text: String,
@@ -150,8 +169,10 @@ pub struct LogSettingsItem {
 pub struct NotificationSettingsItem {
 	pub title: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub description: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub value: Option<String>,
 	pub value_type: String,
 	pub enabled: bool,
@@ -192,8 +213,10 @@ pub struct AppPresence {
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct UserSettingsUser {
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub name: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub timezone: Option<String>,
 }
 
@@ -226,6 +249,7 @@ pub struct ModelStatus {
 	pub label: String,
 	pub description: String,
 	pub kind: String,
+	#[ts(type = "number")]
 	pub size_bytes: u64,
 	pub downloaded: bool,
 	pub active: bool,
@@ -237,9 +261,17 @@ pub struct ModelStatus {
 	/// download progress 0-100 (the live pct while downloading, the
 	/// stop point while paused)
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub progress: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub filename: Option<String>,
+	/// Approximate KV-cache bytes per token for local LLM rows (absent
+	/// for STT): window tokens x this = the extra memory a context
+	/// window needs.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional, type = "number")]
+	pub kv_bytes_per_token: Option<f64>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 /**
  * A reaction on one section of an idea, as `get_reactions` returns it.
  */
-export type SectionReaction = { sectionIndex: bigint, emoji: string, 
+export type SectionReaction = { sectionIndex: number, emoji: string, 
 /**
  * the local user's own reaction (not carried in by a feedback file)
  */

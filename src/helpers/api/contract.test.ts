@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -69,6 +69,16 @@ describe("frontend <-> rust IPC contract", () => {
 			missing,
 			`frontend invokes commands the Rust side never registered: ${missing.join(", ")}`
 		).toEqual([]);
+	});
+
+	it("every generated type commands.ts imports exists on disk", () => {
+		const generatedDir = resolve(srcRoot, "tauri/generated");
+		const imports = [...COMMANDS_TS.matchAll(/from "@src\/tauri\/generated\/(\w+)"/g)].map(
+			(m) => m[1]!
+		);
+		expect(imports.length).toBeGreaterThan(5);
+		const missing = imports.filter((name) => !existsSync(resolve(generatedDir, `${name}.ts`)));
+		expect(missing, "generated type files missing: " + missing.join(", ")).toEqual([]);
 	});
 
 	it("the Rust moderation error is recognised by isModerationError", () => {

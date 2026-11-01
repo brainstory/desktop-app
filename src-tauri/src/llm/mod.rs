@@ -111,8 +111,10 @@ pub struct GenerationResult {
 	pub response: String,
 	/// prompt token count (0 when the backend reports none, as with
 	/// external endpoints)
+	#[ts(type = "number")]
 	pub request_message_tokens: usize,
 	/// word count of the submitted conversation
+	#[ts(type = "number")]
 	pub request_word_count: usize,
 	/// the structured feedback document, when one was requested and built
 	#[ts(type = "unknown")]
@@ -121,6 +123,7 @@ pub struct GenerationResult {
 	/// turns were left out of the summary generation
 	pub truncated: bool,
 	/// how many transcript turns the summary fit dropped
+	#[ts(type = "number")]
 	pub dropped_turns: usize,
 	/// the feedback idea document was shortened for the context window
 	pub idea_truncated: bool,

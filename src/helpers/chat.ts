@@ -3,6 +3,9 @@ import type { ChatMessage } from "@src/types";
 import { getQuestionOfTheDay } from "@helpers/qotd";
 import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { QUERY_PARAMS } from "@src/tauri/commands";
+import type { GenerationResult } from "@src/tauri/generated/GenerationResult";
+
+export type { GenerationResult };
 
 /** Query params relevant to the first prompt (null/undefined = absent). */
 export type FirstPromptParams = Record<"qotd" | "topic", string | null | undefined>;
@@ -89,20 +92,6 @@ export function isGenerationCancelled(error: unknown): boolean {
 export interface StreamChunk {
 	type: string;
 	content?: string;
-}
-
-export interface GenerationResult {
-	response?: string;
-	request_message_tokens?: number;
-	request_word_count?: number;
-	structured_result?: unknown;
-	/** the conversation was longer than the model's context: the oldest
-	 * turns were left out of the summary generation */
-	truncated?: boolean;
-	/** how many transcript turns the summary fit dropped */
-	dropped_turns?: number;
-	/** the feedback idea document was shortened for the context window */
-	idea_truncated?: boolean;
 }
 
 type UpdateMessage = (message: string) => void;

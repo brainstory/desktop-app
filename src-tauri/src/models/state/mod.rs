@@ -49,12 +49,15 @@ pub enum EngineState {
 pub struct EngineStatus {
 	pub state: EngineState,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub model_id: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub error: Option<String>,
 	/// load progress in 0..=1 while `state == Loading` (absent when the
 	/// backend reports none)
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(optional)]
 	pub progress: Option<f32>,
 }
 

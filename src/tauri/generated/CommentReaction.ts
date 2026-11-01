@@ -8,4 +8,4 @@ export type CommentReaction = { feedbackIdeaId: string,
 /**
  * index into that feedback idea's `structured_result.feedback_items`
  */
-itemIndex: bigint, emoji: string, };
+itemIndex: number, emoji: string, };

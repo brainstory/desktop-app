@@ -39,6 +39,7 @@ pub fn validate_reaction(emoji: &str) -> Result<(), String> {
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct SharedSectionReaction {
 	/// index into the reacted idea's sections (`Db::result_to_json` order)
+	#[ts(type = "number")]
 	pub section_index: i64,
 	pub emoji: String,
 }
@@ -48,6 +49,7 @@ pub struct SharedSectionReaction {
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct SectionReaction {
+	#[ts(type = "number")]
 	pub section_index: i64,
 	pub emoji: String,
 	/// the local user's own reaction (not carried in by a feedback file)
@@ -65,6 +67,7 @@ pub struct SectionReaction {
 pub struct CommentReaction {
 	pub feedback_idea_id: String,
 	/// index into that feedback idea's `structured_result.feedback_items`
+	#[ts(type = "number")]
 	pub item_index: i64,
 	pub emoji: String,
 }

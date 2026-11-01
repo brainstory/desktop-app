@@ -1,18 +1,12 @@
 import { invokeCommand } from "@src/tauri/invoke";
+import type { LogAnswerItem as RawLogAnswerItem } from "@src/tauri/generated/LogAnswerItem";
+import type { LogQuestionItem } from "@src/tauri/generated/LogQuestionItem";
 
-/** A daily-log question as the backend lists it. */
-export interface DailyLogQuestion {
-	id: number;
-	text: string;
-	label: string;
-	/** Today's saved answer; absent when it hasn't been answered yet. */
-	value?: boolean;
-}
+/** A daily-log question as the backend lists it (today's answer, when
+ * one is saved, rides along in `value`). */
+export type DailyLogQuestion = LogQuestionItem;
 
-export interface LogAnswerItem {
-	id: number;
-	value: boolean;
-}
+export type LogAnswerItem = RawLogAnswerItem;
 
 /** A daily-log question bound to its current answer (settings/log UIs). */
 export interface LogFormAnswer {
@@ -22,7 +16,7 @@ export interface LogFormAnswer {
 }
 
 export async function getDailyLogQuestionsApi(): Promise<DailyLogQuestion[]> {
-	const response = await invokeCommand("getLogQuestions");
+	const response: { log: LogQuestionItem[] } = await invokeCommand("getLogQuestions");
 
 	return response.log.map((question) => ({
 		id: question.id,

@@ -13,7 +13,8 @@ const model: ModelStatus = {
 	sizeBytes: 1_500_000_000,
 	downloaded: false,
 	active: false,
-	downloading: false
+	downloading: false,
+	paused: false
 };
 
 function renderRow(

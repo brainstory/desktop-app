@@ -1,7 +1,7 @@
 /** Shared domain shapes mirrored from the Rust backend's types. */
 
 export interface ChatMessage {
-	role: "user" | "assistant";
+	role: string;
 	content: string;
 }
 

@@ -51,7 +51,7 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 					// the marker a pause left behind
 					let active_pct = progress.get(spec.id).copied();
 					let paused_pct = paused.get(spec.id).copied();
-					let mut row = serde_json::to_value(ModelStatus {
+					serde_json::to_value(ModelStatus {
 						id: spec.id.to_string(),
 						label: spec.label.to_string(),
 						description: spec.description.to_string(),
@@ -86,15 +86,15 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 						progress: active_pct.or(paused_pct),
 						paused: active_pct.is_none() && paused_pct.is_some(),
 						filename: Some(spec.filename.to_string()),
+						// Approximate KV-cache bytes/token powers the
+						// context-window memory hint; documented catalog
+						// constants for LLM rows, absent for STT rows.
+						kv_bytes_per_token: match kind {
+							ModelKind::Llm => Some(kv_bytes_per_token(spec) as f64),
+							ModelKind::Stt => None,
+						},
 					})
-					.expect("serializing a ModelStatus row cannot fail");
-					// Approximate KV-cache bytes/token powers the
-					// context-window memory hint; documented catalog
-					// constants for LLM rows, absent for STT rows.
-					if let ModelKind::Llm = kind {
-						row["kvBytesPerToken"] = json!(kv_bytes_per_token(spec));
-					}
-					row
+					.expect("serializing a ModelStatus row cannot fail")
 				})
 				.collect()
 		};

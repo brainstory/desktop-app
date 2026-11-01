@@ -1,6 +1,9 @@
 import { invokeCommand } from "@src/tauri/invoke";
 import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
 import type { DailyStatus, IdeaListItem } from "@src/types";
+import type { DailyStatus as RawDailyStatus } from "@src/tauri/generated/DailyStatus";
+import type { IdeaItem } from "@src/tauri/generated/IdeaItem";
+import type { UserData } from "@src/tauri/generated/UserData";
 
 export interface CurrentUser {
 	name?: string;
@@ -8,63 +11,30 @@ export interface CurrentUser {
 	createdAt?: string;
 }
 
-/** The local user as serialized by the backend (snake_case). Leftover
- * account fields the backend may still send (email, mail_verified) are
- * deliberately not read. */
-export interface RawUser {
-	name?: string;
-	timezone?: string;
-	created_at: string;
-}
-
-/** Get user name, timezone and account creation date (all local) */
+/** Get user name, timezone and account creation date (all local).
+ * Leftover account fields the backend may still send (email,
+ * mail_verified) are deliberately not read. */
 export async function getUserApi(): Promise<CurrentUser> {
-	const response = await invokeCommand("getUser");
+	const response: UserData = await invokeCommand("getUser");
 	return {
-		name: response?.name,
-		timezone: response?.timezone,
+		name: response?.name ?? undefined,
+		timezone: response?.timezone ?? undefined,
 		createdAt: response?.created_at
 	};
 }
 
-/** Today's log/intent status as serialized by the backend. */
-export interface RawDailyStatus {
-	log_id: string | null;
-	intent_idea_id: string | null;
-	survey_id: string | null;
-	is_completed: boolean;
-	streak: number;
-}
-
 export async function getUserDailyStatusApi(): Promise<DailyStatus> {
-	const response = await invokeCommand("getDailyStatus");
+	const response: RawDailyStatus = await invokeCommand("getDailyStatus");
 	return {
-		logId: response.log_id,
-		intentIdeaId: response.intent_idea_id,
-		surveyId: response.survey_id,
+		logId: response.log_id ?? null,
+		intentIdeaId: response.intent_idea_id ?? null,
+		surveyId: response.survey_id ?? null,
 		isCompleted: response.is_completed,
 		streak: response.streak
 	};
 }
 
-/** Raw idea row as serialized by the backend (snake_case). */
-export interface RawIdeaItem {
-	id: string;
-	title: string;
-	result?: string;
-	type?: string;
-	created_at: string;
-	creator_email?: string;
-	creator_name?: string;
-	is_unread?: boolean;
-	transcript?: { role: string; content: string }[];
-	shared_with_users?: string[];
-	/** feedback children, same row shape (the list sends a transcript
-	 * only for drafts); only top-level ideas carry this */
-	feedback?: RawIdeaItem[];
-}
-
-function toIdeaListItem(idea: RawIdeaItem): IdeaListItem {
+function toIdeaListItem(idea: IdeaItem): IdeaListItem {
 	return {
 		id: idea.id,
 		type: idea.type,

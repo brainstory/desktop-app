@@ -8,4 +8,4 @@ export type SharedSectionReaction = {
 /**
  * index into the reacted idea's sections (`Db::result_to_json` order)
  */
-section_index: bigint, emoji: string, };
+section_index: number, emoji: string, };

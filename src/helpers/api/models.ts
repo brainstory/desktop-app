@@ -1,70 +1,15 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invokeCommand } from "@src/tauri/invoke";
+import type { AiSettingsResponse } from "@src/tauri/generated/AiSettingsResponse";
+import type { DownloadEvent as ModelDownloadEvent } from "@src/tauri/generated/DownloadEvent";
+import type { EngineStatus } from "@src/tauri/generated/EngineStatus";
+import type { ModelStatus } from "@src/tauri/generated/ModelStatus";
 
-export interface ModelStatus {
-	id: string;
-	label: string;
-	description: string;
-	kind: "llm" | "stt";
-	sizeBytes: number;
-	downloaded: boolean;
-	active: boolean;
-	downloading: boolean;
-	/** a user pause stopped the transfer; `progress` says where */
-	paused?: boolean;
-	/** download progress 0-100; negative = total size unknown */
-	progress?: number;
-	filename?: string;
-	/**
-	 * Approximate KV-cache bytes per token for local LLM rows (absent for
-	 * STT): window tokens × this ≈ extra memory for a context window.
-	 */
-	kvBytesPerToken?: number;
-}
+export type { AiSettingsResponse, EngineStatus, ModelStatus };
 
 export interface ModelsResponse {
 	llm: ModelStatus[];
 	stt: ModelStatus[];
-}
-
-/** EngineStatus from the backend (snake_case model_id/error keys). */
-export interface EngineStatus {
-	state: "ready" | "loading" | "missing" | "error" | "external";
-	model_id?: string;
-	error?: string;
-	/** load progress 0..1 while state === "loading" (absent = unknown) */
-	progress?: number;
-}
-
-export interface AiSettingsResponse {
-	llmMode: string;
-	llmModel: string;
-	/** Requested local context window: 0 = app default (16k); else a
-	 * multiple of 1024 in 8192..=131072. Changing it reloads the model. */
-	llmCtxTokens: number;
-	extLlmCtxTokens: number;
-	sttModel: string;
-	/** "local" or "external": whether transcription uses the external endpoint */
-	sttMode: string;
-	sttEngine: string;
-	sttLanguage: string;
-	/** RNNoise over recordings before transcription (any engine) */
-	noiseReduction: boolean;
-	hfTokenSet: boolean;
-	hfTokenHint: string | null;
-	/** true when at least one stored secret lives in the plaintext DB
-	 * fallback instead of the OS keychain */
-	secretsPlaintext: boolean;
-	/** Download endpoint override (mirror); empty = env/default */
-	hfEndpoint: string;
-	extLlmBaseUrl: string;
-	extLlmApiKeySet: boolean;
-	extLlmApiKeyHint: string | null;
-	extLlmModel: string;
-	extSttBaseUrl: string;
-	extSttApiKeySet: boolean;
-	extSttApiKeyHint: string | null;
-	extSttModel: string;
 }
 
 /** Built-in Apple Speech engine (macOS 26+) capability + locale support. */
@@ -95,27 +40,18 @@ export function getFreeDiskSpaceApi(): Promise<number> {
 	return invokeCommand("getFreeDiskSpace");
 }
 
-export interface DownloadEvent {
-	kind: "progress" | "paused" | "done" | "cancelled" | "error" | "load-error";
-	pct?: number;
-	bytesPerSec?: number;
-	etaSecs?: number;
-	message?: string;
-}
-
 /**
- * Download a model. Progress events arrive on the returned channel:
- * {kind: "progress", pct} | {kind: "done"} | {kind: "cancelled"} |
- * {kind: "error", message} | {kind: "load-error", message} (download
- * succeeded but activating the model failed). A user cancel is not an
- * error. The same events are also broadcast app-wide (see the
- * $downloads store), which drives the UI.
+ * Download a model. Progress events arrive on the returned channel and
+ * are also broadcast app-wide (see the $downloads store), which drives
+ * the UI: progress / paused (with where it stopped) / done / cancelled /
+ * error / load-error (download succeeded but activating the model
+ * failed). A user cancel is not an error.
  */
 export function downloadModelApi(modelId: string): {
-	channel: Channel<DownloadEvent>;
+	channel: Channel<ModelDownloadEvent>;
 	invokePromise: Promise<void>;
 } {
-	const channel = new Channel<DownloadEvent>();
+	const channel = new Channel<ModelDownloadEvent>();
 	const invokePromise = invokeCommand("downloadModel", {
 		modelId,
 		onEvent: channel

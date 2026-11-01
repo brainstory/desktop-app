@@ -2,9 +2,9 @@
 import type { ChatMessage } from "./ChatMessage";
 import type { IdeaNote } from "./IdeaNote";
 
-export type IdeaItem = { id: string, title: string, result: string | null, type: string | null, created_at: string, creator_email: string | null, creator_name: string | null, is_unread: boolean | null, transcript: Array<ChatMessage> | null, shared_with_users: Array<string> | null, structured_result?: unknown, result_json?: unknown, 
+export type IdeaItem = { id: string, title: string, result?: string, type?: string, created_at: string, creator_email?: string, creator_name?: string, is_unread?: boolean, transcript?: Array<ChatMessage>, shared_with_users?: Array<string>, structured_result?: unknown, result_json?: unknown, 
 /**
  * the user's structured notes (see [`IdeaNote`]); absent when there
  * are none
  */
-notes: Array<IdeaNote> | null, parent_idea: IdeaItem | null, feedback: Array<IdeaItem> | null, };
+notes?: Array<IdeaNote>, parent_idea?: IdeaItem, feedback?: Array<IdeaItem>, };

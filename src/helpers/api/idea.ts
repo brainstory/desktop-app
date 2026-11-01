@@ -3,22 +3,7 @@ import { invokeCommand } from "@src/tauri/invoke";
 import { CHAT_TYPE, TOPICS, type ChatType } from "@src/const";
 import type { ChatMessage, IdeaDetail, IdeaFeedbackItem } from "@src/types";
 import type { GenerationResult } from "@helpers/chat";
-
-/** Raw idea as serialized by the backend (snake_case). */
-export interface RawIdea {
-	id: string;
-	title?: string;
-	type?: string;
-	created_at?: string;
-	creator_email?: string | null;
-	creator_name?: string | null;
-	is_unread?: boolean;
-	transcript?: ChatMessage[];
-	result?: string;
-	parent_idea?: RawIdea | null;
-	result_json?: unknown;
-	notes?: { id: string; text: string; created_at: string }[];
-}
+import type { IdeaItem } from "@src/tauri/generated/IdeaItem";
 
 import { getQueryParam } from "@helpers/helpers";
 import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
@@ -26,7 +11,7 @@ import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Get idea */
 export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
-	const response = await invokeCommand("getIdea", { ideaId: idea_id });
+	const response: IdeaItem = await invokeCommand("getIdea", { ideaId: idea_id });
 
 	const parentIdea = response?.parent_idea
 		? {
@@ -58,23 +43,6 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 				createdAt: note.created_at
 			})) ?? null
 	};
-}
-
-export interface RawFeedbackChild {
-	id: string;
-	type?: string;
-	title?: string;
-	result?: string;
-	created_at: string;
-	creator_email?: string;
-	creator_name?: string;
-	is_unread?: boolean;
-	transcript?: ChatMessage[];
-	// free-form JSON from the database: model-generated, imported or
-	// written by an older build - unknown shape, validate before mapping
-	// (older items may still carry the LLM's emoji `labels`; they are
-	// deliberately not mapped - reactions are chosen by people)
-	structured_result?: unknown;
 }
 
 /**
@@ -126,7 +94,9 @@ function feedbackCommentsOf(structuredResult: unknown): IdeaFeedbackItem["feedba
 
 /** Get idea's children (ideas that branched off from idea_id) */
 export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackItem[]> {
-	const response = await invokeCommand("getIdeaChildren", { ideaId: idea_id });
+	const response: { ideas: IdeaItem[] } = await invokeCommand("getIdeaChildren", {
+		ideaId: idea_id
+	});
 
 	return response?.ideas.map((idea) => {
 		return {

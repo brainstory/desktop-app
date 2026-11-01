@@ -39,6 +39,7 @@ const whisperBase: ModelStatus = {
 	downloaded: true,
 	active: true,
 	downloading: false,
+	paused: false,
 	filename: "ggml-base.en.bin"
 };
 

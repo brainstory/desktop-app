@@ -222,6 +222,19 @@ describe("groupTranscript", () => {
 	});
 });
 describe("handleStreamResult", () => {
+	// the backend always sends every GenerationResult field; fixtures
+	// start from a realistic full result and override what they test
+	const result = (overrides: Partial<import("./chat").GenerationResult> = {}) => ({
+		response: "",
+		request_message_tokens: 0,
+		request_word_count: 0,
+		structured_result: null,
+		truncated: false,
+		dropped_turns: 0,
+		idea_truncated: false,
+		...overrides
+	});
+
 	function makeStream() {
 		let resolve!: (v: import("./chat").GenerationResult) => void;
 		let reject!: (e: unknown) => void;
@@ -254,7 +267,7 @@ describe("handleStreamResult", () => {
 		emit({ type: "chunk", content: "hel" });
 		emit({ type: "chunk", content: "lo" });
 		emit({ type: "cumulative", content: "hello there" });
-		resolve({});
+		resolve(result());
 		await done;
 		expect(updates).toEqual(["hel", "hello", "hello there"]);
 	});
@@ -271,7 +284,7 @@ describe("handleStreamResult", () => {
 			}
 		);
 		emit({ type: "chunk", content: "partial" });
-		resolve({ response: "the real thing" });
+		resolve(result({ response: "the real thing" }));
 		await done;
 		expect(updates.at(-1)).toBe("the real thing");
 		expect(successes).toEqual(["the real thing"]);
@@ -287,7 +300,7 @@ describe("handleStreamResult", () => {
 				structured.push(s);
 			}
 		);
-		resolve({ response: "x", structured_result: { items: 1 } });
+		resolve(result({ response: "x", structured_result: { items: 1 } }));
 		await done;
 		expect(structured).toEqual([{ items: 1 }]);
 	});
@@ -306,7 +319,7 @@ describe("handleStreamResult", () => {
 		).then(() => {
 			settled = true;
 		});
-		resolve({ response: "x" });
+		resolve(result({ response: "x" }));
 		await new Promise((r) => setTimeout(r, 0));
 		// the (async) save is still running: the stream must not settle yet
 		expect(settled).toBe(false);
@@ -326,7 +339,7 @@ describe("handleStreamResult", () => {
 			},
 			(err) => errors.push(err)
 		);
-		resolve({ response: "x" });
+		resolve(result({ response: "x" }));
 		await done;
 		expect(errors).toHaveLength(1);
 	});
