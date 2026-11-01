@@ -128,9 +128,10 @@ pub struct AppState {
 	pub llm_load_cancel: std::sync::Arc<AtomicBool>,
 	pub stt_loading: AtomicBool,
 	/// LLM generations started but not finished: a model switch waits
-	/// for this to drain instead of vacating memory a live generation
-	/// still maps, and the quick-capture shortcut refuses to navigate a
-	/// generation into the void
+	/// for this to drain (bounded, then it aborts the switch) instead of
+	/// vacating memory a live generation still maps, and the
+	/// quick-capture shortcut refuses to navigate a generation into
+	/// the void
 	pub active_generations: std::sync::atomic::AtomicUsize,
 	/// when the tray icon is hidden, closing the window quits the app
 	/// (otherwise it would keep running with no way to reach it)

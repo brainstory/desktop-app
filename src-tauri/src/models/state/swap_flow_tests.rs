@@ -2,6 +2,7 @@ use super::{AppState, EngineSlot, EngineState, EngineStatus};
 use crate::StatusEvents;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 /// A stand-in engine: nothing whisper/llama-shaped, just the id (and,
 /// for the LLM-shaped tests, the ctx it was built at) the swap flow
@@ -118,6 +119,7 @@ fn a_fresh_load_installs_and_publishes_ready() {
 			true,
 			false,
 			|| true,
+			Duration::ZERO,
 		)
 		.expect("a fresh load installs");
 
@@ -188,6 +190,7 @@ fn a_load_completing_after_a_newer_save_installs_publishes_and_rolls_back_nothin
 				true,
 				false,
 				|| current_generation.load(Ordering::SeqCst) <= captured_generation,
+				Duration::ZERO,
 			)
 		})
 	};
@@ -251,6 +254,7 @@ fn an_already_resident_engine_is_not_reloaded() {
 		true,
 		false,
 		|| true,
+		Duration::ZERO,
 	);
 
 	result.expect("the wanted engine is already there");
@@ -300,6 +304,7 @@ fn a_failed_switch_rolls_back_and_reports_the_previous_model() {
 		true,
 		false,
 		|| true,
+		Duration::ZERO,
 	);
 
 	let err = result.expect_err("the switch failed");
@@ -342,6 +347,7 @@ fn a_failed_first_load_without_rollback_publishes_error() {
 		true,
 		false,
 		|| true,
+		Duration::ZERO,
 	);
 
 	let err = result.expect_err("the load failed");
@@ -406,6 +412,7 @@ fn a_same_model_load_at_the_same_resolved_ctx_does_not_rebuild() {
 		false,
 		true,
 		|| true,
+		super::loading::GENERATION_DRAIN_WAIT,
 	);
 
 	result.expect("the resident engine already matches");
@@ -467,6 +474,7 @@ fn a_ctx_only_save_rebuilds_the_same_model_at_the_new_window() {
 			false,
 			true,
 			|| true,
+			super::loading::GENERATION_DRAIN_WAIT,
 		)
 		.expect("the rebuild installs");
 
@@ -479,6 +487,95 @@ fn a_ctx_only_save_rebuilds_the_same_model_at_the_new_window() {
 		slot.installed().expect("rebuilt engine").built_ctx,
 		65536,
 		"the engine is resident at the new window"
+	);
+	assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
+}
+
+/// One LLM swap attempt against the fake slot, with the rollback
+/// panic-wired so a vacated-then-failed switch cannot pass silently.
+fn llm_swap(
+	state: &AppState,
+	spec: &super::super::catalog::ModelSpec,
+	slot: &FakeSlot,
+	status: &Mutex<EngineStatus>,
+	events: &RecordingEvents,
+	drain_wait: Duration,
+) -> Result<(), String> {
+	state.swap_engine(
+		events,
+		spec,
+		status,
+		crate::notify_llm,
+		slot,
+		model_id_of,
+		|engine| model_id_of(engine) == spec.id,
+		|| Ok(()),
+		|_path| {
+			Ok(FakeEngine {
+				id: spec.id.to_string(),
+				built_ctx: 0,
+			})
+		},
+		|_prev| panic!("neither a refused nor a successful switch rolls back"),
+		false,
+		true,
+		|| true,
+		drain_wait,
+	)
+}
+
+#[test]
+fn an_llm_switch_drains_generations_before_vacating() {
+	let (state, _dir) = temp_state("swap-generation-drain");
+	let spec = llm_spec("gemma-4-E4B");
+	// the install step checks the file still exists on disk
+	std::fs::write(state.model_path(&spec), b"stub").expect("model file");
+	let prev = llm_spec("gemma-4-E2B-qat");
+	let slot = FakeSlot::with(FakeEngine {
+		id: prev.id.to_string(),
+		built_ctx: 0,
+	});
+	let status = Mutex::new(EngineStatus::ready(Some(prev.id)));
+	let events = RecordingEvents::new();
+
+	// a generation is in flight: the switch waits (bounded), then
+	// aborts WITHOUT vacating the engine the generation still maps
+	state.active_generations.store(1, Ordering::SeqCst);
+	let err = llm_swap(
+		&state,
+		&spec,
+		&slot,
+		&status,
+		&events,
+		Duration::from_millis(150),
+	)
+	.expect_err("the drain wait must abort the switch");
+	assert!(err.contains("a generation is still running"), "{err}");
+	assert!(
+		model_id_of(&slot.installed().expect("engine kept")) == prev.id,
+		"the slot was not vacated under a live generation"
+	);
+	assert_eq!(
+		*status.lock().unwrap(),
+		EngineStatus::ready(Some(prev.id)),
+		"no loading blip: nothing was published"
+	);
+	assert!(events.snapshot().is_empty(), "{:?}", events.snapshot());
+
+	// the generation ends: the same switch now proceeds
+	state.active_generations.store(0, Ordering::SeqCst);
+	llm_swap(
+		&state,
+		&spec,
+		&slot,
+		&status,
+		&events,
+		super::loading::GENERATION_DRAIN_WAIT,
+	)
+	.expect("the switch proceeds once idle");
+	assert!(
+		model_id_of(&slot.installed().expect("new engine")) == spec.id,
+		"the new model is resident"
 	);
 	assert_eq!(*status.lock().unwrap(), EngineStatus::ready(Some(spec.id)));
 }

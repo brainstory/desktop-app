@@ -15,18 +15,30 @@ use crate::llm::LocalLlm;
 use crate::models::{find_model, ModelKind, ModelSpec};
 use crate::stt::SttEngine;
 
+/// How long an LLM switch waits for in-flight generations to drain
+/// before aborting, and how often it polls (the cadence
+/// `EngineSlotClaim::acquire` uses). A generation can legitimately run
+/// for minutes on slow hardware; past this bound the switch fails with
+/// a "try again" error instead of holding the loader thread (and the
+/// awaited activate command) any longer.
+pub(super) const GENERATION_DRAIN_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+const SLOT_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
 impl AppState {
 	/// Load the given LLM model file into the runtime. Blocking; call from a
 	/// background thread.
 	///
-	/// The previously loaded engine is dropped before the new file is
-	/// mmap'd (peak memory stays at one model). If the new file fails to
+	/// In-flight generations are drained first (bounded): the previously
+	/// loaded engine is dropped only after they finish and before the new
+	/// file is mmap'd, so peak memory stays at one model - a generation
+	/// that is still running when the wait expires aborts the switch with
+	/// an error and the current engine stays. If the new file fails to
 	/// load or was deleted mid-load, the previous model is loaded back from
 	/// disk, so a failed switch never leaves the app without a working LLM.
 	///
-	/// Err means the switch did NOT happen (a busy load, or the new model
-	/// failed and could not be rolled back to); callers must not persist
-	/// the new model as active on Err.
+	/// Err means the switch did NOT happen (a busy load, a live
+	/// generation, or the new model failed and could not be rolled back
+	/// to); callers must not persist the new model as active on Err.
 	pub fn load_llm(&self, app: &AppHandle, spec: &ModelSpec) -> Result<(), String> {
 		// An explicit activation acts on the newest committed settings at
 		// the moment it starts; a save landing while it loads makes this
@@ -154,6 +166,7 @@ impl AppState {
 			LLM_ROLLBACK_ON_SAME,
 			true,
 			|| self.ai_settings_generation.load(Ordering::SeqCst) <= generation,
+			GENERATION_DRAIN_WAIT,
 		)
 	}
 
@@ -173,6 +186,7 @@ impl AppState {
 		rollback_on_same: bool,
 		missing_when_vanished: bool,
 		fresh: impl Fn() -> bool,
+		generation_drain_wait: std::time::Duration,
 	) -> Result<(), String> {
 		// The wanted engine is already resident under this claim: nothing
 		// to load and nothing to publish - e.g. a same-model activation
@@ -187,6 +201,15 @@ impl AppState {
 			.is_some_and(|engine| unchanged(engine))
 		{
 			return Ok(());
+		}
+		// The swap vacates memory a live LLM generation still maps: drain
+		// `active_generations` first (bounded - a generation that refuses
+		// to finish aborts the switch). Before any status change, so a
+		// timeout leaves the resident engine, its ready status and the UI
+		// untouched. The STT swap passes a zero wait: transcriptions do
+		// not hold this counter.
+		if generation_drain_wait > std::time::Duration::ZERO {
+			self.wait_for_generations(generation_drain_wait)?;
 		}
 		{
 			let mut s = lock(status);
@@ -391,7 +414,28 @@ impl AppState {
 			STT_ROLLBACK_ON_SAME,
 			false,
 			|| self.ai_settings_generation.load(Ordering::SeqCst) <= generation,
+			std::time::Duration::ZERO,
 		)
+	}
+
+	/// Wait for in-flight LLM generations to finish, bounded by
+	/// `max_wait`. Err means one is still running: the caller must abort
+	/// the switch and leave the current engine resident. Blocking; same
+	/// poll/abort shape as `EngineSlotClaim::acquire`.
+	fn wait_for_generations(&self, max_wait: std::time::Duration) -> Result<(), String> {
+		let deadline = std::time::Instant::now() + max_wait;
+		loop {
+			if self.active_generations.load(Ordering::SeqCst) == 0 {
+				return Ok(());
+			}
+			if std::time::Instant::now() >= deadline {
+				log::warn!(
+					"a generation is still running after {max_wait:?}; aborting the model switch"
+				);
+				return Err("a generation is still running; try again when it finishes".into());
+			}
+			std::thread::sleep(SLOT_POLL);
+		}
 	}
 
 	/// Open a speech model on the engine its catalog entry names: a
