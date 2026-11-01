@@ -1,13 +1,21 @@
 name: Nightly build
 
-# Builds all three platforms on every push to main, and can be triggered
-# manually from any branch (gh workflow run nightly.yml --ref <branch>) to
-# test platform builds without local cross-compilation.
+# Builds all three platforms once a day (03:00 UTC, outside the
+# 06:00-09:00 Pacific window when GitHub's scheduled-workflow queue is
+# at its worst), and can be triggered manually from any branch
+# (gh workflow run nightly.yml --ref <branch>) to test platform builds
+# without local cross-compilation. A schedule instead of every push to
+# main: the full Rust stack used to compile up to seven times per push
+# (this workflow in parallel with ci.yml, and with release.yml on
+# version-bump pushes).
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
+# One nightly build at a time per ref; a manual run cancels the
+# scheduled one it supersedes (scheduled runs share the default-branch
+# ref, so they serialize with manual default-branch runs too).
 concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: true

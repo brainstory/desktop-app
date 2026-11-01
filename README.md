@@ -194,9 +194,10 @@ servers" here means *no Brainstory servers*, not "no network".
 ## Manual model tests
 
 These integration tests need real model files and never run in CI's unit-test job (the
-nightly workflow runs the engine smoke test and the special-token neutralization test
-with a tiny downloaded model, and the speech pipeline test with a cached Parakeet model
-and speech from each OS's own synthesizer):
+nightly workflow - a daily scheduled build of all three platforms, not a per-push job -
+runs the engine smoke test and the special-token neutralization test with a tiny
+downloaded model, and the speech pipeline test with a cached Parakeet model and speech
+from each OS's own synthesizer):
 
 ```sh
 # whisper + llama coexisting in one process, with a tiny (~1 MB) test llama:
