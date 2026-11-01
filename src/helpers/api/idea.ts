@@ -5,9 +5,22 @@ import type { ChatMessage, IdeaDetail, IdeaFeedbackItem } from "@src/types";
 import type { GenerationResult } from "@helpers/chat";
 import type { IdeaItem } from "@src/tauri/generated/IdeaItem";
 
+import { safeParse } from "valibot";
 import { getQueryParam } from "@helpers/helpers";
+import { FeedbackItemSchema, ResultSectionsSchema, StructuredFeedbackSchema } from "./schemas";
 import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
 import { QUERY_PARAMS } from "@src/tauri/commands";
+
+/** Validate a stored result document; null for absent or malformed. */
+function parseResultJson(blob: IdeaItem["result_json"], ideaId: string): IdeaDetail["resultJson"] {
+	if (blob === null || blob === undefined) return null;
+	const parsed = safeParse(ResultSectionsSchema, blob);
+	if (!parsed.success) {
+		console.warn(`idea ${ideaId}: stored result document is malformed; ignoring it`);
+		return null;
+	}
+	return parsed.output;
+}
 
 /** Get idea */
 export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
@@ -35,7 +48,9 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 		transcript: response?.transcript,
 		summary: response?.result,
 		parentIdea: parentIdea,
-		resultJson: (response?.result_json ?? null) as IdeaDetail["resultJson"],
+		// stored free JSON: validate on read, a malformed document reads
+		// as missing rather than crashing the idea page
+		resultJson: parseResultJson(response?.result_json, idea_id),
 		notes:
 			response?.notes?.map((note) => ({
 				id: note.id,
@@ -46,48 +61,31 @@ export async function getIdeaApi(idea_id: string): Promise<IdeaDetail> {
 }
 
 /**
- * Map a feedback idea's stored structured_result into display comments,
- * treating the stored JSON as unknown-typed. The contract (see the
- * feedback JSON prompt and the share import) is an object with a
- * feedback_items array of members carrying string oid_heading_text and
- * feedback_text. A non-object document or non-array container yields no
- * comments; unusable MEMBERS (null/number/object members, non-string
- * heading or empty/non-string text) are skipped one by one so valid
- * members beside them stay visible. A skipped member never renumbers
- * the survivors: itemIndex keeps the member's ORIGINAL position in the
- * stored array because comment reactions are keyed by it. An
- * absent/null oid_heading_text stays a comment (aggregation logs and
- * skips it); a non-string one is dropped instead of crashing
- * parseHeadingIndex at render time. A non-array matched_spans degrades
- * to [] - it is display-only.
+ * Map a feedback idea's stored structured_result into display comments.
+ * The stored JSON is unknown-typed, so the document shape and each
+ * member are validated with the schemas (see ./schemas); the schema
+ * rules ARE the contract: an object with a feedback_items array of
+ * members carrying string oid_heading_text and feedback_text.
  */
-function feedbackCommentsOf(structuredResult: unknown): IdeaFeedbackItem["feedbackComments"] {
-	if (typeof structuredResult !== "object" || structuredResult === null) return [];
-	if (Array.isArray(structuredResult)) return [];
-	const { feedback_items } = structuredResult as { feedback_items?: unknown };
-	if (!Array.isArray(feedback_items)) return [];
+function feedbackCommentsOf(
+	structuredResult: IdeaItem["structured_result"],
+	ideaId: string
+): IdeaFeedbackItem["feedbackComments"] {
+	if (structuredResult === null || structuredResult === undefined) return [];
+	const document = safeParse(StructuredFeedbackSchema, structuredResult);
+	if (!document.success) {
+		console.warn(`idea ${ideaId}: structured feedback document is malformed; ignoring it`);
+		return [];
+	}
 	const comments: IdeaFeedbackItem["feedbackComments"] = [];
-	feedback_items.forEach((member: unknown, itemIndex: number) => {
-		if (typeof member !== "object" || member === null || Array.isArray(member)) return;
-		const { oid_heading_text, feedback_text, matched_spans } = member as {
-			oid_heading_text?: unknown;
-			feedback_text?: unknown;
-			matched_spans?: unknown;
-		};
-		if (
-			oid_heading_text !== undefined &&
-			oid_heading_text !== null &&
-			typeof oid_heading_text !== "string"
-		) {
-			return;
-		}
-		if (typeof feedback_text !== "string" || feedback_text.trim() === "") return;
-		comments.push({
-			oidHeadingText: typeof oid_heading_text === "string" ? oid_heading_text : undefined,
-			matchedSpans: Array.isArray(matched_spans) ? matched_spans : [],
-			feedbackText: feedback_text,
-			itemIndex
-		});
+	document.output.feedback_items.forEach((member: unknown, itemIndex: number) => {
+		// unusable members are skipped one by one so valid members beside
+		// them stay visible; a skipped member never renumbers the
+		// survivors: itemIndex keeps the member's ORIGINAL position in
+		// the stored array because comment reactions are keyed by it
+		const parsed = safeParse(FeedbackItemSchema, member);
+		if (!parsed.success) return;
+		comments.push({ ...parsed.output, itemIndex });
 	});
 	return comments;
 }
@@ -110,7 +108,7 @@ export async function getIdeaChildrenApi(idea_id: string): Promise<IdeaFeedbackI
 			creatorEmail: idea?.creator_email,
 			creatorName: idea?.creator_name,
 			isUnread: idea?.is_unread,
-			feedbackComments: feedbackCommentsOf(idea?.structured_result),
+			feedbackComments: feedbackCommentsOf(idea?.structured_result, idea.id),
 			draftSummary: draftSummaryOf(idea?.result, idea?.transcript)
 		};
 	});

@@ -1,4 +1,6 @@
+import { safeParse } from "valibot";
 import { invokeCommand } from "@src/tauri/invoke";
+import { ImportShareResultSchema } from "./schemas";
 
 export interface ExportIdeaResult {
 	cancelled: boolean;
@@ -38,7 +40,18 @@ export function shortenHomePath(path: string): string {
 	return path.replace(/^(?:\/Users|C:\\Users)[/\\]?[^/\\]+/, "~");
 }
 
-/** Import a shared idea or feedback JSON file. Opens a file dialog. */
-export function importShareApi(): Promise<ImportShareResult> {
-	return invokeCommand("importShare");
+/** Import a shared idea or feedback JSON file. Opens a file dialog.
+ * The result's string fields pass through from the imported file, so it
+ * is validated on read; a malformed result reads as "cancelled" (no-op)
+ * instead of surfacing garbage in the snackbar. */
+export async function importShareApi(): Promise<ImportShareResult> {
+	const response = await invokeCommand("importShare");
+	const parsed = safeParse(ImportShareResultSchema, response);
+	if (!parsed.success) {
+		console.warn("share import returned a malformed result; treating it as cancelled", {
+			issues: parsed.issues
+		});
+		return { cancelled: true };
+	}
+	return parsed.output;
 }
