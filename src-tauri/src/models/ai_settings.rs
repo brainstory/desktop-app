@@ -5,7 +5,9 @@ use super::catalog::{find_model, ModelKind, LLM_MODELS, STT_MODELS};
 use crate::db::Db;
 use crate::keys::setting;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub enum LlmMode {
 	/// local llama.cpp engine
 	Local,
@@ -37,7 +39,9 @@ impl std::str::FromStr for LlmMode {
 
 /// Where transcription runs. Mirrors [`LlmMode`]: an external endpoint can
 /// be saved (and tested) without being used until this says so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub enum SttMode {
 	/// on this computer (Apple Speech or whisper, per `stt_engine`)
 	Local,
@@ -69,7 +73,9 @@ impl std::str::FromStr for SttMode {
 
 /// Local speech-to-text engine selection. (Named `SpeechEngine` because
 /// `SttEngine` is the loaded whisper engine itself.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub enum SpeechEngine {
 	/// Apple Speech on macOS 26+, whisper otherwise
 	Auto,
@@ -115,6 +121,89 @@ impl std::str::FromStr for SpeechEngine {
 			_ => Err(format!(
 				"invalid sttEngine '{s}' (expected auto, apple, or whisper)"
 			)),
+		}
+	}
+}
+
+/// get_ai_settings' response: the settings minus every secret value. A
+/// stored secret is reported as an "is one set" flag plus a masked
+/// tail-of-key hint, so the real value never travels back to the
+/// webview (saving absent/null keeps it, "" clears it).
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
+pub struct AiSettingsResponse {
+	pub llm_mode: LlmMode,
+	pub llm_model: String,
+	/// Requested local context window: 0 = app default; else a multiple
+	/// of 1024 in 8192..=131072. Changing it reloads the model.
+	pub llm_ctx_tokens: u32,
+	pub ext_llm_ctx_tokens: u32,
+	pub stt_model: String,
+	pub stt_mode: SttMode,
+	pub stt_engine: SpeechEngine,
+	pub stt_language: String,
+	/// RNNoise over recordings before transcription (any engine)
+	pub noise_reduction: bool,
+	pub hf_token_set: bool,
+	pub hf_token_hint: Option<String>,
+	/// true when at least one stored secret lives in the plaintext DB
+	/// fallback instead of the OS keychain
+	pub secrets_plaintext: bool,
+	/// Download endpoint override (mirror); empty = env/default
+	pub hf_endpoint: String,
+	pub ext_llm_base_url: String,
+	pub ext_llm_api_key_set: bool,
+	pub ext_llm_api_key_hint: Option<String>,
+	pub ext_llm_model: String,
+	pub ext_stt_base_url: String,
+	pub ext_stt_api_key_set: bool,
+	pub ext_stt_api_key_hint: Option<String>,
+	pub ext_stt_model: String,
+}
+
+impl AiSettings {
+	/// The IPC-safe projection of these settings (see
+	/// [`AiSettingsResponse`]): secrets masked, everything else verbatim.
+	pub fn ipc_response(&self) -> AiSettingsResponse {
+		let masked = |value: &str| -> (bool, Option<String>) {
+			if value.is_empty() {
+				return (false, None);
+			}
+			let tail: String = value
+				.chars()
+				.skip(value.chars().count().saturating_sub(4))
+				.collect();
+			(true, Some(format!("••••{tail}")))
+		};
+		let (hf_token_set, hf_token_hint) = masked(&self.hf_token);
+		let (ext_llm_api_key_set, ext_llm_api_key_hint) = masked(&self.ext_llm_api_key);
+		let (ext_stt_api_key_set, ext_stt_api_key_hint) = masked(&self.ext_stt_api_key);
+		AiSettingsResponse {
+			llm_mode: self.llm_mode,
+			llm_model: self.llm_model.clone(),
+			llm_ctx_tokens: self.llm_ctx_tokens,
+			ext_llm_ctx_tokens: self.ext_llm_ctx_tokens,
+			stt_model: self.stt_model.clone(),
+			stt_mode: self.stt_mode,
+			stt_engine: self.stt_engine,
+			stt_language: self.stt_language.clone(),
+			noise_reduction: self.noise_reduction,
+			hf_token_set,
+			hf_token_hint,
+			// Whether any stored secret is served from the plaintext DB
+			// fallback: computed once at load and cached with the settings
+			// (no extra keychain probes on every settings open).
+			secrets_plaintext: self.secrets_plaintext.iter().any(|p| *p),
+			hf_endpoint: self.hf_endpoint.clone(),
+			ext_llm_base_url: self.ext_llm_base_url.clone(),
+			ext_llm_api_key_set,
+			ext_llm_api_key_hint,
+			ext_llm_model: self.ext_llm_model.clone(),
+			ext_stt_base_url: self.ext_stt_base_url.clone(),
+			ext_stt_api_key_set,
+			ext_stt_api_key_hint,
+			ext_stt_model: self.ext_stt_model.clone(),
 		}
 	}
 }

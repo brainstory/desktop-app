@@ -35,8 +35,18 @@ pub const SHARE_VERSION: i64 = 1;
 /// `build_export_payload` turns this into JSON; `parse_share_payload`
 /// validates untrusted bytes back into it. Both are pure so the
 /// export -> import contract can be unit-tested end to end.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, ts_rs::TS)]
+// ts-only (the wire is built by build_export_payload): describes the
+// per-kind payload fields that travel under the envelope's "idea" /
+// "feedback" key, tagged the way the file's top-level "kind" names them
+#[ts(
+	export,
+	export_to = "../../src/tauri/generated/",
+	tag = "kind",
+	rename_all = "snake_case"
+)]
 pub enum SharePayload {
+	#[ts(rename_all = "snake_case")]
 	Idea {
 		share_id: String,
 		title: String,
@@ -44,11 +54,13 @@ pub enum SharePayload {
 		idea_type: IdeaType,
 		created_at: Option<String>,
 	},
+	#[ts(rename_all = "snake_case")]
 	Feedback {
 		target_share_id: String,
 		target_title: String,
 		title: String,
 		result: String,
+		#[ts(type = "unknown", optional)]
 		structured_result: Option<serde_json::Value>,
 		created_at: Option<String>,
 		/// the feedback author's own reactions on the target idea's
@@ -67,7 +79,8 @@ impl SharePayload {
 }
 
 /// The share's author plus its payload.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct ParsedShare {
 	pub author: String,
 	pub payload: SharePayload,

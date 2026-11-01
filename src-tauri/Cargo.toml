@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
+# generates the TypeScript types in src/tauri/generated from the IPC
+# structs (serde-compat keeps the wire format the single source of truth)
+ts-rs = { version = "12", features = ["serde-compat"] }
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"

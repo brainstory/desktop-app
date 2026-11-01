@@ -101,6 +101,31 @@ impl Sampling {
 /// OpenAI-compatible servers (Ollama, LM Studio).
 pub const DEFAULT_EXT_CTX: u32 = 8192;
 
+/// What a generation command returns. Every field is always present on
+/// the wire; `structured_result` is null unless the feedback second
+/// pass produced its document.
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
+pub struct GenerationResult {
+	pub response: String,
+	/// prompt token count (0 when the backend reports none, as with
+	/// external endpoints)
+	pub request_message_tokens: usize,
+	/// word count of the submitted conversation
+	pub request_word_count: usize,
+	/// the structured feedback document, when one was requested and built
+	#[ts(type = "unknown")]
+	pub structured_result: Option<serde_json::Value>,
+	/// the conversation was longer than the model's context: the oldest
+	/// turns were left out of the summary generation
+	pub truncated: bool,
+	/// how many transcript turns the summary fit dropped
+	pub dropped_turns: usize,
+	/// the feedback idea document was shortened for the context window
+	pub idea_truncated: bool,
+}
+
 /// Serializes the (fitted) transcript turns into the single summary
 /// message the model sees. Owned form (crosses into blocking tasks).
 pub type SummaryRender = Arc<dyn Fn(&[ChatMessage]) -> String + Send + Sync>;

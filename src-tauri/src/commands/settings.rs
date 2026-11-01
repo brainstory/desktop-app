@@ -3,6 +3,7 @@ use tauri::Manager;
 use crate::commands::{run_blocking, run_blocking_write};
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::keys;
+use crate::models::AiSettingsResponse;
 use crate::types::{
 	AppPresence, LogSettingsItem, NotificationSettingsItem, UpdatesSettings, UserSettings,
 	UserSettingsUser,
@@ -274,55 +275,13 @@ pub async fn save_user_settings(
 }
 
 #[tauri::command]
-pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<AiSettingsResponse, String> {
 	// AiSettings::load does keychain reads; keep them off the main thread
 	tauri::async_runtime::spawn_blocking(move || {
 		let state = app.state::<AppState>();
-		let s = state.ai_settings();
-		// Secrets are never echoed to the webview: the form gets a "is one
-		// stored" flag plus a masked hint; saving absent/null keeps the stored
-		// value and an empty string clears it.
-		let masked = |value: &str| -> (bool, Option<String>) {
-			if value.is_empty() {
-				return (false, None);
-			}
-			let tail: String = value
-				.chars()
-				.skip(value.chars().count().saturating_sub(4))
-				.collect();
-			(true, Some(format!("••••{tail}")))
-		};
-		let (hf_set, hf_hint) = masked(&s.hf_token);
-		let (llm_key_set, llm_key_hint) = masked(&s.ext_llm_api_key);
-		let (stt_key_set, stt_key_hint) = masked(&s.ext_stt_api_key);
-		// Whether any stored secret is currently served from the plaintext
-		// DB fallback: computed once at load and cached with the settings
-		// (no extra keychain probes on every settings open).
-		let secrets_plaintext = s.secrets_plaintext.iter().any(|p| *p);
-		// camelCase to match the frontend's field access
-		Ok(serde_json::json!({
-			"llmMode": s.llm_mode.as_str(),
-			"llmModel": s.llm_model,
-			"llmCtxTokens": s.llm_ctx_tokens,
-			"extLlmCtxTokens": s.ext_llm_ctx_tokens,
-			"sttModel": s.stt_model,
-			"sttMode": s.stt_mode.as_str(),
-			"sttEngine": s.stt_engine.as_str(),
-			"sttLanguage": s.stt_language,
-			"noiseReduction": s.noise_reduction,
-			"hfTokenSet": hf_set,
-			"hfTokenHint": hf_hint,
-			"secretsPlaintext": secrets_plaintext,
-			"hfEndpoint": s.hf_endpoint,
-			"extLlmBaseUrl": s.ext_llm_base_url,
-			"extLlmApiKeySet": llm_key_set,
-			"extLlmApiKeyHint": llm_key_hint,
-			"extLlmModel": s.ext_llm_model,
-			"extSttBaseUrl": s.ext_stt_base_url,
-			"extSttApiKeySet": stt_key_set,
-			"extSttApiKeyHint": stt_key_hint,
-			"extSttModel": s.ext_stt_model,
-		}))
+		// Secrets are never echoed to the webview: the response carries
+		// "is one stored" flags plus masked hints (see ipc_response).
+		Ok(state.ai_settings().ipc_response())
 	})
 	.await
 	.map_err(|e| format!("ai settings task failed: {e}"))?

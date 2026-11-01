@@ -142,6 +142,18 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo llvm-cov --lib --locked --summary-only --fail-under-lines 70
 
+      # the ts-rs export tests just regenerated src/tauri/generated; a
+      # diff means the committed TypeScript types no longer match the
+      # Rust definitions - run `pnpm types:generate` and commit
+      - name: Generated IPC types match the Rust structs
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: |
+          git diff --exit-code -- ../src/tauri/generated || {
+            echo "::error::src/tauri/generated is stale - run 'pnpm types:generate' and commit the result"
+            exit 1
+          }
+
   audit:
     name: Dependency audit (cargo + pnpm)
     runs-on: ubuntu-latest

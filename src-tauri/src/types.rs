@@ -4,7 +4,8 @@
 pub const ASK_A_DIFFERENT_QUESTION: &str = "Ask me a different question!";
 
 /// A single message in a conversation transcript.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct ChatMessage {
 	pub role: String,
 	pub content: String,
@@ -13,8 +14,11 @@ pub struct ChatMessage {
 /// What kind of idea a row is. Stored in `ideas.idea_type` and sent over
 /// IPC / in share files as the snake_case strings "original",
 /// "feedback", "continuation" and "daily_intent".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+	Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub enum IdeaType {
 	/// a brainstorm of the user's own (also every imported idea)
 	#[default]
@@ -42,16 +46,18 @@ impl IdeaType {
 /// idea's metadata (`notes`), and rendered into the writeup's trailing
 /// "## Notes" section on every change - so the Summary tab and exports
 /// keep carrying them, while the note list stays editable.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct IdeaNote {
 	pub id: String,
 	pub text: String,
 	pub created_at: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct IdeaItem {
 	pub id: String,
 	pub title: String,
@@ -71,8 +77,10 @@ pub struct IdeaItem {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub shared_with_users: Option<Vec<String>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(type = "unknown", optional)]
 	pub structured_result: Option<serde_json::Value>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[ts(type = "unknown", optional)]
 	pub result_json: Option<serde_json::Value>,
 	/// the user's structured notes (see [`IdeaNote`]); absent when there
 	/// are none
@@ -84,8 +92,9 @@ pub struct IdeaItem {
 	pub feedback: Option<Vec<IdeaItem>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct UserData {
 	pub name: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -93,8 +102,9 @@ pub struct UserData {
 	pub created_at: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct DailyStatus {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub log_id: Option<String>,
@@ -106,14 +116,16 @@ pub struct DailyStatus {
 	pub streak: i64,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogAnswerItem {
 	pub id: i64,
 	pub value: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogQuestionItem {
 	pub id: i64,
 	pub text: String,
@@ -122,8 +134,9 @@ pub struct LogQuestionItem {
 	pub value: Option<bool>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct LogSettingsItem {
 	pub id: i64,
 	pub label: String,
@@ -131,8 +144,9 @@ pub struct LogSettingsItem {
 	pub enabled: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct NotificationSettingsItem {
 	pub title: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -143,8 +157,9 @@ pub struct NotificationSettingsItem {
 	pub enabled: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct UserSettings {
 	pub user: UserSettingsUser,
 	pub log: Vec<LogSettingsItem>,
@@ -156,22 +171,25 @@ pub struct UserSettings {
 }
 
 /// Automatic update checks (the frontend updater banner reads this).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct UpdatesSettings {
 	pub enabled: bool,
 }
 
 /// Where the app shows up on the desktop (macOS).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct AppPresence {
 	pub dock: bool,
 	pub tray: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct UserSettingsUser {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
@@ -181,8 +199,9 @@ pub struct UserSettingsUser {
 
 /// Streaming event sent to the webview. Mirrors the websocket packet
 /// format of the original brainstory backend: {type, content, timestamp}.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct StreamEvent {
 	pub r#type: String,
 	pub content: String,
@@ -199,8 +218,9 @@ impl StreamEvent {
 	}
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct ModelStatus {
 	pub id: String,
 	pub label: String,

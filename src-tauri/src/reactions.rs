@@ -35,7 +35,8 @@ pub fn validate_reaction(emoji: &str) -> Result<(), String> {
 
 /// One section reaction as it travels in a feedback share file (and as it
 /// is handed to the database when such a file is imported).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct SharedSectionReaction {
 	/// index into the reacted idea's sections (`Db::result_to_json` order)
 	pub section_index: i64,
@@ -43,8 +44,9 @@ pub struct SharedSectionReaction {
 }
 
 /// A reaction on one section of an idea, as `get_reactions` returns it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct SectionReaction {
 	pub section_index: i64,
 	pub emoji: String,
@@ -57,8 +59,9 @@ pub struct SectionReaction {
 
 /// The idea author's reaction on one comment (structured feedback item)
 /// of a feedback child idea. Local only, never exported.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct CommentReaction {
 	pub feedback_idea_id: String,
 	/// index into that feedback idea's `structured_result.feedback_items`
@@ -68,7 +71,8 @@ pub struct CommentReaction {
 
 /// Everything shown on one idea's page: reactions on its sections and on
 /// the comments of its feedback children.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct IdeaReactions {
 	pub sections: Vec<SectionReaction>,
 	pub comments: Vec<CommentReaction>,

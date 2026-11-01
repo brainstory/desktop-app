@@ -21,6 +21,7 @@
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest",
+		"types:generate": "cargo test --manifest-path src-tauri/Cargo.toml --lib export_bindings",
 		"lint": "eslint --max-warnings 0 src scripts",
 		"lint:fix": "eslint src scripts --fix",
 		"typecheck": "tsc --noEmit && astro check",

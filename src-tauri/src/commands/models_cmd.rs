@@ -7,7 +7,7 @@ use tauri::{Emitter, Manager, State};
 
 use crate::models::{
 	download_model_file_with_pause, find_model, kv_bytes_per_token, model_url, part_path,
-	ModelKind, PauseEntry,
+	DownloadEvent, ModelKind, PauseEntry,
 };
 use crate::types::ModelStatus;
 use crate::AppState;
@@ -355,7 +355,7 @@ pub async fn download_model(
 	app: tauri::AppHandle,
 	state: State<'_, AppState>,
 	model_id: String,
-	on_event: Channel<serde_json::Value>,
+	on_event: Channel<DownloadEvent>,
 ) -> Result<(), String> {
 	// The pre-flight stats the hub cache, creates directories, checks
 	// free space and reads the settings (keychain + DB when cold) - all
@@ -464,7 +464,7 @@ pub async fn download_model(
 	// Every download event carries the label, so UI surfaces outside the
 	// settings page (the sidebar progress pill, the chat setup notice)
 	// can name the model without fetching the catalog.
-	let spec_label = spec.label;
+	let spec_label = spec.label.to_string();
 
 	// re-vet the resolved endpoint (setting, mirror or HF_ENDPOINT env)
 	// before a byte moves or the token is attached
@@ -503,18 +503,27 @@ pub async fn download_model(
 					.lock()
 					.unwrap_or_else(|e| e.into_inner())
 					.insert(model_id.clone(), pct);
-				let _ = on_event.send(json!({ "kind": "progress", "pct": pct }));
-				let mut payload = json!({
-					"modelId": model_id,
-					"label": spec_label,
-					"kind": "progress",
-					"pct": pct
+				let (bytes_per_sec, eta_secs) = match rate.update(pct) {
+					Some((bytes_per_sec, eta_secs)) => (Some(bytes_per_sec), Some(eta_secs)),
+					None => (None, None),
+				};
+				let _ = on_event.send(DownloadEvent::Progress {
+					model_id: None,
+					label: None,
+					pct,
+					bytes_per_sec,
+					eta_secs,
 				});
-				if let Some((bytes_per_sec, eta_secs)) = rate.update(pct) {
-					payload["bytesPerSec"] = json!(bytes_per_sec);
-					payload["etaSecs"] = json!(eta_secs);
-				}
-				let _ = app_handle.emit("model-download", payload);
+				let _ = app_handle.emit(
+					"model-download",
+					DownloadEvent::Progress {
+						model_id: Some(model_id.clone()),
+						label: Some(spec_label.clone()),
+						pct,
+						bytes_per_sec,
+						eta_secs,
+					},
+				);
 			};
 			// The pending files one after another (companions are small;
 			// the main file dominates), progress reported over their
@@ -567,10 +576,16 @@ pub async fn download_model(
 
 			match result {
 				Ok(()) => {
-					let _ = on_event.send(json!({ "kind": "done" }));
+					let _ = on_event.send(DownloadEvent::Done {
+						model_id: None,
+						label: None,
+					});
 					let _ = app_handle.emit(
 						"model-download",
-						json!({ "modelId": model_id, "label": spec_label, "kind": "done" }),
+						DownloadEvent::Done {
+							model_id: Some(model_id.clone()),
+							label: Some(spec_label.clone()),
+						},
 					);
 					// The download itself is finished: the model stops
 					// reporting "downloading" while its engine spins up,
@@ -595,11 +610,10 @@ pub async fn download_model(
 										// move without waiting for another event
 										let _ = app_handle.emit(
 											"model-download",
-											json!({
-												"modelId": model_id,
-												"label": spec_label,
-												"kind": "activated"
-											}),
+											DownloadEvent::Activated {
+												model_id: model_id.clone(),
+												label: spec_label.clone(),
+											},
 										);
 										Some(generation)
 									}
@@ -633,15 +647,18 @@ pub async fn download_model(
 						.unwrap_or_else(|e| Err(format!("load task failed: {e}")));
 						if let Err(e) = load_result {
 							log::error!("auto-load of {spec_id} failed: {e}");
-							let _ = on_event.send(json!({ "kind": "load-error", "message": e }));
+							let _ = on_event.send(DownloadEvent::LoadError {
+								model_id: None,
+								label: None,
+								message: e.clone(),
+							});
 							let _ = app_handle.emit(
 								"model-download",
-								json!({
-									"modelId": model_id,
-									"label": spec_label,
-									"kind": "load-error",
-									"message": e
-								}),
+								DownloadEvent::LoadError {
+									model_id: Some(model_id.clone()),
+									label: Some(spec_label.clone()),
+									message: e,
+								},
 							);
 						}
 					}
@@ -655,18 +672,6 @@ pub async fn download_model(
 					let is_cancelled = e == crate::models::DOWNLOAD_CANCELLED;
 					let is_paused = e == crate::models::DOWNLOAD_PAUSED;
 					let state = app_handle.state::<AppState>();
-					let kind = if is_cancelled {
-						"cancelled"
-					} else if is_paused {
-						"paused"
-					} else {
-						"error"
-					};
-					let mut payload = json!({
-						"modelId": model_id,
-						"label": spec_label,
-						"kind": kind
-					});
 					if is_cancelled {
 						// a cancel discards the staged prefix: no paused
 						// state may linger for a retry to resume from
@@ -675,7 +680,17 @@ pub async fn download_model(
 							.lock()
 							.unwrap_or_else(|e| e.into_inner())
 							.remove(&model_id);
-						let _ = on_event.send(json!({ "kind": "cancelled" }));
+						let _ = on_event.send(DownloadEvent::Cancelled {
+							model_id: None,
+							label: None,
+						});
+						let _ = app_handle.emit(
+							"model-download",
+							DownloadEvent::Cancelled {
+								model_id: Some(model_id.clone()),
+								label: Some(spec_label.clone()),
+							},
+						);
 					} else if is_paused {
 						// record where the transfer stopped; unregister
 						// keeps paused entries, so Resume (and a fresh page
@@ -696,13 +711,34 @@ pub async fn download_model(
 							entry.paused = true;
 						}
 						drop(pauses);
-						payload["pct"] = json!(pct);
-						let _ = on_event.send(json!({ "kind": "paused", "pct": pct }));
+						let _ = on_event.send(DownloadEvent::Paused {
+							model_id: None,
+							label: None,
+							pct,
+						});
+						let _ = app_handle.emit(
+							"model-download",
+							DownloadEvent::Paused {
+								model_id: Some(model_id.clone()),
+								label: Some(spec_label.clone()),
+								pct,
+							},
+						);
 					} else {
-						payload["message"] = json!(e);
-						let _ = on_event.send(json!({ "kind": "error", "message": e }));
+						let _ = on_event.send(DownloadEvent::Error {
+							model_id: None,
+							label: None,
+							message: e.clone(),
+						});
+						let _ = app_handle.emit(
+							"model-download",
+							DownloadEvent::Error {
+								model_id: Some(model_id.clone()),
+								label: Some(spec_label.clone()),
+								message: e,
+							},
+						);
 					}
-					let _ = app_handle.emit("model-download", payload);
 				}
 			}
 		}

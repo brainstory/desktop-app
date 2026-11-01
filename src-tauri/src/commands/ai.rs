@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::llm::ExternalLlm;
+use crate::llm::{ExternalLlm, GenerationResult};
 use crate::models::{AiSettings, AppState};
 use crate::prompts::{ChatType, PromptRequest};
 use crate::stt;
@@ -350,7 +350,7 @@ async fn generate_and_respond<F>(
 	second_pass: bool,
 	// on_event returns false when the channel is dead: cancel generation
 	on_event: F,
-) -> Result<serde_json::Value, String>
+) -> Result<GenerationResult, String>
 where
 	F: Fn(EmitKind, &str) -> bool + Send + Sync + Clone + 'static,
 {
@@ -493,17 +493,17 @@ where
 		}
 	}
 
-	Ok(serde_json::json!({
-		"response": output,
-		"request_message_tokens": prompt_tokens,
-		"request_word_count": word_count,
-		"structured_result": structured,
+	Ok(GenerationResult {
+		response: output,
+		request_message_tokens: prompt_tokens,
+		request_word_count: word_count,
+		structured_result: structured,
 		// how many transcript turns the summary fit had to leave out
-		"truncated": dropped_turns > 0,
-		"dropped_turns": dropped_turns,
+		truncated: dropped_turns > 0,
+		dropped_turns,
 		// the feedback idea document was shortened for the context window
-		"idea_truncated": idea_capped,
-	}))
+		idea_truncated: idea_capped,
+	})
 }
 
 #[tauri::command]
@@ -518,7 +518,7 @@ pub async fn generate_response(
 	react_to_author: Option<String>,
 	react_to_is_current_user: Option<bool>,
 	structured_feedback: Option<bool>,
-) -> Result<serde_json::Value, String> {
+) -> Result<GenerationResult, String> {
 	let request = GenerateParams {
 		messages,
 		summarize: summarize.unwrap_or(false),
@@ -550,7 +550,7 @@ pub async fn generate_streaming_response(
 	react_to_is_current_user: Option<bool>,
 	structured_feedback: Option<bool>,
 	on_event: tauri::ipc::Channel<StreamEvent>,
-) -> Result<serde_json::Value, String> {
+) -> Result<GenerationResult, String> {
 	let request = GenerateParams {
 		messages,
 		summarize: summarize.unwrap_or(false),
@@ -585,7 +585,7 @@ pub async fn regenerate_result(
 	app: tauri::AppHandle,
 	idea_id: String,
 	on_event: tauri::ipc::Channel<StreamEvent>,
-) -> Result<serde_json::Value, String> {
+) -> Result<GenerationResult, String> {
 	app.state::<AppState>().refuse_if_shutting_down()?;
 	let (request, previous_result, settings) = {
 		let app = app.clone();
@@ -658,11 +658,8 @@ pub async fn regenerate_result(
 	)
 	.await?;
 
-	let new_result = outcome["response"]
-		.as_str()
-		.ok_or("regeneration returned no text")?
-		.to_string();
-	let structured = outcome["structured_result"].clone();
+	let new_result = outcome.response.clone();
+	let structured = outcome.structured_result.clone();
 	{
 		let id = idea_id.clone();
 		let new_result = new_result.clone();
@@ -671,11 +668,7 @@ pub async fn regenerate_result(
 			app.clone(),
 			"store regenerated result",
 			move |state| {
-				let structured_arg = if structured.is_null() {
-					None
-				} else {
-					Some(&structured)
-				};
+				let structured_arg = structured.as_ref();
 				state
 					.db
 					.update_idea(&id, None, Some(&new_result), None, structured_arg)

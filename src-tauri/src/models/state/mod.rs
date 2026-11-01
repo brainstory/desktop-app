@@ -33,8 +33,9 @@ pub struct Runtime {
 
 /// Lifecycle of one engine slot. Serialized lowercase so the existing
 /// frontend contract (`state === "ready"` etc.) is unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub enum EngineState {
 	Ready,
 	Loading,
@@ -43,7 +44,8 @@ pub enum EngineState {
 	External,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/tauri/generated/")]
 pub struct EngineStatus {
 	pub state: EngineState,
 	#[serde(skip_serializing_if = "Option::is_none")]
