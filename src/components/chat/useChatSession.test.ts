@@ -393,7 +393,7 @@ describe("useChatSession", () => {
 		});
 
 		it("does not offer revision while the coach is generating", async () => {
-			mockInvoke({ generate_response: () => new Promise(() => {}) });
+			mockInvoke({ generate_streaming_response: () => new Promise(() => {}) });
 			const { result } = renderSession([q1, a1]);
 			act(() => {
 				void result.current.handleGetResponse();

@@ -272,7 +272,6 @@ pub fn run() {
 			commands::data::submit_survey,
 			commands::data::get_notifications,
 			commands::ai::transcribe,
-			commands::ai::generate_response,
 			commands::ai::generate_streaming_response,
 			commands::ai::regenerate_result,
 			commands::ai::cancel_generation,

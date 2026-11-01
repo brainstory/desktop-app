@@ -149,6 +149,14 @@ function DashboardSectionInner() {
 						    file off the wire entirely (CSS alone downloaded
 						    both and hid one) */}
 						<picture>
+							{/* webp first (a fraction of the png bytes); the png
+							    stays the fallback for older engines */}
+							<source
+								media="(max-width: 639px)"
+								srcSet="/comic2-2.webp"
+								type="image/webp"
+							/>
+							<source srcSet="/comic1-4.webp" type="image/webp" />
 							<source media="(max-width: 639px)" srcSet="/comic2-2.png" />
 							<img
 								src="/comic1-4.png"

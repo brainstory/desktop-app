@@ -163,7 +163,6 @@ test("check mode reports missing, stale and extra vendored files", (t) => {
 	assert.deepEqual(checkVendoredAssets(dir), [
 		"public/icons.svg is missing",
 		"public/vendor missing: rive/rive.wasm",
-		"public/vendor missing: rive/rive_fallback.wasm",
 		"public/vendor unexpected: previous.txt"
 	]);
 	vendorAssets(dir);

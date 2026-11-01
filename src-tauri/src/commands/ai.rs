@@ -508,37 +508,6 @@ where
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn generate_response(
-	app: AppHandle,
-	state: State<'_, AppState>,
-	messages: Vec<ChatMessage>,
-	summarize: Option<bool>,
-	chat_type: Option<String>,
-	react_to: Option<String>,
-	react_to_author: Option<String>,
-	react_to_is_current_user: Option<bool>,
-	structured_feedback: Option<bool>,
-) -> Result<GenerationResult, String> {
-	let request = GenerateParams {
-		messages,
-		summarize: summarize.unwrap_or(false),
-		chat_type,
-		react_to,
-		react_to_author,
-		react_to_is_current_user: react_to_is_current_user.unwrap_or(false),
-		structured_feedback: structured_feedback.unwrap_or(false),
-	}
-	.into_request();
-	validate_messages(&request.messages)?;
-	state.refuse_if_shutting_down()?;
-	// one blocking-pool snapshot (keychain + DB when the cache is cold)
-	// feeds the whole generation - the way transcribe_wav already reads
-	let settings = read_ai_settings(&app).await?;
-	generate_and_respond(&state, &settings, &request, false, |_, _| true).await
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn generate_streaming_response(
 	app: AppHandle,
 	state: State<'_, AppState>,

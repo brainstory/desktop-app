@@ -186,14 +186,14 @@ function vendorRive(riveOut) {
 		throw new Error("could not resolve @rive-app/canvas - run pnpm install first");
 	}
 	mkdirSync(riveOut, { recursive: true });
-	for (const file of ["rive.wasm", "rive_fallback.wasm"]) {
-		const src = join(riveCanvasDir, file);
-		if (!existsSync(src)) {
-			throw new Error(`rive wasm missing from package: ${src}`);
-		}
-		cpSync(src, join(riveOut, file));
+	// only the modern engine: the webview is always a known WASM host,
+	// so the separate ~2.1 MB fallback build is not vendored
+	const src = join(riveCanvasDir, "rive.wasm");
+	if (!existsSync(src)) {
+		throw new Error(`rive wasm missing from package: ${src}`);
 	}
-	return "rive: rive.wasm + rive_fallback.wasm";
+	cpSync(src, join(riveOut, "rive.wasm"));
+	return "rive: rive.wasm";
 }
 
 /**

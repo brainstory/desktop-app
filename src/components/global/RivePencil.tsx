@@ -3,9 +3,12 @@ import { useRive, RuntimeLoader } from "@rive-app/react-canvas";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
 
 // Load the Rive WASM engine from the app bundle instead of the unpkg CDN
-// (see scripts/vendor-assets.mjs) so animations work fully offline.
+// (see scripts/vendor-assets.mjs) so animations work fully offline. The
+// fallback slot points at the same engine: the webview is always a known
+// modern WebAssembly host, so shipping the separate 2.1 MB
+// non-SIMD/threads fallback build bought nothing.
 RuntimeLoader.setWasmUrl("/vendor/rive/rive.wasm");
-RuntimeLoader.setWasmFallbackUrl("/vendor/rive/rive_fallback.wasm");
+RuntimeLoader.setWasmFallbackUrl("/vendor/rive/rive.wasm");
 
 /**
  * The pencil mascot. Both animations mount ONCE and stay mounted; the

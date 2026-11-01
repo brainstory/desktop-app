@@ -61,24 +61,6 @@ export function generateResponseStreamApi({
 	};
 }
 
-/** @returns response text */
-export async function generateResponseApi({
-	messages,
-	reactTo = null,
-	reactToAuthor = null,
-	reactToIsCurrentUser = false,
-	chatType = null
-}: GenerateOptions): Promise<string> {
-	const response = await invokeCommand("generateResponse", {
-		messages,
-		reactTo,
-		reactToAuthor,
-		reactToIsCurrentUser,
-		chatType
-	});
-	return response?.response ?? "";
-}
-
 /**
  * Cancel the in-flight generation. The backend checks the token between
  * chunks, so the invoke rejects with "generation cancelled" shortly after.

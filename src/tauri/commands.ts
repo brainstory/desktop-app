@@ -55,8 +55,6 @@ export const COMMANDS = {
 	submitSurvey: "submit_survey",
 	getNotifications: "get_notifications",
 	transcribe: "transcribe",
-	/** one-shot generation: kept for tests, the UI streams via generateStreamingResponse */
-	generateResponse: "generate_response",
 	generateStreamingResponse: "generate_streaming_response",
 	cancelGeneration: "cancel_generation",
 	cancelTranscription: "cancel_transcription",
@@ -174,7 +172,6 @@ interface CommandSignatures {
 	sendTestNotification: { args: undefined; result: void };
 	// raw WAV bytes, not an args object
 	transcribe: { args: Uint8Array; result: { transcript: string } };
-	generateResponse: { args: GenerateArgs; result: GenerationResult };
 	generateStreamingResponse: {
 		args: GenerateArgs & { summarize: boolean; onEvent: Channel };
 		result: GenerationResult;
