@@ -2,7 +2,7 @@ use serde_json::json;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
-use crate::commands::run_blocking;
+use crate::commands::{run_blocking, run_blocking_write};
 use crate::reactions::{is_valid_reaction, SharedSectionReaction};
 use crate::types::{IdeaType, ASK_A_DIFFERENT_QUESTION};
 use crate::AppState;
@@ -597,9 +597,8 @@ pub async fn import_share(app: tauri::AppHandle) -> Result<serde_json::Value, St
 		})
 		.await?
 	};
-	// the import itself is one blocking DB transaction
-	run_blocking("import share", move || {
-		let state = app.state::<AppState>();
+	// the import itself is one blocking DB transaction (write-guarded)
+	run_blocking_write(app, "import share", move |state| {
 		import_parsed(&state.db, parsed)
 	})
 	.await

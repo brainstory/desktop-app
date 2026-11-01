@@ -1,6 +1,6 @@
 use tauri::Manager;
 
-use crate::commands::run_blocking;
+use crate::commands::{run_blocking, run_blocking_write};
 use crate::db::DEFAULT_LOG_QUESTIONS;
 use crate::keys;
 use crate::types::{
@@ -251,8 +251,7 @@ pub async fn save_user_settings(
 	enabled_log_question_ids: Option<Vec<i64>>,
 	notifications: Option<Vec<serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("save user settings", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "save user settings", move |state| {
 		// Side effects only run once the whole form is persisted.
 		let update = persist_user_settings(
 			&state.db,
@@ -332,8 +331,9 @@ pub async fn get_ai_settings(app: tauri::AppHandle) -> Result<serde_json::Value,
 #[tauri::command]
 pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> Result<(), String> {
 	// keychain reads/writes plus the settings-row write are blocking work
-	tauri::async_runtime::spawn_blocking(move || {
-		let state = app.state::<AppState>();
+	// (and write-guarded: a save must refuse once shutdown began)
+	let work_app = app.clone();
+	run_blocking_write(app, "save ai settings", move |state| {
 		// A stored API key must not silently start traveling to a different
 		// server because this call changed the URL setting: make the person
 		// confirm first (so a compromised webview cannot repoint a saved
@@ -341,7 +341,7 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 		let current = state.ai_settings();
 		if let Some(target) = crate::models::secret_host_change(&current, &ai) {
 			use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-			let confirmed = app
+			let confirmed = work_app
 				.dialog()
 				.message(format!(
 					"Your saved API key would be sent to {target}.\n\nSave this change?"
@@ -366,11 +366,10 @@ pub async fn save_ai_settings(app: tauri::AppHandle, ai: serde_json::Value) -> R
 		// lock. The returned generation is the pair of the settings
 		// snapshot: the loader treats any later generation as newer and
 		// lets that run own the outcome.
-		crate::spawn_model_loader(app.clone(), settings, generation);
+		crate::spawn_model_loader(work_app.clone(), settings, generation);
 		Ok(())
 	})
 	.await
-	.map_err(|e| format!("save ai settings task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -487,10 +486,8 @@ pub async fn set_app_presence(app: tauri::AppHandle, dock: bool, tray: bool) -> 
 	// both keys in ONE transaction, off the main thread (a sync command
 	// blocks the UI for the whole busy_timeout behind a big write)
 	let handle = app.app_handle().clone();
-	let db_handle = handle.clone();
-	run_blocking("set app presence", move || {
-		use tauri::Manager;
-		db_handle.state::<crate::AppState>().db.set_settings(&[
+	run_blocking_write(handle.clone(), "set app presence", move |state| {
+		state.db.set_settings(&[
 			(
 				keys::setting::SHOW_IN_DOCK,
 				if dock {
@@ -522,10 +519,12 @@ pub async fn set_app_presence(app: tauri::AppHandle, dock: bool, tray: bool) -> 
 /// shortcut exists.
 #[tauri::command]
 pub async fn set_quick_capture_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-	run_blocking("set quick capture", move || {
+	let work_app = app.clone();
+	run_blocking_write(app, "set quick capture", move |state| {
 		use tauri_plugin_global_shortcut::GlobalShortcutExt;
 		if enabled {
-			app.global_shortcut()
+			work_app
+				.global_shortcut()
 				.register(crate::QUICK_CAPTURE_SHORTCUT)
 				.map_err(|e| {
 					format!(
@@ -534,11 +533,10 @@ pub async fn set_quick_capture_enabled(app: tauri::AppHandle, enabled: bool) -> 
 				})?;
 		} else {
 			// releasing something that is not registered is a no-op
-			let _ = app
+			let _ = work_app
 				.global_shortcut()
 				.unregister(crate::QUICK_CAPTURE_SHORTCUT);
 		}
-		let state = app.state::<AppState>();
 		state.db.set_setting(
 			keys::setting::QUICK_CAPTURE_ENABLED,
 			if enabled { "true" } else { "false" },
@@ -577,9 +575,8 @@ pub async fn get_updates_enabled(app: tauri::AppHandle) -> Result<bool, String> 
 /// Opt in to / out of automatic update checks.
 #[tauri::command]
 pub async fn set_updates_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-	run_blocking("set updates enabled", move || {
-		let state = app.state::<AppState>();
-		store_updates_enabled(&state, enabled)
+	run_blocking_write(app, "set updates enabled", move |state| {
+		store_updates_enabled(state, enabled)
 	})
 	.await
 }

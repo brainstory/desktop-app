@@ -973,16 +973,17 @@ pub async fn activate_model(app: tauri::AppHandle, model_id: String) -> Result<(
 	.await
 	.map_err(|e| format!("activation task failed: {e}"))??;
 
-	let app_handle = app.clone();
+	let work_app = app.clone();
 	// Await the load so the invoke result tells the caller whether the
 	// engine actually activated: load_llm/load_stt refuse concurrent
 	// loads ("a model is already loading") and fail on bad files, and
-	// fire-and-forgetting made the UI believe activation succeeded.
-	let outcome = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-		let state = app_handle.state::<AppState>();
+	// fire-and-forgetting made the UI believe activation succeeded. The
+	// whole body is write-guarded: the activation persists the settings
+	// row at the end.
+	crate::commands::run_blocking_write(app, "activation", move |state| {
 		match match spec.kind {
-			ModelKind::Llm => state.load_llm(&app_handle, &spec),
-			ModelKind::Stt => state.load_stt(&app_handle, &spec),
+			ModelKind::Llm => state.load_llm(&work_app, &spec),
+			ModelKind::Stt => state.load_stt(&work_app, &spec),
 		} {
 			Ok(()) => {
 				// the settings row is only updated once the engine actually
@@ -1001,8 +1002,6 @@ pub async fn activate_model(app: tauri::AppHandle, model_id: String) -> Result<(
 		}
 	})
 	.await
-	.map_err(|e| format!("activation task failed: {e}"))?;
-	outcome
 }
 
 #[cfg(test)]

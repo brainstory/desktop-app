@@ -1,6 +1,6 @@
 use tauri::Manager;
 
-use crate::commands::run_blocking;
+use crate::commands::{run_blocking, run_blocking_write};
 use crate::db::{DEFAULT_LOG_QUESTIONS, SURVEY_QUESTIONS};
 use crate::types::{DailyStatus, IdeaItem, IdeaType, LogAnswerItem, LogQuestionItem, UserData};
 use crate::AppState;
@@ -213,8 +213,7 @@ pub async fn get_input_device(app: tauri::AppHandle) -> Result<serde_json::Value
 pub async fn set_input_device(app: tauri::AppHandle, name: Option<String>) -> Result<(), String> {
 	let name = name.unwrap_or_default();
 	let stored = name.clone();
-	run_blocking("set input device", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "set input device", move |state| {
 		state
 			.db
 			.set_setting(crate::keys::setting::INPUT_DEVICE, &stored)
@@ -254,9 +253,7 @@ pub async fn set_idea_result(
 	if result.is_empty() {
 		return Err("the summary cannot be empty".into());
 	}
-	run_blocking("set idea result", move || {
-		let state = app.state::<AppState>();
-		state.refuse_if_shutting_down()?;
+	run_blocking_write(app, "set idea result", move |state| {
 		ensure_within("result", &result, MAX_RESULT_BYTES)?;
 		state
 			.db
@@ -276,8 +273,7 @@ pub async fn link_idea_log(
 	if log_id.trim().is_empty() {
 		return Err("log id must not be empty".into());
 	}
-	run_blocking("link idea log", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "link idea log", move |state| {
 		state.db.link_idea_log(&idea_id, &log_id)
 	})
 	.await
@@ -326,10 +322,7 @@ pub async fn create_idea(
 	idea_type: Option<IdeaType>,
 	log_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("create idea", move || {
-		let state = app.state::<AppState>();
-		state.refuse_if_shutting_down()?;
-		state.refuse_if_shutting_down()?;
+	run_blocking_write(app, "create idea", move |state| {
 		let id = uuid::Uuid::new_v4().to_string();
 		let idea_type = idea_type.unwrap_or_default();
 		let result = result.unwrap_or_default();
@@ -384,10 +377,7 @@ pub async fn update_idea(
 	transcript: Option<Vec<crate::types::ChatMessage>>,
 	structured_result: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("update idea", move || {
-		let state = app.state::<AppState>();
-		state.refuse_if_shutting_down()?;
-		state.refuse_if_shutting_down()?;
+	run_blocking_write(app, "update idea", move |state| {
 		if let Some(r) = &result {
 			ensure_within("result", r, MAX_RESULT_BYTES)?;
 		}
@@ -428,8 +418,7 @@ pub async fn mark_idea_read(
 	app: tauri::AppHandle,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("mark idea read", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "mark idea read", move |state| {
 		state.db.mark_idea_read(&idea_id)?;
 		Ok(serde_json::json!({ "id": idea_id }))
 	})
@@ -441,8 +430,7 @@ pub async fn delete_idea(
 	app: tauri::AppHandle,
 	idea_id: String,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("delete idea", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "delete idea", move |state| {
 		let deleted = state.db.delete_idea(&idea_id)?;
 		Ok(serde_json::json!({ "id": idea_id, "deleted": deleted }))
 	})
@@ -459,8 +447,7 @@ pub async fn add_idea_note(
 	idea_id: String,
 	note: String,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("add idea note", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "add idea note", move |state| {
 		let trimmed = note.trim();
 		if trimmed.is_empty() {
 			return Err("the note is empty".into());
@@ -480,8 +467,7 @@ pub async fn update_idea_note(
 	note_id: String,
 	note: String,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("update idea note", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "update idea note", move |state| {
 		let trimmed = note.trim();
 		if trimmed.is_empty() {
 			return Err("the note is empty".into());
@@ -500,8 +486,7 @@ pub async fn delete_idea_note(
 	idea_id: String,
 	note_id: String,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("delete idea note", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "delete idea note", move |state| {
 		state.db.delete_idea_note(&idea_id, &note_id)?;
 		Ok(serde_json::json!({ "id": idea_id, "noteId": note_id }))
 	})
@@ -536,8 +521,7 @@ pub async fn submit_log(
 	app: tauri::AppHandle,
 	log: Vec<LogAnswerItem>,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("submit log", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "submit log", move |state| {
 		ensure_within(
 			"log",
 			&serde_json::to_string(&log).unwrap_or_default(),
@@ -563,8 +547,7 @@ pub async fn submit_survey(
 	survey: serde_json::Value,
 	idea_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
-	run_blocking("submit survey", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "submit survey", move |state| {
 		ensure_within("survey", &survey.to_string(), MAX_SURVEY_BYTES)?;
 		let id = uuid::Uuid::new_v4().to_string();
 		state.db.insert_survey(&id, idea_id.as_deref(), &survey)?;

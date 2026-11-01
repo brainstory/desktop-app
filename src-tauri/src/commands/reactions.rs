@@ -1,6 +1,6 @@
 use tauri::Manager;
 
-use crate::commands::run_blocking;
+use crate::commands::{run_blocking, run_blocking_write};
 use crate::reactions::IdeaReactions;
 use crate::AppState;
 
@@ -28,8 +28,7 @@ pub async fn toggle_section_reaction(
 	section_index: i64,
 	emoji: String,
 ) -> Result<bool, String> {
-	run_blocking("toggle section reaction", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "toggle section reaction", move |state| {
 		state
 			.db
 			.toggle_section_reaction(&idea_id, section_index, &emoji)
@@ -47,8 +46,7 @@ pub async fn toggle_comment_reaction(
 	item_index: i64,
 	emoji: String,
 ) -> Result<bool, String> {
-	run_blocking("toggle comment reaction", move || {
-		let state = app.state::<AppState>();
+	run_blocking_write(app, "toggle comment reaction", move |state| {
 		state
 			.db
 			.toggle_comment_reaction(&feedback_idea_id, item_index, &emoji)

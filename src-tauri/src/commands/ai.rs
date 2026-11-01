@@ -640,15 +640,13 @@ pub async fn regenerate_result(
 		.map_err(|e| format!("load idea task failed: {e}"))?
 	}?;
 
-	// keep one level of undo before overwriting
+	// keep one level of undo before overwriting (a write: guarded)
 	if previous_result.is_some() {
-		let app = app.clone();
 		let id = idea_id.clone();
-		tauri::async_runtime::spawn_blocking(move || {
-			app.state::<AppState>().db.stash_previous_result(&id)
+		crate::commands::run_blocking_write(app.clone(), "stash previous result", move |state| {
+			state.db.stash_previous_result(&id)
 		})
-		.await
-		.map_err(|e| e.to_string())??;
+		.await?;
 	}
 
 	let sender = on_event;
@@ -671,26 +669,24 @@ pub async fn regenerate_result(
 		.to_string();
 	let structured = outcome["structured_result"].clone();
 	{
-		let app = app.clone();
 		let id = idea_id.clone();
 		let new_result = new_result.clone();
 		let structured = structured.clone();
-		tauri::async_runtime::spawn_blocking(move || {
-			let structured_arg = if structured.is_null() {
-				None
-			} else {
-				Some(&structured)
-			};
-			app.state::<AppState>().db.update_idea(
-				&id,
-				None,
-				Some(&new_result),
-				None,
-				structured_arg,
-			)
-		})
-		.await
-		.map_err(|e| e.to_string())??;
+		crate::commands::run_blocking_write(
+			app.clone(),
+			"store regenerated result",
+			move |state| {
+				let structured_arg = if structured.is_null() {
+					None
+				} else {
+					Some(&structured)
+				};
+				state
+					.db
+					.update_idea(&id, None, Some(&new_result), None, structured_arg)
+			},
+		)
+		.await?;
 	}
 	Ok(outcome)
 }
