@@ -36,6 +36,8 @@ pub mod setting {
 	pub const AI_STT_ENGINE: &str = "ai_stt_engine";
 	pub const AI_STT_MODE: &str = "ai_stt_mode";
 	pub const AI_STT_LANGUAGE: &str = "ai_stt_language";
+	/// RNNoise on recordings before transcription ("true"; unset = off)
+	pub const AI_NOISE_REDUCTION: &str = "ai_noise_reduction";
 	/// HuggingFace download endpoint override (mirror); empty = env/default
 	pub const HF_ENDPOINT: &str = "hf_endpoint";
 	pub const EXT_LLM_BASE_URL: &str = "ext_llm_base_url";
@@ -83,6 +85,7 @@ mod tests {
 			setting::AI_STT_ENGINE,
 			setting::AI_STT_MODE,
 			setting::AI_STT_LANGUAGE,
+			setting::AI_NOISE_REDUCTION,
 			setting::HF_ENDPOINT,
 			setting::EXT_LLM_BASE_URL,
 			setting::EXT_LLM_MODEL,

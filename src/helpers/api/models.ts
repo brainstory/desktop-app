@@ -48,6 +48,8 @@ export interface AiSettingsResponse {
 	sttMode: string;
 	sttEngine: string;
 	sttLanguage: string;
+	/** RNNoise over recordings before transcription (any engine) */
+	noiseReduction: boolean;
 	hfTokenSet: boolean;
 	hfTokenHint: string | null;
 	/** true when at least one stored secret lives in the plaintext DB

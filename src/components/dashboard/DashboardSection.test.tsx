@@ -29,6 +29,7 @@ const emptyAiSettings = {
 	sttModel: "s",
 	sttEngine: "whisper",
 	sttLanguage: "en-US",
+	noiseReduction: false,
 	hfTokenSet: false,
 	hfTokenHint: null,
 	secretsPlaintext: false,

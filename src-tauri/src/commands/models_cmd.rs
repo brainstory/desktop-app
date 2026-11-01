@@ -60,7 +60,7 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 							ModelKind::Stt => "stt",
 						}
 						.to_string(),
-						size_bytes: spec.size_bytes,
+						size_bytes: spec.total_size_bytes(),
 						downloaded: state.is_model_downloaded(spec),
 						// "active" describes the engine actually running: a
 						// model that is selected-but-not-downloaded must not
@@ -359,16 +359,28 @@ pub async fn download_model(
 	// hub-cache file whose size disagrees with the pinned spec is NOT
 	// "already downloaded": a truncated or foreign copy must be
 	// re-downloadable.
-	let existing = state.resolve_model_file(&spec);
-	let app_copy = state.model_path(&spec);
-	let size_matches = existing.as_ref().is_some_and(|path| {
-		std::fs::metadata(path)
-			.map(|m| m.len() == spec.size_bytes)
-			.unwrap_or(false)
-	});
-	if existing.is_some() && (existing == Some(app_copy) || size_matches) {
+	// Every file of the model (the main file, plus the companions of a
+	// multi-file ONNX model) that is not already present. A file counts
+	// as present when it is the app copy or a hub-cache file of the
+	// pinned size; a truncated or foreign copy must be re-downloadable.
+	let present = |file: &crate::models::ModelSpec| {
+		let existing = state.resolve_model_file(file);
+		let size_matches = existing.as_ref().is_some_and(|path| {
+			std::fs::metadata(path)
+				.map(|m| m.len() == file.size_bytes)
+				.unwrap_or(false)
+		});
+		existing.is_some() && (existing == Some(state.model_path(file)) || size_matches)
+	};
+	let pending: Vec<crate::models::ModelSpec> = spec
+		.all_file_specs()
+		.into_iter()
+		.filter(|file| !present(file))
+		.collect();
+	if pending.is_empty() {
 		return Err("model is already downloaded".into());
 	}
+	let pending_bytes: u64 = pending.iter().map(|f| f.size_bytes).sum();
 
 	// Downloads land directly in the hub cache as content-addressed
 	// blobs (blobs/<pinned sha256>), the same layout other HF tooling
@@ -384,13 +396,17 @@ pub async fn download_model(
 	// Pre-flight free space: a staged `.part` that can grow past the
 	// volume's limit fails late (ENOSPC mid-transfer). Refuse up front
 	// when even the model plus a 64 MiB scratch margin does not fit,
-	// crediting whatever the leftover `.part` already holds.
+	// crediting whatever the leftover `.part` files already hold.
 	{
-		let existing_part_len = std::fs::metadata(part_path(&dest))
-			.map(|meta| meta.len())
-			.unwrap_or(0);
-		let needed = spec
-			.size_bytes
+		let existing_part_len: u64 = pending
+			.iter()
+			.map(|file| {
+				std::fs::metadata(part_path(&crate::models::hf_blob_path(&cache, file)))
+					.map(|meta| meta.len())
+					.unwrap_or(0)
+			})
+			.sum();
+		let needed = pending_bytes
 			.saturating_sub(existing_part_len)
 			.saturating_add(64 * 1024 * 1024);
 		let available = fs4::available_space(&cache).map_err(|e| e.to_string())?;
@@ -423,7 +439,6 @@ pub async fn download_model(
 			"invalid HuggingFace download endpoint (Settings, AI Models, mirror - or HF_ENDPOINT): {e}"
 		)
 	})?;
-	let url = model_url(&spec, &hf_endpoint);
 	let hf_token = state.ai_settings().hf_token;
 
 	tauri::async_runtime::spawn(async move {
@@ -435,7 +450,7 @@ pub async fn download_model(
 			// derive from pct × the catalog size, the delta between
 			// reports gives the rate (lightly smoothed so the label does
 			// not flicker).
-			let mut rate = ProgressRate::new(spec.size_bytes);
+			let mut rate = ProgressRate::new(pending_bytes);
 			let mut on_progress = |pct: f64| {
 				state
 					.download_progress
@@ -455,44 +470,57 @@ pub async fn download_model(
 				}
 				let _ = app_handle.emit("model-download", payload);
 			};
-			let result = download_model_file_with_pause(
-				&url,
-				&dest,
-				spec.size_bytes,
-				spec.sha256,
-				&hf_token,
-				&cancel,
-				&pause,
-				&mut on_progress,
-			)
-			.await;
+			// The pending files one after another (companions are small;
+			// the main file dominates), progress reported over their
+			// combined size. A pause or cancel stops at the current file;
+			// a resume skips the files that already landed.
+			let mut result: Result<(), String> = Ok(());
+			let mut done_bytes: u64 = 0;
+			for file in &pending {
+				let url = model_url(file, &hf_endpoint);
+				let file_dest = crate::models::hf_blob_path(&cache, file);
+				let base = done_bytes;
+				let mut on_file_progress = |pct: f64| {
+					let bytes = base as f64 + (pct / 100.0) * file.size_bytes as f64;
+					on_progress((bytes / pending_bytes.max(1) as f64 * 100.0).min(100.0));
+				};
+				result = download_model_file_with_pause(
+					&url,
+					&file_dest,
+					file.size_bytes,
+					file.sha256,
+					&hf_token,
+					&cancel,
+					&pause,
+					&mut on_file_progress,
+				)
+				.await;
+				if result.is_err() {
+					break;
+				}
+				// publish the blob under snapshots/<main sha>/<file> so
+				// discovery (ours and other HF tools) sees it, every file
+				// of the model in one folder. A publish failure means the
+				// model is NOT resolvable (resolve_model_file reads
+				// snapshots), so it must be reported as a failure instead
+				// of "done": the UI would otherwise show a downloaded
+				// model the app cannot load.
+				if let Err(e) = crate::models::materialize_snapshot_in(&cache, file, spec.sha256) {
+					log::error!(
+						"could not create the cache snapshot for {} ({}): {e}",
+						spec.id,
+						file.filename
+					);
+					result = Err(format!(
+						"the model file was downloaded but could not be published to the cache: {e}"
+					));
+					break;
+				}
+				done_bytes += file.size_bytes;
+			}
 
 			match result {
 				Ok(()) => {
-					// publish the blob under snapshots/<sha>/<file> so
-					// discovery (ours and other HF tools) sees it. A publish
-					// failure means the model is NOT resolvable
-					// (resolve_model_file reads snapshots), so it must be
-					// reported as a failure instead of "done": the UI would
-					// otherwise show a downloaded model the app cannot load.
-					if let Err(e) = crate::models::materialize_snapshot(&cache, &spec) {
-						log::error!("could not create the cache snapshot for {}: {e}", spec.id);
-						let message = format!(
-							"the model file was downloaded but could not be published to the cache: {e}"
-						);
-						let _ =
-							on_event.send(json!({ "kind": "error", "message": message.clone() }));
-						let _ = app_handle.emit(
-							"model-download",
-							json!({
-								"modelId": model_id,
-								"label": spec_label,
-								"kind": "error",
-								"message": message
-							}),
-						);
-						return;
-					}
 					let _ = on_event.send(json!({ "kind": "done" }));
 					let _ = app_handle.emit(
 						"model-download",
@@ -713,8 +741,29 @@ fn delete_model_events(
 	// claim: the delete can wait a long time for an in-flight model load,
 	// and hashing multi-GB files while holding that claim would extend
 	// the window in which every other engine operation is blocked.
-	let verified = crate::models::verified_snapshot_files(caches, spec);
-	let delete_files = || delete_model_files(state, spec, caches, &verified);
+	// every file of the model: the main file and, for a multi-file
+	// (ONNX) model, its companions
+	let files = spec.all_file_specs();
+	let verified: Vec<crate::models::VerifiedSnapshotFiles> = files
+		.iter()
+		.map(|file| crate::models::verified_snapshot_files(caches, file))
+		.collect();
+	let delete_files = || {
+		let mut deleted = false;
+		for (file, verified) in files.iter().zip(&verified) {
+			deleted |= delete_model_files(state, file, caches, verified)?;
+		}
+		if spec.companions.is_empty() {
+			return Ok(deleted);
+		}
+		// the link folder a multi-file model may have been loaded from
+		// (see AppState::model_dir_for) holds only links: drop it
+		let link_dir = state.models_dir().join(spec.id);
+		if link_dir.is_dir() {
+			std::fs::remove_dir_all(&link_dir).map_err(|e| e.to_string())?;
+		}
+		Ok(deleted)
+	};
 	let blocked = || delete_blocked(state, spec);
 	state.delete_model_kind_events(events, spec, &blocked, &delete_files, slot_wait)
 }
@@ -1450,5 +1499,62 @@ mod tests {
 		let err = super::delete_model_events(&state, &events, spec, &[], Duration::from_secs(5))
 			.expect_err("nothing is left to delete");
 		assert_eq!(err, "model file not found");
+	}
+	/// A multi-file model goes as a whole: every file's snapshot link
+	/// and blob, published side by side by the download, plus the link
+	/// folder a scattered layout was loaded from.
+	#[test]
+	fn delete_removes_every_file_of_a_multi_file_model() {
+		use std::time::Duration;
+		let (state, _dir) = temp_state("del-multi");
+		let cache = tempfile::tempdir().expect("cache");
+		let spec = crate::models::find_model("parakeet-tdt-0.6b-v3", crate::models::ModelKind::Stt)
+			.expect("catalog model");
+		let files = spec.all_file_specs();
+		for file in &files {
+			let blob = crate::models::hf_blob_path(cache.path(), file);
+			std::fs::create_dir_all(blob.parent().unwrap()).expect("blobs dir");
+			std::fs::write(&blob, file.filename).expect("blob");
+			crate::models::materialize_snapshot_in(cache.path(), file, spec.sha256)
+				.expect("publish");
+		}
+		// every file resolves from the one snapshot folder of the main file
+		let folder = crate::models::hf_cache_model_path(cache.path(), spec)
+			.and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+			.expect("main file published");
+		for file in &files {
+			assert_eq!(
+				crate::models::hf_cache_model_path(cache.path(), file),
+				Some(folder.join(file.filename))
+			);
+		}
+		std::fs::create_dir_all(state.models_dir().join(spec.id)).expect("link folder");
+		let events = RecordingEvents(std::sync::Mutex::new(Vec::new()));
+
+		super::delete_model_events(
+			&state,
+			&events,
+			spec,
+			&[cache.path().to_path_buf()],
+			Duration::from_secs(5),
+		)
+		.expect("the delete succeeds");
+
+		for file in &files {
+			assert!(
+				crate::models::hf_cache_model_path(cache.path(), file).is_none(),
+				"{} is unpublished",
+				file.filename
+			);
+			assert!(
+				!crate::models::hf_blob_path(cache.path(), file).exists(),
+				"{}'s blob is removed",
+				file.filename
+			);
+		}
+		assert!(
+			!state.models_dir().join(spec.id).exists(),
+			"link folder removed"
+		);
 	}
 }

@@ -20,6 +20,7 @@ const aiSettings = {
 	sttMode: "local",
 	sttEngine: "whisper",
 	sttLanguage: "en-US",
+	noiseReduction: false,
 	hfTokenSet: false,
 	hfTokenHint: null as string | null,
 	secretsPlaintext: false,
@@ -613,7 +614,7 @@ describe("AiModelsCard", () => {
 		const hint = screen.getByText(/Apple Speech needs macOS 26 or newer/);
 		expect(hint).toBeVisible();
 		expect(apple).toHaveAccessibleDescription(hint.textContent);
-		expect(screen.getByRole("button", { name: "Whisper" })).toHaveAttribute(
+		expect(screen.getByRole("button", { name: "Local model" })).toHaveAttribute(
 			"aria-pressed",
 			"true"
 		);

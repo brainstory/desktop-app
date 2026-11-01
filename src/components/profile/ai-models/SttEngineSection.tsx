@@ -39,11 +39,15 @@ const WHISPER_LOCALES = [
 /** Mirrors the backend: `*-en` whisper builds always transcribe English. */
 const isMultilingualWhisper = (modelId: string): boolean => !modelId.endsWith("-en");
 
+/** Parakeet (ONNX) models detect the spoken language themselves: the
+ * language setting does not reach them. */
+const isParakeet = (modelId: string): boolean => modelId.startsWith("parakeet-");
+
 const ENGINE_OPTIONS = [
 	{
 		id: "auto",
 		label: "Auto",
-		hint: "Apple Speech where available, whisper otherwise"
+		hint: "Apple Speech where available, the downloaded speech model otherwise"
 	},
 	{
 		id: "apple",
@@ -51,9 +55,11 @@ const ENGINE_OPTIONS = [
 		hint: "Built into macOS 26+ - no model download"
 	},
 	{
+		// the stored id stays "whisper" (settings compatibility); it means
+		// whichever downloaded model is selected below, Whisper or Parakeet
 		id: "whisper",
-		label: "Whisper",
-		hint: "Downloaded whisper model"
+		label: "Local model",
+		hint: "A downloaded Whisper or Parakeet model"
 	}
 ] as const;
 
@@ -125,8 +131,10 @@ export function SttEngineSection({
 	// still serves as its fallback.
 	const whisperModel = models.find((m) => m.id === settings.sttModel);
 	const whisperFallback = appleActive && !!whisperModel?.downloaded;
+	const parakeetModel = !!whisperModel && isParakeet(whisperModel.id);
 	const multilingualWhisper =
 		!!whisperModel &&
+		!parakeetModel &&
 		(!appleActive || whisperFallback) &&
 		isMultilingualWhisper(whisperModel.id);
 	const showLanguage = appleActive || multilingualWhisper;
@@ -141,15 +149,19 @@ export function SttEngineSection({
 	// promise to match the user's language, so say so clearly
 	const englishOnlyMismatch =
 		whisperModel?.downloaded &&
+		!parakeetModel &&
 		!isMultilingualWhisper(whisperModel.id) &&
 		!currentLanguage.toLowerCase().startsWith("en");
 	const languageHelp = !appleActive
 		? `${whisperModel?.label ?? "The whisper model"} transcribes in this language.`
 		: multilingualWhisper
 			? "Used by Apple Speech and by the whisper fallback. Missing languages are fetched by macOS on first use."
-			: whisperFallback
-				? "Used by Apple Speech; missing languages are fetched by macOS on first use. The English-only whisper fallback always transcribes English."
-				: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
+			: whisperFallback && parakeetModel
+				? "Used by Apple Speech; missing languages are fetched by macOS on first use. The Parakeet fallback detects the language itself."
+				: whisperFallback
+					? "Used by Apple Speech; missing languages are fetched by macOS on first use. The English-only whisper fallback always transcribes English."
+					: "Used by Apple Speech. Missing languages are fetched by macOS on first use.";
+	const noiseLabelId = useId();
 
 	return (
 		<section aria-labelledby={headingId} className="flex flex-col gap-3">
@@ -213,8 +225,8 @@ export function SttEngineSection({
 				{settings.sttEngine === "auto" && (
 					<p className="text-sm text-stone-500">
 						{appleStt?.available
-							? "Apple Speech is available on this Mac and will be used; whisper is the automatic fallback."
-							: "Auto uses whisper for transcription here."}
+							? "Apple Speech is available on this Mac and will be used; the downloaded speech model is the automatic fallback."
+							: "Auto uses the downloaded speech model for transcription here."}
 					</p>
 				)}
 				{appleActive && appleStt && !appleStt.authorized && (
@@ -250,6 +262,12 @@ export function SttEngineSection({
 						<p className="text-sm text-stone-500 mt-1">{languageHelp}</p>
 					</div>
 				)}
+				{parakeetModel && !appleActive && (
+					<p className="text-sm text-stone-500">
+						{whisperModel?.label} detects the spoken language by itself (English and 24
+						European languages).
+					</p>
+				)}
 				{englishOnlyMismatch && (
 					<p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 max-w-md">
 						The selected whisper model is English-only: your speech is transcribed as
@@ -257,11 +275,28 @@ export function SttEngineSection({
 						(Whisper base or small) below to transcribe {currentLanguage}.
 					</p>
 				)}
+				<div className="flex flex-col gap-1 mt-1">
+					<div className="flex gap-2 items-center">
+						<span className="text-sm text-stone-900 font-medium" id={noiseLabelId}>
+							Reduce background noise
+						</span>
+						<OnOffToggleButton
+							aria-labelledby={noiseLabelId}
+							checked={!!settings.noiseReduction}
+							onToggle={() => save({ noiseReduction: !settings.noiseReduction })}
+						/>
+					</div>
+					<p className="text-sm text-stone-500 max-w-md">
+						Cleans fans, traffic or café chatter out of a recording on this computer
+						before it is transcribed (any engine). Best left off in a quiet room, where
+						it can cost a little accuracy.
+					</p>
+				</div>
 			</div>
 			{/* model rows carry their own boxes; the list is a plain
 			    section like the LLM one */}
 			<h4 className="font-semibold text-stone-700 text-sm">
-				{appleActive ? "Whisper model (fallback)" : "Whisper model"}
+				{appleActive ? "Speech model (fallback)" : "Speech model"}
 			</h4>
 			<ModelList models={models} {...modelList} />
 			<details

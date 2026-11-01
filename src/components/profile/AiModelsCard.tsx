@@ -178,7 +178,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				<div className="mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm">
 					<p className="font-semibold mb-1">No speech-to-text model is set up yet</p>
 					<p>
-						Download a whisper model below (or set up an external STT endpoint in the
+						Download a speech model below (or set up an external STT endpoint in the
 						speech-to-text section) to talk out loud. Until then you can still use
 						Brainstory by typing your responses with the text button in a session.
 					</p>

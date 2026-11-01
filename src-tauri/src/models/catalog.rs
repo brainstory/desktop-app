@@ -22,13 +22,75 @@ pub struct ModelSpec {
 	/// Pinned sha256 of the downloadable file, verified after download so a
 	/// corrupted or silently-replaced upstream file can't brick a model slot.
 	pub sha256: &'static str,
+	/// Further files of the same repo the model needs beside `filename`
+	/// (an ONNX model's decoder, preprocessor and vocabulary). Each is
+	/// pinned like the main file, downloaded with it, and published next
+	/// to it in the main file's snapshot directory, so the whole model
+	/// loads from one folder. Empty for single-file (GGUF/ggml) models.
+	pub companions: &'static [CompanionFile],
+}
+
+/// One extra pinned file of a multi-file model (see
+/// [`ModelSpec::companions`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompanionFile {
+	pub filename: &'static str,
+	pub size_bytes: u64,
+	pub sha256: &'static str,
+}
+
+impl ModelSpec {
+	/// The model's companion files as specs of their own (same id, repo
+	/// and kind; their own file, size and pin), so the download, cache
+	/// and delete paths handle them with the same code as main files.
+	pub fn companion_specs(&self) -> Vec<ModelSpec> {
+		self.companions
+			.iter()
+			.map(|c| ModelSpec {
+				filename: c.filename,
+				size_bytes: c.size_bytes,
+				sha256: c.sha256,
+				companions: &[],
+				..self.clone()
+			})
+			.collect()
+	}
+
+	/// Every file of the model: the main file, then its companions.
+	pub fn all_file_specs(&self) -> Vec<ModelSpec> {
+		let mut specs = vec![self.clone()];
+		specs.extend(self.companion_specs());
+		specs
+	}
+
+	/// Download size of the whole model, companions included.
+	pub fn total_size_bytes(&self) -> u64 {
+		self.size_bytes + self.companions.iter().map(|c| c.size_bytes).sum::<u64>()
+	}
+
+	/// Which local engine runs this speech model: an ONNX model is a
+	/// Parakeet (ONNX Runtime) build, everything else whisper.cpp ggml.
+	pub fn stt_backend(&self) -> SttBackend {
+		if self.filename.ends_with(".onnx") {
+			SttBackend::Parakeet
+		} else {
+			SttBackend::Whisper
+		}
+	}
+}
+
+/// The local engine family a speech-to-text catalog model runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SttBackend {
+	Whisper,
+	Parakeet,
 }
 
 /// Known-good open model builds. The local LLM catalog defaults to Google's
 /// Gemma 4 edge models (QAT quantized, runnable on integrated GPUs / Apple
-/// Silicon) with MiniCPM5 as a smaller alternative; STT ships whisper.cpp
-/// ggml builds.
-pub const LLM_MODELS: [ModelSpec; 3] = [
+/// Silicon) with Qwen3.5 4B and MiniCPM5 as alternatives; STT ships
+/// whisper.cpp ggml builds and NVIDIA's Parakeet TDT v3 (int8 ONNX).
+pub const LLM_MODELS: [ModelSpec; 4] = [
 	ModelSpec {
 		id: "gemma-4-E2B-qat",
 		kind: ModelKind::Llm,
@@ -38,6 +100,7 @@ pub const LLM_MODELS: [ModelSpec; 3] = [
 		filename: "gemma-4-E2B_q4_0-it.gguf",
 		size_bytes: 3_349_516_256,
 		sha256: "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "gemma-4-E4B",
@@ -48,6 +111,18 @@ pub const LLM_MODELS: [ModelSpec; 3] = [
 		filename: "gemma-4-E4B_q4_0-it.gguf",
 		size_bytes: 5_154_941_280,
 		sha256: "676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee",
+		companions: &[],
+	},
+	ModelSpec {
+		id: "qwen35-4b",
+		kind: ModelKind::Llm,
+		label: "Qwen3.5 4B",
+		description: "Alibaba Qwen3.5 4B (~2.7 GB): strong reasoning for its size and a smaller download than Gemma 4 E2B.",
+		repo: "unsloth/Qwen3.5-4B-GGUF",
+		filename: "Qwen3.5-4B-Q4_K_M.gguf",
+		size_bytes: 2_740_937_888,
+		sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "minicpm5-2b",
@@ -58,10 +133,11 @@ pub const LLM_MODELS: [ModelSpec; 3] = [
 		filename: "MiniCPM5-2B-Q4_K_M.gguf",
 		size_bytes: 1_561_318_368,
 		sha256: "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd",
+		companions: &[],
 	},
 ];
 
-pub const STT_MODELS: [ModelSpec; 6] = [
+pub const STT_MODELS: [ModelSpec; 7] = [
 	ModelSpec {
 		id: "whisper-base",
 		kind: ModelKind::Stt,
@@ -71,6 +147,7 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-base.bin",
 		size_bytes: 147_951_465,
 		sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "whisper-small",
@@ -81,6 +158,7 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-small.bin",
 		size_bytes: 487_601_967,
 		sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "whisper-base-en",
@@ -91,6 +169,7 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-base.en.bin",
 		size_bytes: 147_964_211,
 		sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "whisper-small-en",
@@ -101,6 +180,7 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-small.en.bin",
 		size_bytes: 487_614_201,
 		sha256: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "whisper-tiny-en",
@@ -111,6 +191,7 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-tiny.en.bin",
 		size_bytes: 77_704_715,
 		sha256: "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+		companions: &[],
 	},
 	ModelSpec {
 		id: "whisper-large-v3-turbo",
@@ -121,6 +202,34 @@ pub const STT_MODELS: [ModelSpec; 6] = [
 		filename: "ggml-large-v3-turbo.bin",
 		size_bytes: 1_624_555_275,
 		sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+		companions: &[],
+	},
+	ModelSpec {
+		id: "parakeet-tdt-0.6b-v3",
+		kind: ModelKind::Stt,
+		label: "Parakeet TDT v3 (25 languages)",
+		description: "NVIDIA Parakeet (~670 MB): more accurate than Whisper large v3 turbo and several times faster. English and 24 European languages.",
+		repo: "istupakov/parakeet-tdt-0.6b-v3-onnx",
+		filename: "encoder-model.int8.onnx",
+		size_bytes: 652_183_999,
+		sha256: "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+		companions: &[
+			CompanionFile {
+				filename: "decoder_joint-model.int8.onnx",
+				size_bytes: 18_202_004,
+				sha256: "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+			},
+			CompanionFile {
+				filename: "nemo128.onnx",
+				size_bytes: 139_764,
+				sha256: "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f",
+			},
+			CompanionFile {
+				filename: "vocab.txt",
+				size_bytes: 93_939,
+				sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+			},
+		],
 	},
 ];
 
@@ -156,6 +265,13 @@ pub fn kv_bytes_per_token(spec: &ModelSpec) -> u64 {
 		// 4 KV heads, head_dim 256:
 		//   2 × 35 × 4 × 256 × 2 = 143_360 bytes/token
 		"gemma-4-E4B" => 143_360,
+		// Qwen3.5 4B (Qwen/Qwen3.5-4B config.json): a hybrid of 32
+		// layers where only every 4th is full attention (8 layers, 4 KV
+		// heads, head_dim 256); the other 24 are Gated DeltaNet linear
+		// attention, whose recurrent state is a fixed size independent
+		// of the context length, so it costs nothing per token:
+		//   2 × 8 × 4 × 256 × 2 = 32_768 bytes/token
+		"qwen35-4b" => 32_768,
 		// MiniCPM5 2B (openbmb/MiniCPM5-2B-GGUF): Llama-style 40 layers,
 		// 4 KV heads, head_dim 128:
 		//   2 × 40 × 4 × 128 × 2 = 81_920 bytes/token
@@ -183,6 +299,7 @@ mod tests {
 			let expected: u64 = match spec.id {
 				"gemma-4-E2B-qat" => 2 * 23 * 4 * 256 * 2,
 				"gemma-4-E4B" => 2 * 35 * 4 * 256 * 2,
+				"qwen35-4b" => 2 * 8 * 4 * 256 * 2,
 				"minicpm5-2b" => 2 * 40 * 4 * 128 * 2,
 				other => panic!("document the KV cost of catalog model {other}"),
 			};
@@ -206,6 +323,7 @@ mod tests {
 			filename: "unknown.gguf",
 			size_bytes: 0,
 			sha256: "",
+			companions: &[],
 		};
 		let fallback = kv_bytes_per_token(&unknown);
 		assert_eq!(fallback, 2 * 32 * 32 * 128 * 2);
@@ -218,5 +336,39 @@ mod tests {
 		}
 		// whisper rows are not LLMs; they too get the documented fallback
 		assert_eq!(kv_bytes_per_token(&STT_MODELS[0]), fallback);
+	}
+	#[test]
+	fn companions_are_pinned_files_of_the_same_model() {
+		let parakeet = super::find_model("parakeet-tdt-0.6b-v3", ModelKind::Stt).expect("catalog");
+		assert_eq!(parakeet.stt_backend(), super::SttBackend::Parakeet);
+		let files = parakeet.all_file_specs();
+		assert_eq!(
+			files.iter().map(|f| f.filename).collect::<Vec<_>>(),
+			[
+				"encoder-model.int8.onnx",
+				"decoder_joint-model.int8.onnx",
+				"nemo128.onnx",
+				"vocab.txt"
+			]
+		);
+		for file in &files {
+			assert_eq!(
+				(file.id, file.repo, file.kind),
+				(parakeet.id, parakeet.repo, parakeet.kind)
+			);
+			assert_eq!(file.sha256.len(), 64, "{} is pinned", file.filename);
+		}
+		// a companion is a plain file: it has no companions of its own
+		assert!(files[1..].iter().all(|f| f.companions.is_empty()));
+		assert_eq!(
+			parakeet.total_size_bytes(),
+			files.iter().map(|f| f.size_bytes).sum::<u64>()
+		);
+		// single-file models are unchanged: whisper ggml, no companions
+		for spec in STT_MODELS.iter().filter(|s| s.id.starts_with("whisper-")) {
+			assert_eq!(spec.stt_backend(), super::SttBackend::Whisper);
+			assert_eq!(spec.all_file_specs().len(), 1);
+			assert_eq!(spec.total_size_bytes(), spec.size_bytes);
+		}
 	}
 }

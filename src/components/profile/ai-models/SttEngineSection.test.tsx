@@ -15,6 +15,7 @@ const settings: AiSettingsResponse = {
 	sttMode: "local",
 	sttEngine: "whisper",
 	sttLanguage: "en-US",
+	noiseReduction: false,
 	hfTokenSet: false,
 	hfTokenHint: null,
 	secretsPlaintext: false,
@@ -120,7 +121,9 @@ describe("SttEngineSection", () => {
 
 	it("explains what Auto resolves to without Apple Speech", () => {
 		renderSection({ settings: { sttEngine: "auto" }, appleStt: appleUnavailable });
-		expect(screen.getByText(/Auto uses whisper for transcription here/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Auto uses the downloaded speech model for transcription here/)
+		).toBeInTheDocument();
 	});
 
 	it("hides the speech language for an English-only whisper model", () => {
@@ -151,5 +154,27 @@ describe("SttEngineSection", () => {
 		expect(
 			screen.getByText(/Whisper large v3 turbo transcribes in this language/)
 		).toBeInTheDocument();
+	});
+	it("toggles background-noise reduction through save()", async () => {
+		const user = userEvent.setup();
+		const { save } = renderSection();
+		await user.click(screen.getByRole("switch", { name: "Reduce background noise" }));
+		expect(save).toHaveBeenCalledWith({ noiseReduction: true });
+	});
+
+	it("lets Parakeet detect the language instead of offering the picker", () => {
+		const parakeet: ModelStatus = {
+			...whisperBase,
+			id: "parakeet-tdt-0.6b-v3",
+			label: "Parakeet TDT v3 (25 languages)",
+			filename: "encoder-model.int8.onnx"
+		};
+		renderSection({
+			settings: { sttModel: parakeet.id, sttLanguage: "de-DE" },
+			models: [parakeet]
+		});
+		expect(screen.queryByLabelText("Speech language")).not.toBeInTheDocument();
+		expect(screen.queryByText(/English-only/i)).not.toBeInTheDocument();
+		expect(screen.getByText(/detects the spoken language by itself/)).toBeInTheDocument();
 	});
 });

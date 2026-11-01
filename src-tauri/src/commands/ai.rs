@@ -135,6 +135,19 @@ async fn transcribe_wav(app: AppHandle, bytes: Vec<u8>) -> Result<serde_json::Va
 	// This transcription's cancel token: a previous one is cancelled by
 	// the swap, and `cancel_transcription` reaches this one.
 	let cancel = take_transcription_token(&app.state::<AppState>());
+	// Background-noise suppression, when switched on, cleans the audio
+	// once here so every engine below (external, Apple, local) hears the
+	// same denoised recording.
+	let bytes = if settings.noise_reduction {
+		tauri::async_runtime::spawn_blocking(move || crate::denoise::denoise_wav(&bytes))
+			.await
+			.map_err(|e| format!("noise reduction task failed: {e}"))??
+	} else {
+		bytes
+	};
+	if cancel.load(Ordering::Relaxed) {
+		return Err(stt::TRANSCRIPTION_CANCELLED.into());
+	}
 	// STT offload rule: the external endpoint when switched on (sttMode);
 	// otherwise the engine setting picks Apple Speech or local whisper.
 	if settings.uses_external_stt() {
@@ -200,6 +213,7 @@ async fn transcribe_wav(app: AppHandle, bytes: Vec<u8>) -> Result<serde_json::Va
 	// language rides along so multilingual models honor it.
 	let language = settings.stt_language.clone();
 	let cancel_for_task = std::sync::Arc::clone(&cancel);
+	let models_dir = app.state::<AppState>().models_dir();
 	let outcome = tauri::async_runtime::spawn_blocking(move || {
 		let samples = stt::wav_to_samples(&bytes)?;
 		// near-digital-silence (muted mic, bumped cable): whisper would
@@ -207,9 +221,20 @@ async fn transcribe_wav(app: AppHandle, bytes: Vec<u8>) -> Result<serde_json::Va
 		if stt::is_silent(&samples) {
 			return Ok(String::new());
 		}
+		// the model hears only the speech: the pauses and room noise
+		// whisper would hallucinate over are cut out, and Parakeet's
+		// chunks are cut at pauses (see crate::vad)
+		let ranges = match crate::vad::speech_ranges(&models_dir, &samples) {
+			Ok(ranges) if ranges.is_empty() => return Ok(String::new()),
+			Ok(ranges) => Some(ranges),
+			Err(e) => {
+				log::warn!("{e}; transcribing the whole recording");
+				None
+			}
+		};
 		// the cancel token rides into whisper: a cancelled run aborts
 		// its inference instead of running beside the re-record
-		engine.transcribe_cancellable(&samples, &language, &cancel_for_task)
+		engine.transcribe_speech(&samples, ranges.as_deref(), &language, &cancel_for_task)
 	})
 	.await
 	.map_err(|e| e.to_string());

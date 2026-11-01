@@ -40,7 +40,13 @@ pub fn sweep_stale_part_files(models_dir: &Path, cache_dir: &Path) {
 		}
 	}
 
-	let specs: Vec<&ModelSpec> = LLM_MODELS.iter().chain(STT_MODELS.iter()).collect();
+	// main files and the companion files of multi-file models alike
+	let owned: Vec<ModelSpec> = LLM_MODELS
+		.iter()
+		.chain(STT_MODELS.iter())
+		.flat_map(ModelSpec::all_file_specs)
+		.collect();
+	let specs: Vec<&ModelSpec> = owned.iter().collect();
 	let mut repos: Vec<&str> = specs.iter().map(|s| s.repo).collect();
 	repos.sort_unstable();
 	repos.dedup();

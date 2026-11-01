@@ -6,25 +6,102 @@ use std::sync::Arc;
 /// it like a cancelled generation: no error banner, just back to idle.
 pub const TRANSCRIPTION_CANCELLED: &str = "transcription cancelled";
 
+/// A loaded local speech-to-text model.
 pub struct SttEngine {
-	ctx: Arc<whisper_rs::WhisperContext>,
+	backend: Backend,
 	pub model_id: String,
-	/// whisper inference is not reentrant across threads on one context:
-	/// a re-record while a cancelled inference is still winding down
-	/// would run two at once, so transcriptions serialize
+	/// whisper inference is not reentrant across threads on one context
+	/// (and a Parakeet model runs one session at a time): a re-record
+	/// while a cancelled inference is still winding down would run two
+	/// at once, so transcriptions serialize
 	transcribe_lock: std::sync::Mutex<()>,
 }
 
+enum Backend {
+	/// whisper.cpp (ggml)
+	Whisper(Arc<whisper_rs::WhisperContext>),
+	/// NVIDIA Parakeet TDT over ONNX Runtime (transcribe-rs); `&mut`
+	/// inference, so behind its own lock
+	Parakeet(Box<std::sync::Mutex<transcribe_rs::onnx::parakeet::ParakeetModel>>),
+}
+
 impl SttEngine {
+	/// Load a whisper.cpp ggml model file.
 	pub fn load(path: &Path, model_id: &str) -> Result<Self, String> {
 		let params = whisper_rs::WhisperContextParameters::default();
 		let ctx = whisper_rs::WhisperContext::new_with_params(path, params)
 			.map_err(|e| format!("failed to load whisper model {path:?}: {e}"))?;
 		Ok(Self {
-			ctx: Arc::new(ctx),
+			backend: Backend::Whisper(Arc::new(ctx)),
 			model_id: model_id.to_string(),
 			transcribe_lock: std::sync::Mutex::new(()),
 		})
+	}
+
+	/// Load a Parakeet TDT int8 ONNX model from the folder holding its
+	/// files (`encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`,
+	/// `nemo128.onnx`, `vocab.txt`).
+	pub fn load_parakeet(dir: &Path, model_id: &str) -> Result<Self, String> {
+		let model = transcribe_rs::onnx::parakeet::ParakeetModel::load(
+			dir,
+			&transcribe_rs::onnx::Quantization::Int8,
+		)
+		.map_err(|e| format!("failed to load Parakeet model from {dir:?}: {e}"))?;
+		Ok(Self {
+			backend: Backend::Parakeet(Box::new(std::sync::Mutex::new(model))),
+			model_id: model_id.to_string(),
+			transcribe_lock: std::sync::Mutex::new(()),
+		})
+	}
+
+	/// Transcribe a recording (16 kHz mono) given the speech `ranges`
+	/// voice-activity detection found in it (`None` = VAD unavailable:
+	/// treat everything as speech). Each backend gets the speech in the
+	/// shape it handles best: whisper the speech stretches joined into
+	/// one stream (it windows long audio itself), Parakeet chunks of at
+	/// most [`crate::vad::MAX_CHUNK_SECS`] cut at pauses, since it
+	/// attends over its whole input at once.
+	pub fn transcribe_speech(
+		&self,
+		samples: &[f32],
+		ranges: Option<&[std::ops::Range<usize>]>,
+		language: &str,
+		cancel: &Arc<AtomicBool>,
+	) -> Result<String, String> {
+		let whole = 0..samples.len();
+		let ranges = ranges.unwrap_or(std::slice::from_ref(&whole));
+		match &self.backend {
+			Backend::Whisper(_) => self.transcribe_cancellable(
+				&crate::vad::join_speech(samples, ranges),
+				language,
+				cancel,
+			),
+			Backend::Parakeet(model) => {
+				let _serial = self
+					.transcribe_lock
+					.lock()
+					.unwrap_or_else(|e| e.into_inner());
+				let mut model = model.lock().unwrap_or_else(|e| e.into_inner());
+				let mut parts: Vec<String> = Vec::new();
+				for chunk in crate::vad::chunk_speech(samples, ranges) {
+					// checked between chunks: ONNX Runtime has no abort hook
+					if cancel.load(Ordering::Relaxed) {
+						return Err(TRANSCRIPTION_CANCELLED.into());
+					}
+					let result = model
+						.transcribe_with(&chunk, &Default::default())
+						.map_err(|e| format!("transcription failed: {e}"))?;
+					let text = result.text.trim();
+					if !text.is_empty() {
+						parts.push(text.to_string());
+					}
+				}
+				if cancel.load(Ordering::Relaxed) {
+					return Err(TRANSCRIPTION_CANCELLED.into());
+				}
+				Ok(parts.join(" "))
+			}
+		}
 	}
 
 	/// Transcribe 16 kHz mono PCM samples. Blocking; run off the main
@@ -49,6 +126,11 @@ impl SttEngine {
 		language: &str,
 		cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 	) -> Result<String, String> {
+		// a Parakeet engine runs the chunked path (before the lock below,
+		// which that path takes itself)
+		let Backend::Whisper(ctx) = &self.backend else {
+			return self.transcribe_speech(samples, None, language, cancel);
+		};
 		if cancel.load(Ordering::Relaxed) {
 			return Err(TRANSCRIPTION_CANCELLED.into());
 		}
@@ -57,7 +139,7 @@ impl SttEngine {
 			.transcribe_lock
 			.lock()
 			.unwrap_or_else(|e| e.into_inner());
-		let mut state = self.ctx.create_state().map_err(|e| e.to_string())?;
+		let mut state = ctx.create_state().map_err(|e| e.to_string())?;
 		let mut params =
 			whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
 		let language = whisper_language(language, self.model_id.ends_with("-en"));
@@ -290,7 +372,7 @@ pub(crate) fn checked_resample_len(
 }
 
 /// Decode a WAV file into 16 kHz mono f32 samples suitable for whisper.
-/// Handles mono folding and naive linear resampling. Malformed or
+/// Handles mono folding and band-limited resampling. Malformed or
 /// unsupported files produce errors, never silent empty transcripts.
 /// Audio longer than `MAX_AUDIO_SECS` is rejected before the resample
 /// allocation.
@@ -372,26 +454,142 @@ pub(crate) fn fold_to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
 		.collect()
 }
 
-/// Naive linear resampling to 16 kHz. The output length is validated
-/// and computed by [`checked_resample_len`] before any allocation, so
-/// metadata-controlled rates or durations cannot blow up the buffer.
+/// Resample mono audio to 16 kHz with a band-limited (windowed-sinc)
+/// interpolator. The output length is validated and computed by
+/// [`checked_resample_len`] before any allocation, so metadata-controlled
+/// rates or durations cannot blow up the buffer.
+///
+/// A microphone records at 44.1/48 kHz; dropping to 16 kHz by straight
+/// linear interpolation (the previous implementation) folds everything
+/// between 8 and 24 kHz - fan hiss, keyboard clicks, sibilance - back
+/// into the speech band as aliasing. [`resample_sinc`] low-passes at the
+/// new Nyquist frequency while it interpolates, so that energy is removed
+/// instead of mirrored.
 pub(crate) fn resample_to_16k(mono: Vec<f32>, sample_rate: u32) -> Result<Vec<f32>, String> {
 	let out_len = checked_resample_len(mono.len(), sample_rate)?;
 	if sample_rate == TARGET_RATE || mono.is_empty() {
 		return Ok(mono);
 	}
-	let ratio = f64::from(sample_rate) / f64::from(TARGET_RATE);
-	let mut resampled = Vec::with_capacity(out_len);
-	let mut src_pos = 0.0f64;
-	for _ in 0..out_len {
-		let i = src_pos.floor() as usize;
-		let frac = src_pos - i as f64;
-		let a = mono.get(i).copied().unwrap_or(0.0);
-		let b = mono.get(i + 1).copied().unwrap_or(a);
-		resampled.push(a + (b - a) * frac as f32);
-		src_pos += ratio;
+	Ok(resample_sinc(&mono, sample_rate, TARGET_RATE, out_len))
+}
+
+/// Zero crossings of the sinc kernel on each side of the centre tap.
+/// More crossings sharpen the transition band at linear cost; 12 gives
+/// a ~70 dB stopband with the Kaiser window below, far more than speech
+/// recognition can tell apart.
+const SINC_ZERO_CROSSINGS: usize = 12;
+/// Kernel table entries per source sample (linear interpolation between
+/// entries); fine enough that the table error is below 16-bit noise.
+const SINC_TABLE_RES: usize = 256;
+/// Kaiser window shape: ~70 dB sidelobe attenuation.
+const KAISER_BETA: f64 = 7.0;
+/// Pass band as a fraction of the lower Nyquist frequency: the filter
+/// rolls off over the top 10 %, so 16 kHz output keeps speech up to
+/// ~7.2 kHz and removes everything above 8 kHz.
+const SINC_PASSBAND: f64 = 0.9;
+
+/// Band-limited resampling of mono `input` from `from_rate` to `to_rate`,
+/// producing exactly `out_len` samples (the caller validated the budget).
+/// Every output sample is the windowed-sinc interpolation of the input at
+/// its source-time position; the cutoff sits below the lower of the two
+/// Nyquist frequencies, so downsampling cannot alias and upsampling
+/// cannot image. Each output is normalised by the sum of the kernel taps
+/// that fall inside the input: DC gain is exactly 1 everywhere, and the
+/// first and last milliseconds keep their level instead of fading
+/// against imagined silence beyond the ends.
+pub(crate) fn resample_sinc(
+	input: &[f32],
+	from_rate: u32,
+	to_rate: u32,
+	out_len: usize,
+) -> Vec<f32> {
+	if input.is_empty() || out_len == 0 {
+		return vec![0.0; out_len];
 	}
-	Ok(resampled)
+	let ratio = f64::from(from_rate) / f64::from(to_rate);
+	// cutoff in cycles per SOURCE sample
+	let cutoff = 0.5 * SINC_PASSBAND * (1.0 / ratio).min(1.0);
+	// kernel half-width in source samples
+	let half_width = SINC_ZERO_CROSSINGS as f64 / (2.0 * cutoff);
+	let table = sinc_table(cutoff, half_width);
+	let reach = half_width.ceil() as isize;
+	let last = input.len() as isize - 1;
+
+	let mut out = Vec::with_capacity(out_len);
+	for n in 0..out_len {
+		let t = n as f64 * ratio;
+		let centre = t.floor() as isize;
+		let lo = (centre - reach + 1).max(0);
+		let hi = (centre + reach).min(last);
+		let mut acc = 0.0f64;
+		let mut weight = 0.0f64;
+		for k in lo..=hi {
+			let w = kernel_at(&table, (t - k as f64).abs(), half_width);
+			weight += w;
+			acc += w * f64::from(input[k as usize]);
+		}
+		out.push(if weight.abs() > 1e-12 {
+			(acc / weight) as f32
+		} else {
+			0.0
+		});
+	}
+	out
+}
+
+/// The Kaiser-windowed sinc kernel sampled at `1 / SINC_TABLE_RES` steps
+/// over `[0, half_width]` (it is symmetric).
+fn sinc_table(cutoff: f64, half_width: f64) -> Vec<f64> {
+	let entries = (half_width * SINC_TABLE_RES as f64).ceil() as usize + 2;
+	let i0_beta = bessel_i0(KAISER_BETA);
+	(0..entries)
+		.map(|i| {
+			let u = i as f64 / SINC_TABLE_RES as f64;
+			if u >= half_width {
+				return 0.0;
+			}
+			let x = 2.0 * cutoff * u;
+			let sinc = if x == 0.0 {
+				1.0
+			} else {
+				(std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+			};
+			let r = u / half_width;
+			let window = bessel_i0(KAISER_BETA * (1.0 - r * r).sqrt()) / i0_beta;
+			2.0 * cutoff * sinc * window
+		})
+		.collect()
+}
+
+/// Kernel value at distance `u` (source samples) from the centre,
+/// linearly interpolated from the table.
+#[inline]
+fn kernel_at(table: &[f64], u: f64, half_width: f64) -> f64 {
+	if u >= half_width {
+		return 0.0;
+	}
+	let pos = u * SINC_TABLE_RES as f64;
+	let i = pos as usize;
+	let frac = pos - i as f64;
+	let a = table[i];
+	let b = table.get(i + 1).copied().unwrap_or(0.0);
+	a + (b - a) * frac
+}
+
+/// Zeroth-order modified Bessel function of the first kind (power
+/// series), for the Kaiser window.
+fn bessel_i0(x: f64) -> f64 {
+	let half = x / 2.0;
+	let mut term = 1.0;
+	let mut sum = 1.0;
+	for k in 1..50 {
+		term *= (half / k as f64) * (half / k as f64);
+		sum += term;
+		if term < sum * 1e-17 {
+			break;
+		}
+	}
+	sum
 }
 
 /// One HTTP client for every external transcription call: a fresh client
@@ -497,9 +695,64 @@ pub async fn transcribe_external(
 mod tests {
 	use super::{
 		checked_resample_len, dedupe_segments, is_non_speech_annotation, is_silent, is_speech,
-		resample_to_16k, transcribe_external, wav_to_samples, whisper_language,
+		resample_sinc, resample_to_16k, transcribe_external, wav_to_samples, whisper_language,
 		TRANSCRIPTION_CANCELLED,
 	};
+
+	fn tone(freq: f64, rate: u32, secs: f64) -> Vec<f32> {
+		let n = (f64::from(rate) * secs) as usize;
+		(0..n)
+			.map(|i| {
+				(2.0 * std::f64::consts::PI * freq * i as f64 / f64::from(rate)).sin() as f32 * 0.5
+			})
+			.collect()
+	}
+
+	/// RMS over the middle half, away from the (silence-padded) edges.
+	fn mid_rms(samples: &[f32]) -> f32 {
+		let mid = &samples[samples.len() / 4..samples.len() * 3 / 4];
+		(mid.iter().map(|s| s * s).sum::<f32>() / mid.len() as f32).sqrt()
+	}
+
+	#[test]
+	fn downsampling_removes_energy_above_the_new_nyquist() {
+		// 12 kHz at 48 kHz is above 16 kHz's 8 kHz Nyquist: linear
+		// interpolation folded it to a loud 4 kHz alias; the band-limited
+		// resampler must remove it (> 40 dB down)
+		let input = tone(12_000.0, 48_000, 0.5);
+		let out = resample_to_16k(input.clone(), 48_000).unwrap();
+		assert!(
+			mid_rms(&out) < mid_rms(&input) * 0.01,
+			"aliased energy survived: {} vs input {}",
+			mid_rms(&out),
+			mid_rms(&input)
+		);
+	}
+
+	#[test]
+	fn downsampling_keeps_the_speech_band() {
+		for (freq, rate) in [(300.0, 48_000), (1_000.0, 44_100), (5_000.0, 48_000)] {
+			let input = tone(freq, rate, 0.5);
+			let out = resample_to_16k(input.clone(), rate).unwrap();
+			let gain = mid_rms(&out) / mid_rms(&input);
+			assert!(
+				(0.97..=1.03).contains(&gain),
+				"{freq} Hz at {rate} Hz: gain {gain}"
+			);
+		}
+	}
+
+	#[test]
+	fn sinc_resampling_has_unity_dc_gain_and_upsamples() {
+		let flat = vec![0.25f32; 4_800];
+		let out = resample_sinc(&flat, 48_000, 16_000, 1_600);
+		assert!(out[400..1_200].iter().all(|s| (s - 0.25).abs() < 1e-4));
+		// 16 kHz -> 48 kHz (the RNNoise direction) keeps a tone intact
+		let input = tone(1_000.0, 16_000, 0.5);
+		let up = resample_sinc(&input, 16_000, 48_000, input.len() * 3);
+		let gain = mid_rms(&up) / mid_rms(&input);
+		assert!((0.97..=1.03).contains(&gain), "gain {gain}");
+	}
 
 	#[tokio::test]
 	async fn external_transcription_cancel_ends_a_pending_request() {
@@ -705,7 +958,7 @@ mod tests {
 		let ones = vec![1000i16; 44_100]; // one second
 		let bytes = wav_bytes(mono_spec(44_100, 1), &ones);
 		let samples = wav_to_samples(&bytes).expect("decode");
-		// one second at 16 kHz, small tolerance for the naive resampler
+		// one second at 16 kHz
 		assert!(
 			(15_800..=16_200).contains(&samples.len()),
 			"got {} samples",

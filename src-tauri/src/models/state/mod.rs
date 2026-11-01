@@ -1,7 +1,7 @@
 //! Runtime state: engines, statuses, load/swap/rollback, download
 //! bookkeeping.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -306,8 +306,46 @@ impl AppState {
 			.find_map(|cache| hf_cache_model_path(cache, spec))
 	}
 
+	/// A model is downloaded when its main file AND every companion
+	/// file (multi-file ONNX models) resolve.
 	pub fn is_model_downloaded(&self, spec: &ModelSpec) -> bool {
-		self.resolve_model_file(spec).is_some()
+		spec.all_file_specs()
+			.iter()
+			.all(|file| self.resolve_model_file(file).is_some())
+	}
+
+	/// The folder a multi-file model loads from, given its resolved main
+	/// file: the main file's own folder when every companion resolves
+	/// there (the normal case - downloads publish them side by side),
+	/// otherwise `models/<id>/` populated with links to wherever each
+	/// file resolved (a cache another tool laid out differently). `None`
+	/// when a companion is missing.
+	pub fn model_dir_for(&self, spec: &ModelSpec, main: &Path) -> Option<PathBuf> {
+		let companions: Vec<(ModelSpec, PathBuf)> = spec
+			.companion_specs()
+			.into_iter()
+			.map(|c| self.resolve_model_file(&c).map(|path| (c, path)))
+			.collect::<Option<_>>()?;
+		let main_dir = main.parent()?;
+		if companions
+			.iter()
+			.all(|(_, path)| path.parent() == Some(main_dir))
+		{
+			return Some(main_dir.to_path_buf());
+		}
+		let dir = self.models_dir().join(spec.id);
+		std::fs::create_dir_all(&dir).ok()?;
+		let mut files = vec![(spec.clone(), main.to_path_buf())];
+		files.extend(companions);
+		for (file, source) in files {
+			let link = dir.join(file.filename);
+			let _ = std::fs::remove_file(&link);
+			if link_or_copy(&source, &link).is_err() {
+				log::warn!("could not link {} into {}", source.display(), dir.display());
+				return None;
+			}
+		}
+		Some(dir)
 	}
 
 	pub fn emit_llm_status(&self, app: &AppHandle) {
@@ -331,10 +369,27 @@ impl AppState {
 	}
 }
 
+/// Make `link` point at `source`: a symlink on unix; on Windows a
+/// symlink when permitted, else a hardlink, else a copy.
+fn link_or_copy(source: &Path, link: &Path) -> std::io::Result<()> {
+	#[cfg(target_family = "unix")]
+	{
+		std::os::unix::fs::symlink(source, link)
+	}
+	#[cfg(target_os = "windows")]
+	{
+		std::os::windows::fs::symlink_file(source, link)
+			.or_else(|_| std::fs::hard_link(source, link))
+			.or_else(|_| std::fs::copy(source, link).map(|_| ()))
+	}
+}
+
 #[cfg(test)]
 mod delete_flow_tests;
 #[cfg(test)]
 mod load_path_tests;
+#[cfg(test)]
+mod multi_file_tests;
 #[cfg(test)]
 mod rollback_tests;
 #[cfg(test)]

@@ -1,6 +1,7 @@
 pub mod apple;
 mod commands;
 pub mod db;
+pub mod denoise;
 pub mod keys;
 pub mod llm;
 pub mod models;
@@ -11,6 +12,7 @@ pub mod secrets;
 pub mod stt;
 pub mod stt_apple;
 pub mod types;
+pub mod vad;
 pub mod voice;
 
 use std::sync::Mutex;

@@ -101,7 +101,20 @@ pub fn hf_blob_path(cache: &Path, spec: &ModelSpec) -> PathBuf {
 /// hardlink (Windows without symlink privileges, or a symlink that
 /// doesn't resolve), then a copy. Idempotent; a dead link is replaced.
 pub fn materialize_snapshot(cache: &Path, spec: &ModelSpec) -> Result<(), String> {
-	let snapshot_dir = hf_repo_dir(cache, spec).join("snapshots").join(spec.sha256);
+	materialize_snapshot_in(cache, spec, spec.sha256)
+}
+
+/// [`materialize_snapshot`] into `snapshots/<snapshot>/`: a multi-file
+/// model publishes its companion files under the MAIN file's snapshot
+/// name, so every file of the model sits in one folder (the layout
+/// `hf download` produces for a whole repo revision), which is what
+/// folder-based loaders (ONNX Runtime models) need.
+pub fn materialize_snapshot_in(
+	cache: &Path,
+	spec: &ModelSpec,
+	snapshot: &str,
+) -> Result<(), String> {
+	let snapshot_dir = hf_repo_dir(cache, spec).join("snapshots").join(snapshot);
 	std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
 	let link = snapshot_dir.join(spec.filename);
 	if link.symlink_metadata().is_ok() {

@@ -11,14 +11,25 @@
 First launch (or from **Settings → AI Models**), download:
 
 - **LLM** — Google Gemma 4 E2B (QAT 4-bit GGUF, ~3.3 GB, default), Gemma 4 E4B
-  (QAT 4-bit, ~5.2 GB), or MiniCPM5 2B (~1.6 GB) for lighter machines.
+  (QAT 4-bit, ~5.2 GB), Qwen3.5 4B (Q4_K_M, ~2.7 GB; run with thinking off),
+  or MiniCPM5 2B (~1.6 GB) for lighter machines.
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
 - **STT** — whisper.cpp tiny.en (~78 MB), base.en (~148 MB, default), small.en
   (~488 MB), large-v3-turbo (~1.6 GB), or the multilingual base/small builds
-  (same sizes) for non-English speech. On macOS 26+, the built-in Apple
+  (same sizes) for non-English speech; or NVIDIA Parakeet TDT 0.6B v3 (int8
+  ONNX, ~670 MB, via ONNX Runtime) — more accurate than large-v3-turbo and
+  several times faster, detecting English and 24 European languages by
+  itself. On macOS 26+, the built-in Apple
   Speech engine (Speech.framework, on-device) is available instead — no model
-  download at all, with a selectable language and whisper as the automatic
-  fallback.
+  download at all, with a selectable language and the downloaded model as the
+  automatic fallback.
+
+Before a local model transcribes, voice-activity detection (Silero VAD,
+~0.9 MB, built into the app) cuts the recording down to the stretches with
+speech: whisper no longer hallucinates over pauses and room noise, and
+Parakeet reads long recordings in chunks cut at pauses. Optionally, **Reduce
+background noise** (Settings → AI Models) runs RNNoise over the recording
+first — useful in loud rooms, best left off in quiet ones.
 
 > The interview openers, the question of the day and the settings copy are
 > English regardless of the transcription language; the model itself is asked
@@ -182,7 +193,7 @@ servers" here means *no Brainstory servers*, not "no network".
 
 ## Manual model tests
 
-Two integration tests need real model files and never run in CI's unit-test job (the
+These integration tests need real model files and never run in CI's unit-test job (the
 nightly workflow runs the engine smoke test with tiny downloaded models):
 
 ```sh
@@ -196,6 +207,13 @@ LLM_MODEL_PATH=/path/to/model.gguf cargo test --test model_prompts
 
 # Apple Speech smoke test (macOS 26 host, terminal needs speech permission):
 APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke
+
+# the local speech pipeline on real speech: resampling, VAD, RNNoise and
+# Parakeet (plus whisper in the same process when WHISPER_MODEL_PATH is set);
+# PARAKEET_MODEL_DIR holds istupakov/parakeet-tdt-0.6b-v3-onnx's int8 files
+espeak-ng -w /tmp/speech.wav "The quick brown fox jumps over the lazy dog."
+PARAKEET_MODEL_DIR=/path/to/parakeet-tdt-0.6b-v3-onnx SPEECH_WAV=/tmp/speech.wav \
+cargo test --release --test speech_pipeline
 ```
 
 ## Development
@@ -276,3 +294,9 @@ happens via the nightly/release Windows CI builds.
 
 GPL-3.0-only — see [LICENSE](LICENSE). This covers the whole app: frontend,
 Rust backend, and the prompts under `prompts/`.
+
+The bundled Silero VAD model (`src-tauri/resources/vad/ggml-silero-v6.2.0.bin`,
+the ggml conversion from [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad)
+of [snakers4/silero-vad](https://github.com/snakers4/silero-vad)) is MIT-licensed.
+Downloadable models keep their own licenses (e.g. Parakeet TDT v3 is CC-BY-4.0,
+Qwen3.5 is Apache-2.0).

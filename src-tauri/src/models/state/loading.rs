@@ -379,13 +379,12 @@ impl AppState {
 			// whisper has no ctx-shaped setting: same model id = done
 			|engine| engine.model_id.as_str() == spec.id,
 			|| Ok(()),
-			|path| SttEngine::load(path, spec.id),
+			|path| self.open_stt_engine(spec, path),
 			|prev| {
 				let prev_path = self
 					.resolve_model_file(prev)
 					.ok_or_else(|| format!("model file for {} is gone", prev.id))?;
-				{}
-				let engine = SttEngine::load(&prev_path, prev.id)?;
+				let engine = self.open_stt_engine(prev, &prev_path)?;
 				lock(&self.runtime).stt = Some(Arc::new(engine));
 				Ok(())
 			},
@@ -393,6 +392,21 @@ impl AppState {
 			false,
 			|| self.ai_settings_generation.load(Ordering::SeqCst) <= generation,
 		)
+	}
+
+	/// Open a speech model on the engine its catalog entry names: a
+	/// whisper.cpp ggml file directly, a Parakeet ONNX model from the
+	/// folder holding all of its files (see [`AppState::model_dir_for`]).
+	fn open_stt_engine(&self, spec: &ModelSpec, path: &Path) -> Result<SttEngine, String> {
+		match spec.stt_backend() {
+			crate::models::SttBackend::Whisper => SttEngine::load(path, spec.id),
+			crate::models::SttBackend::Parakeet => {
+				let dir = self
+					.model_dir_for(spec, path)
+					.ok_or_else(|| format!("{} is incomplete: re-download it", spec.label))?;
+				SttEngine::load_parakeet(&dir, spec.id)
+			}
+		}
 	}
 
 	/// The production delete entry: [`Self::delete_model_exclusive`]

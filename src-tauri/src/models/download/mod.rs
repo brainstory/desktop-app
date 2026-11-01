@@ -10,8 +10,8 @@ mod stream;
 
 pub use hub_cache::{
 	hf_blob_path, hf_cache_model_path, hf_hub_cache_candidates, materialize_snapshot,
-	migrate_legacy_models, model_url, primary_hub_cache, remove_cached_model,
-	verified_snapshot_files, VerifiedSnapshotFiles,
+	materialize_snapshot_in, migrate_legacy_models, model_url, primary_hub_cache,
+	remove_cached_model, verified_snapshot_files, VerifiedSnapshotFiles,
 };
 pub use stream::{
 	download_model_file, download_model_file_with_pause, part_path, remove_staged_part,

@@ -143,6 +143,11 @@ pub struct AiSettings {
 	pub stt_engine: SpeechEngine,
 	/// BCP-47 locale for the Apple Speech engine (e.g. "en-US").
 	pub stt_language: String,
+	/// Run RNNoise over a recording before it is transcribed (any
+	/// engine). Off by default: speech models are trained on noisy
+	/// audio, so suppression helps in loud rooms but can cost accuracy
+	/// in quiet ones (see [`crate::denoise`]).
+	pub noise_reduction: bool,
 	/// HuggingFace access token; sent with model downloads, where it
 	/// avoids anonymous rate limits and can speed up large transfers.
 	pub hf_token: String,
@@ -375,6 +380,7 @@ impl AiSettings {
 					v
 				}
 			},
+			noise_reduction: get(setting::AI_NOISE_REDUCTION) == "true",
 			hf_token: secret(crate::secrets::Secret::HfToken),
 			hf_endpoint: get(setting::HF_ENDPOINT),
 			ext_llm_base_url: get(setting::EXT_LLM_BASE_URL),
@@ -488,6 +494,14 @@ impl AiSettings {
 				self.stt_language = cleaned.to_string();
 			}
 		}
+		if let Some(value) = ai.get("noiseReduction") {
+			// absent/null keeps the stored value
+			if !value.is_null() {
+				self.noise_reduction = value.as_bool().ok_or_else(|| {
+					format!("invalid noiseReduction {value} (expected true or false)")
+				})?;
+			}
+		}
 		let base_url = |field: &str, v: &str| -> Result<(), String> {
 			if v.is_empty() {
 				Ok(())
@@ -563,6 +577,10 @@ impl AiSettings {
 			(setting::AI_STT_MODE, self.stt_mode.as_str().to_string()),
 			(setting::AI_STT_ENGINE, self.stt_engine.as_str().to_string()),
 			(setting::AI_STT_LANGUAGE, self.stt_language.clone()),
+			(
+				setting::AI_NOISE_REDUCTION,
+				self.noise_reduction.to_string(),
+			),
 			(setting::HF_ENDPOINT, self.hf_endpoint.clone()),
 			(setting::EXT_LLM_BASE_URL, self.ext_llm_base_url.clone()),
 			(setting::EXT_LLM_MODEL, self.ext_llm_model.clone()),
@@ -833,6 +851,31 @@ mod tests {
 			"no secret value in the error: {err}"
 		);
 		assert_eq!(db.get_setting(row).as_deref(), Some("hf_old"));
+	}
+
+	#[test]
+	fn noise_reduction_defaults_off_and_round_trips() {
+		let (db, _dir) = temp_db("noise-reduction");
+		let previous = AiSettings::load(&db);
+		assert!(!previous.noise_reduction, "off unless the user turns it on");
+		let mut s = previous.clone();
+		s.apply_updates(&serde_json::json!({ "noiseReduction": true }))
+			.expect("a bool is accepted");
+		assert!(s.noise_reduction);
+		// absent and null keep the stored value
+		s.apply_updates(&serde_json::json!({ "noiseReduction": null }))
+			.expect("null keeps");
+		s.apply_updates(&serde_json::json!({}))
+			.expect("absent keeps");
+		assert!(s.noise_reduction);
+		for invalid in [serde_json::json!("true"), serde_json::json!(1)] {
+			let err = s
+				.apply_updates(&serde_json::json!({ "noiseReduction": invalid }))
+				.expect_err("only booleans");
+			assert!(err.contains("invalid noiseReduction"), "{err}");
+		}
+		s.save(&db, &previous).expect("save");
+		assert!(AiSettings::load(&db).noise_reduction);
 	}
 
 	#[test]

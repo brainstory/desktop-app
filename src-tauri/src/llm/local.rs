@@ -308,6 +308,26 @@ impl LocalLlm {
 			}
 			prompt.push_str("<|turn>model\n");
 			prompt
+		} else if self.architecture.starts_with("qwen") {
+			// ChatML (Qwen): <|im_start|>role\ncontent<|im_end|>... ending
+			// with an open assistant turn.
+			let mut prompt = String::new();
+			if !system.trim().is_empty() {
+				prompt.push_str(&format!(
+					"<|im_start|>system\n{}<|im_end|>\n",
+					system.trim()
+				));
+			}
+			for msg in messages {
+				let role = if msg.role == "assistant" {
+					"assistant"
+				} else {
+					"user"
+				};
+				prompt.push_str(&format!("<|im_start|>{role}\n{}<|im_end|>\n", msg.content));
+			}
+			prompt.push_str("<|im_start|>assistant\n");
+			skip_default_thinking(&self.architecture, prompt)
 		} else {
 			// last resort: plain concatenation
 			let mut prompt = String::new();
@@ -349,7 +369,7 @@ impl LocalLlm {
 				);
 			}
 			if let Ok(prompt) = self.apply_llama_template(&template, &chat) {
-				return Ok(prompt);
+				return Ok(skip_default_thinking(&self.architecture, prompt));
 			}
 			log::warn!(
 				"built-in chat template failed, falling back to manual {} format",
@@ -835,6 +855,23 @@ fn generate_on_context<'m>(
 	Ok((output, n_prompt))
 }
 
+/// Qwen3.5 reasons in a `<think>` block before every answer unless its
+/// chat template is rendered with `enable_thinking=false`, which closes
+/// an empty think block right after the assistant opener. llama.cpp's
+/// built-in (non-Jinja) template applier knows nothing about that flag,
+/// so the empty block is appended here: the interview and synthesis
+/// prompts want a direct answer, and minutes of hidden reasoning on a
+/// laptop CPU would only delay it. Other architectures pass through
+/// unchanged (MiniCPM5 keeps its reasoning; [`ThinkFilter`] hides it).
+fn skip_default_thinking(architecture: &str, mut prompt: String) -> String {
+	const ASSISTANT_OPEN: &str = "<|im_start|>assistant\n";
+	const EMPTY_THINK: &str = "<think>\n\n</think>\n\n";
+	if architecture.starts_with("qwen35") && prompt.ends_with(ASSISTANT_OPEN) {
+		prompt.push_str(EMPTY_THINK);
+	}
+	prompt
+}
+
 /// Streaming filter that removes `<think>...</think>` reasoning blocks.
 /// Thinking models (e.g. MiniCPM5) emit their reasoning before the answer;
 /// only the final response should be displayed or stored. Tags can split
@@ -1017,5 +1054,34 @@ mod pump_tests {
 		)
 		.expect_err("a dropped reply channel is an error");
 		assert!(err.contains("worker"), "the error names the worker: {err}");
+	}
+}
+
+#[cfg(test)]
+mod thinking_tests {
+	use super::skip_default_thinking;
+
+	const CHATML: &str = "<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n";
+
+	#[test]
+	fn qwen35_prompts_close_an_empty_think_block() {
+		assert_eq!(
+			skip_default_thinking("qwen35", CHATML.to_string()),
+			format!("{CHATML}<think>\n\n</think>\n\n")
+		);
+	}
+
+	#[test]
+	fn other_architectures_keep_their_prompt() {
+		// MiniCPM5 and the Gemma models reason (or not) as they were built
+		for arch in ["minicpm", "gemma4", "qwen3"] {
+			assert_eq!(skip_default_thinking(arch, CHATML.to_string()), CHATML);
+		}
+	}
+
+	#[test]
+	fn a_prompt_without_an_open_assistant_turn_is_untouched() {
+		let prompt = "<|im_start|>user\nhi<|im_end|>\n".to_string();
+		assert_eq!(skip_default_thinking("qwen35", prompt.clone()), prompt);
 	}
 }
