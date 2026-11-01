@@ -18,6 +18,28 @@ export default tseslint.config(
 		]
 	},
 	js.configs.recommended,
+	// backend events flow through listenEvent (typed payloads, one
+	// registration site); the raw listen import stays available to the
+	// IPC layer itself and the test mocks
+	{
+		files: ["src/**/*.{ts,tsx}"],
+		ignores: ["src/tauri/**", "src/test/**"],
+		rules: {
+			"no-restricted-imports": [
+				"error",
+				{
+					paths: [
+						{
+							name: "@tauri-apps/api/event",
+							importNames: ["listen"],
+							message:
+								"Use listenEvent from @src/tauri/events so the event name and payload stay typed."
+						}
+					]
+				}
+			]
+		}
+	},
 	// type-aware rules (no-floating-promises, no-misused-promises, ...) for
 	// the app's TypeScript; .astro files and node scripts get the untyped
 	// set below

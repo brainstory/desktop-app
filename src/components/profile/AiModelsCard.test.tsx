@@ -5,7 +5,8 @@ import userEvent from "@testing-library/user-event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { mockedListen } from "@src/test/mock-tauri";
+import type { EventCallback } from "@tauri-apps/api/event";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import AiModelsCard from "./AiModelsCard";
 import { useAiModels } from "./useAiModels";
@@ -85,7 +86,7 @@ function renderCard() {
 /** Capture the backend event handlers the card subscribes to. */
 function captureListeners(): Record<string, EventCallback<unknown>[]> {
 	const handlers: Record<string, EventCallback<unknown>[]> = {};
-	vi.mocked(listen).mockImplementation(async (event, handler) => {
+	mockedListen.mockImplementation(async (event, handler) => {
 		(handlers[event] ??= []).push(handler);
 		return () => {};
 	});
@@ -204,8 +205,8 @@ function mockSecretBackend(
 describe("AiModelsCard", () => {
 	afterEach(() => {
 		$aiStatus.set({ llm: { state: "missing" }, stt: { state: "missing" } });
-		vi.mocked(listen).mockReset();
-		vi.mocked(listen).mockImplementation(async () => () => {});
+		mockedListen.mockReset();
+		mockedListen.mockImplementation(async () => () => {});
 	});
 
 	it("offers the way back after a download makes the model ready", async () => {
@@ -686,11 +687,9 @@ describe("AiModelsCard", () => {
 		mockCard();
 		renderCard();
 		await screen.findByText("Whisper tiny (English)");
-		// two listeners share the event: the card's own (toasts/refreshes)
-		// and the shared $downloads store (the display state)
-		await waitFor(() =>
-			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
-		);
+		// ONE listener exists (the shared $downloads store); the card's
+		// toasts/refreshes fan out from it
+		await waitFor(() => expect(handlers["model-download"]?.length ?? 0).toBe(1));
 
 		emit(handlers, "model-download", {
 			modelId: "whisper-tiny-en",
@@ -734,9 +733,7 @@ describe("AiModelsCard", () => {
 		mockCard();
 		renderCard();
 		await screen.findByText("Whisper tiny (English)");
-		await waitFor(() =>
-			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
-		);
+		await waitFor(() => expect(handlers["model-download"]?.length ?? 0).toBe(1));
 
 		emit(handlers, "model-download", {
 			modelId: "whisper-tiny-en",
@@ -777,9 +774,7 @@ describe("AiModelsCard", () => {
 		mockCard({ list_models: () => ({ ...models, llm: [models.llm[0]!, notDownloaded] }) });
 		renderCard();
 		await screen.findByText("MiniCPM5 2B");
-		await waitFor(() =>
-			expect(handlers["model-download"]?.length ?? 0).toBeGreaterThanOrEqual(2)
-		);
+		await waitFor(() => expect(handlers["model-download"]?.length ?? 0).toBe(1));
 
 		emit(handlers, "model-download", {
 			modelId: "minicpm5-2b",

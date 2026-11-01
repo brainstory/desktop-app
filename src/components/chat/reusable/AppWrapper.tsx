@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent } from "@src/tauri/events";
 import ErrorBoundary from "@components/global/ErrorBoundary";
 import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 
@@ -37,7 +37,7 @@ function AppWrapperInner({ children }: { children: ReactNode }) {
 	// no new chat opened.
 	useEffect(() => {
 		let unlisten: (() => void) | undefined;
-		void listen("quick-capture-blocked", () => {
+		void listenEvent("quickCaptureBlocked", () => {
 			openSnackbar(false, "Finish or stop the current recording first.");
 		}).then((fn) => {
 			unlisten = fn;

@@ -1,6 +1,6 @@
 import { atom } from "nanostores";
-import { listen } from "@tauri-apps/api/event";
-import { EVENTS } from "@src/tauri/commands";
+import type { DownloadEvent } from "@src/tauri/generated/DownloadEvent";
+import { listenEvent } from "@src/tauri/events";
 
 /**
  * Live download state, shared across pages: the AI models rows, the
@@ -38,16 +38,6 @@ export interface DownloadsState {
 
 const IDLE: DownloadsState = { active: {}, paused: {}, failures: {} };
 export const $downloads = atom<DownloadsState>(IDLE);
-
-export interface ModelDownloadEvent {
-	modelId?: string;
-	label?: string;
-	kind?: string;
-	pct?: number;
-	bytesPerSec?: number;
-	etaSecs?: number;
-	message?: string;
-}
 
 /**
  * Turn the downloader's technical error strings into what a person can
@@ -102,9 +92,13 @@ export function formatDownloadError(raw: string): string {
 	return `Download failed: ${message}`;
 }
 
-function applyEvent(event: ModelDownloadEvent): void {
-	const { modelId, kind, label, pct, bytesPerSec, etaSecs, message } = event;
-	if (!modelId || !kind) return;
+function applyEvent(event: DownloadEvent): void {
+	const { kind } = event;
+	const modelId = event.modelId;
+	const label = event.label;
+	// channel-shaped events (no model id) carry no state for the shared
+	// feed: the global event with the same kind follows immediately
+	if (!modelId) return;
 	const state = $downloads.get();
 	const active = { ...state.active };
 	const paused = { ...state.paused };
@@ -112,11 +106,11 @@ function applyEvent(event: ModelDownloadEvent): void {
 	switch (kind) {
 		case "progress":
 			active[modelId] = {
-				pct: typeof pct === "number" ? pct : -1,
+				pct: event.pct,
 				// after a resume, the paused entry still holds the label
 				label: label ?? active[modelId]?.label ?? paused[modelId]?.label ?? modelId,
-				...(typeof bytesPerSec === "number" ? { bytesPerSec } : {}),
-				...(typeof etaSecs === "number" ? { etaSecs } : {})
+				...(event.bytesPerSec !== undefined ? { bytesPerSec: event.bytesPerSec } : {}),
+				...(event.etaSecs !== undefined ? { etaSecs: event.etaSecs } : {})
 			};
 			// an actively transferring model is no longer paused
 			delete paused[modelId];
@@ -125,7 +119,7 @@ function applyEvent(event: ModelDownloadEvent): void {
 		case "paused":
 			delete failures[modelId];
 			paused[modelId] = {
-				pct: typeof pct === "number" ? pct : -1,
+				pct: event.pct,
 				// keep the label the transfer was showing before it paused
 				label: label ?? paused[modelId]?.label ?? active[modelId]?.label ?? modelId
 			};
@@ -137,6 +131,20 @@ function applyEvent(event: ModelDownloadEvent): void {
 			delete paused[modelId];
 			delete failures[modelId];
 			break;
+		case "load-error":
+			failures[modelId] = {
+				// keep the label the failed transfer was showing
+				label:
+					label ??
+					failures[modelId]?.label ??
+					active[modelId]?.label ??
+					paused[modelId]?.label ??
+					modelId,
+				message: formatDownloadError(event.message)
+			};
+			delete active[modelId];
+			delete paused[modelId];
+			break;
 		case "error":
 			failures[modelId] = {
 				// keep the label the failed transfer was showing
@@ -146,14 +154,13 @@ function applyEvent(event: ModelDownloadEvent): void {
 					active[modelId]?.label ??
 					paused[modelId]?.label ??
 					modelId,
-				message: formatDownloadError(message ?? "")
+				message: formatDownloadError(event.message)
 			};
 			delete active[modelId];
 			delete paused[modelId];
 			break;
-		// "load-error" (the engine failed to start) and "activated" (the
-		// selection moved) change no transfer state here: the engine
-		// status store and the models refresh own those.
+		// "activated" (the selection moved) changes no transfer state here:
+		// the engine status store and the models refresh own those.
 		default:
 			return;
 	}
@@ -233,12 +240,29 @@ export function seedDownloads(
 let liveCount = 0;
 let stopListening: (() => void) | null = null;
 
+/**
+ * Side-effect subscribers (the models page's refreshes and toasts) hang
+ * off the ONE listener this store owns - no component registers its own
+ * model-download listener.
+ */
+const eventCallbacks = new Set<(event: DownloadEvent) => void>();
+
+export function onDownloadEvent(callback: (event: DownloadEvent) => void): () => void {
+	eventCallbacks.add(callback);
+	return () => {
+		eventCallbacks.delete(callback);
+	};
+}
+
 export function subscribeDownloads(): () => void {
 	liveCount++;
 	if (liveCount === 1) {
-		void listen<ModelDownloadEvent>(EVENTS.modelDownload, (event) =>
-			applyEvent(event.payload ?? {})
-		).then((unlisten) => {
+		void listenEvent("modelDownload", (payload) => {
+			applyEvent(payload);
+			for (const callback of eventCallbacks) {
+				callback(payload);
+			}
+		}).then((unlisten) => {
 			// a subscriber that left before the registration resolved
 			// releases the listener itself; otherwise it is the shared one
 			if (liveCount > 0 && stopListening === null) {

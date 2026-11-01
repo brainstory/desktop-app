@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { mockedListen } from "@src/test/mock-tauri";
+import type { EventCallback } from "@tauri-apps/api/event";
 
 import { AppWrapper } from "./AppWrapper";
 
 describe("AppWrapper", () => {
 	afterEach(() => {
-		vi.mocked(listen).mockReset();
-		vi.mocked(listen).mockImplementation(async () => () => {});
+		mockedListen.mockReset();
+		mockedListen.mockImplementation(async () => () => {});
 	});
 
 	it("explains a blocked quick capture instead of navigating silently", async () => {
 		const handlers: EventCallback<unknown>[] = [];
-		vi.mocked(listen).mockImplementation(async (_event, handler) => {
+		mockedListen.mockImplementation(async (_event, handler) => {
 			handlers.push(handler);
 			return () => {};
 		});
@@ -24,7 +25,7 @@ describe("AppWrapper", () => {
 		expect(screen.getByText("page content")).toBeInTheDocument();
 
 		await act(async () => {
-			await vi.waitFor(() => expect(vi.mocked(listen)).toHaveBeenCalled());
+			await vi.waitFor(() => expect(mockedListen).toHaveBeenCalled());
 		});
 		// the backend refused the shortcut: a recording is in progress
 		act(() => {

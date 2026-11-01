@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+
 import { useStore } from "@nanostores/react";
 import {
 	activateModelApi,
@@ -34,11 +34,12 @@ import {
 	clearDownloadFailure,
 	formatDownloadError,
 	seedDownloads,
+	onDownloadEvent,
 	subscribeDownloads,
 	markDownloadStarting,
 	removeActiveDownload
 } from "@components/global/downloadStore";
-import { EVENTS, QUERY_PARAMS } from "@src/tauri/commands";
+import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /**
  * The only settings fields a secret save can change: the response carries
@@ -181,42 +182,46 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		// cancels); this page adds its side effects on top. The feed is
 		// refcounted and lives exactly as long as something needs it.
 		const unsubscribe = subscribeDownloads();
-		const unlisten = listen<{
-			modelId: string;
-			label?: string;
-			kind:
-				"progress" | "paused" | "done" | "cancelled" | "error" | "load-error" | "activated";
-			pct?: number;
-			message?: string;
-		}>(EVENTS.modelDownload, (event) => {
-			const { kind, message } = event.payload ?? {};
-			if (kind === "done") {
-				setDownloadLanded(true);
-				openSnackbar(true, "Model downloaded");
-				refreshModels();
-				refreshDiskSpace();
-			} else if (kind === "paused") {
-				// the paused flag and stop point live in the listing; the
-				// row's Resume button reads them from there
-				refreshModels();
-			} else if (kind === "activated") {
-				// the selection moved to the finished download: the
-				// "Active" badge must follow
-				refreshModels();
-			} else if (kind === "error") {
-				openSnackbar(false, formatDownloadError(message ?? ""));
-			} else if (kind === "load-error") {
-				// the download itself succeeded; activating the model failed
-				openSnackbar(false, `Model downloaded, but turning it on failed: ${message}`);
-				refreshModels();
-				refreshDiskSpace();
+		// Side effects ride the store's ONE model-download listener (no
+		// second registration next to it): the feed above owns display
+		// state, this owns the catalog refreshes and toasts.
+		const unsubscribeEvents = onDownloadEvent((event) => {
+			switch (event.kind) {
+				case "done":
+					setDownloadLanded(true);
+					openSnackbar(true, "Model downloaded");
+					refreshModels();
+					refreshDiskSpace();
+					break;
+				case "paused":
+					// the paused flag and stop point live in the listing; the
+					// row's Resume button reads them from there
+					refreshModels();
+					break;
+				case "activated":
+					// the selection moved to the finished download: the
+					// "Active" badge must follow
+					refreshModels();
+					break;
+				case "error":
+					openSnackbar(false, formatDownloadError(event.message));
+					break;
+				case "load-error":
+					// the download itself succeeded; activating the model failed
+					openSnackbar(
+						false,
+						`Model downloaded, but turning it on failed: ${event.message}`
+					);
+					refreshModels();
+					refreshDiskSpace();
+					break;
+				// "progress" and "cancelled" change no catalog data: nothing
+				// to refresh, and a cancel is deliberately not toasted.
 			}
-			// "progress" and "cancelled" change no catalog data: nothing to
-			// refresh, and a cancel is deliberately not toasted.
 		});
 		return () => {
+			unsubscribeEvents();
 			unsubscribe();
-			void unlisten.then((fn) => fn());
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);

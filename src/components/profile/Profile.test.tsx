@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { mockedListen } from "@src/test/mock-tauri";
+import type { EventCallback } from "@tauri-apps/api/event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import Profile from "./Profile";
@@ -282,7 +283,7 @@ describe("Profile", () => {
 		});
 		// capture the backend event handlers Profile subscribes to
 		const handlers: Record<string, EventCallback<unknown>[]> = {};
-		vi.mocked(listen).mockImplementation(async (event, handler) => {
+		mockedListen.mockImplementation(async (event, handler) => {
 			(handlers[event] ??= []).push(handler);
 			return () => {};
 		});
@@ -312,8 +313,8 @@ describe("Profile", () => {
 				vi.mocked(invoke).mock.calls.filter(([c]) => c === "save_user_settings")
 			).toHaveLength(0);
 		} finally {
-			vi.mocked(listen).mockReset();
-			vi.mocked(listen).mockImplementation(async () => () => {});
+			mockedListen.mockReset();
+			mockedListen.mockImplementation(async () => () => {});
 		}
 	});
 

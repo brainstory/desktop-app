@@ -81,6 +81,48 @@ describe("frontend <-> rust IPC contract", () => {
 		expect(missing, "generated type files missing: " + missing.join(", ")).toEqual([]);
 	});
 
+	it("every Rust emit name is a known EVENTS value, and vice versa", () => {
+		function walkRs(dir: string, files: string[] = []): string[] {
+			for (const name of readdirSync(dir)) {
+				const full = resolve(dir, name);
+				if (statSync(full).isDirectory()) {
+					walkRs(full, files);
+				} else if (name.endsWith(".rs")) {
+					files.push(full);
+				}
+			}
+			return files;
+		}
+		const rust = walkRs(resolve(repoRoot, "src-tauri/src"))
+			.map((file) => readFileSync(file, "utf8"))
+			.join("\n");
+		// .emit("name" / .emit_to(target, "name" - the call and its
+		// first argument may span lines, and the payload after the name
+		// can be anything, so only anchor on the leading string literal
+		const emitted = new Set(
+			[...rust.matchAll(/\.emit(?:_to)?\(\s*(?:[^(]*?,\s*)?"([a-z-]+)"/gs)].map((m) => m[1]!)
+		);
+		expect(emitted.size).toBeGreaterThan(3);
+
+		const COMMANDS_TS_TEXT = readFileSync(resolve(srcRoot, "tauri/commands.ts"), "utf8");
+		const eventsBlock =
+			COMMANDS_TS_TEXT.match(/export const EVENTS = \{([\s\S]*?)\} as const;/)?.[1] ?? "";
+		const known = new Set([...eventsBlock.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]!));
+		expect(known.size).toBeGreaterThan(3);
+
+		const unregistered = [...emitted].filter((name) => !known.has(name));
+		expect(
+			unregistered,
+			`Rust emits events the frontend does not know: ${unregistered.join(", ")}`
+		).toEqual([]);
+
+		const neverEmitted = [...known].filter((name) => !emitted.has(name));
+		expect(
+			neverEmitted,
+			`EVENTS names the backend never emits: ${neverEmitted.join(", ")}`
+		).toEqual([]);
+	});
+
 	it("the Rust moderation error is recognised by isModerationError", () => {
 		const llm = readFileSync(resolve(repoRoot, "src-tauri/src/llm/external.rs"), "utf8");
 		const rustMessage = llm.match(/pub const MODERATION_ERROR: &str = "([^"]*)";/)?.[1];

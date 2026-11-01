@@ -227,11 +227,16 @@ export type CommandMap = {
 	[K in keyof typeof COMMANDS]: CommandSignatures[K];
 };
 
-/** Backend -> frontend events. */
+/** Backend -> frontend events. Payloads live in tauri/events.ts. */
 export const EVENTS = {
 	llmStatus: "llm-status",
 	sttStatus: "stt-status",
-	modelDownload: "model-download"
+	modelDownload: "model-download",
+	/** quick capture was refused (a recording or generation is live) */
+	quickCaptureBlocked: "quick-capture-blocked",
+	/** a settings row changed outside the settings page (the tray
+	 * reminder toggle); the payload names what moved */
+	userSettingsChanged: "user-settings-changed"
 } as const;
 
 /** Query params the app reads from window.location. */

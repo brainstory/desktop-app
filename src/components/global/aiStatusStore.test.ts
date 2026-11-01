@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanStores } from "nanostores";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { mockedListen } from "@src/test/mock-tauri";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 import { $aiStatus, initAiStatus, llmAvailability, llmBusy, type AiStatus } from "./aiStatusStore";
@@ -12,11 +12,11 @@ type Handler = (event: { payload: unknown }) => void;
 function captureListeners() {
 	const handlers: Record<string, Handler> = {};
 	const order: string[] = [];
-	vi.mocked(listen).mockImplementation(((name: string, handler: Handler) => {
+	mockedListen.mockImplementation(((name: string, handler: Handler) => {
 		order.push(`listen:${name}`);
 		handlers[name] = handler;
 		return Promise.resolve(() => {});
-	}) as unknown as typeof listen);
+	}) as unknown as typeof mockedListen);
 	return { handlers, order };
 }
 
@@ -27,7 +27,7 @@ function captureListenerCalls(script: Record<string, Error[]> = {}) {
 	const handlers: Record<string, Handler> = {};
 	const calls: string[] = [];
 	const unlistened: string[] = [];
-	vi.mocked(listen).mockImplementation(((name: string, handler: Handler) => {
+	mockedListen.mockImplementation(((name: string, handler: Handler) => {
 		calls.push(`listen:${name}`);
 		handlers[name] = handler;
 		const failure = script[name]?.shift();
@@ -35,7 +35,7 @@ function captureListenerCalls(script: Record<string, Error[]> = {}) {
 		return Promise.resolve(() => {
 			unlistened.push(name);
 		});
-	}) as unknown as typeof listen);
+	}) as unknown as typeof mockedListen);
 	return { handlers, calls, unlistened };
 }
 
@@ -49,7 +49,7 @@ describe("aiStatusStore", () => {
 	afterEach(() => {
 		// runs the onMount teardown: the next test starts from scratch
 		cleanStores($aiStatus);
-		vi.mocked(listen).mockReset();
+		mockedListen.mockReset();
 	});
 
 	it("starts unknown instead of claiming the model is missing", () => {
@@ -92,7 +92,7 @@ describe("aiStatusStore", () => {
 		void initAiStatus();
 		await flush();
 		expect(runtimeStatusCalls()).toHaveLength(1);
-		expect(vi.mocked(listen)).toHaveBeenCalledTimes(2);
+		expect(mockedListen).toHaveBeenCalledTimes(2);
 		a();
 		b();
 	});
@@ -352,7 +352,7 @@ describe("aiStatusStore", () => {
 			const calls: string[] = [];
 			const unlistened: string[] = [];
 			const pending: Array<() => void> = [];
-			vi.mocked(listen).mockImplementation(((name: string, handler: Handler) => {
+			mockedListen.mockImplementation(((name: string, handler: Handler) => {
 				calls.push(`listen:${name}`);
 				handlers[name] = handler;
 				return new Promise<() => void>((resolve) => {
@@ -362,7 +362,7 @@ describe("aiStatusStore", () => {
 						})
 					);
 				});
-			}) as unknown as typeof listen);
+			}) as unknown as typeof mockedListen);
 			mockInvoke({
 				get_runtime_status: () => ({ llm: { state: "ready" }, stt: { state: "ready" } })
 			});

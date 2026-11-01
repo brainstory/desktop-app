@@ -1,43 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listen, type EventCallback } from "@tauri-apps/api/event";
 
 import {
 	$downloads,
 	clearDownloadFailure,
 	formatDownloadError,
+	markDownloadStarting,
 	seedDownloads,
-	subscribeDownloads,
-	type ModelDownloadEvent
+	subscribeDownloads
 } from "./downloadStore";
-import { EVENTS } from "@src/tauri/commands";
+import type { DownloadEvent } from "@src/tauri/generated/DownloadEvent";
+import { captureListen, mockedListen } from "@src/test/mock-tauri";
 
-/** Subscribe for a test and hand back the backend handler it registered. */
+/** Subscribe for a test and hand back an emitter of typed events. */
 function subscribeCapturing(): {
-	handler: EventCallback<unknown>;
+	emit: (payload: DownloadEvent) => void;
 	unsubscribe: () => void;
 } {
-	let captured: EventCallback<unknown> | undefined;
-	vi.mocked(listen).mockImplementation(async (event, h) => {
-		if (event === EVENTS.modelDownload) captured = h;
-		return () => {};
-	});
+	const { emit, handlers } = captureListen();
 	const unsubscribe = subscribeDownloads();
 	// the mock runs synchronously inside subscribeDownloads
-	if (!captured) {
+	const downloadHandlers = handlers;
+	if (downloadHandlers.length === 0) {
 		throw new Error("the feed did not register its listener");
 	}
-	return { handler: captured, unsubscribe };
-}
-
-function emit(handler: EventCallback<unknown>, payload: ModelDownloadEvent): void {
-	handler({ event: EVENTS.modelDownload, id: 0, payload });
+	return { emit: (payload) => emit("model-download", payload), unsubscribe };
 }
 
 const IDLE = { active: {}, paused: {}, failures: {} };
 
 afterEach(() => {
-	vi.mocked(listen).mockReset();
-	vi.mocked(listen).mockImplementation(async () => () => {});
+	mockedListen.mockReset();
+	mockedListen.mockImplementation(async () => () => {});
 	$downloads.set(IDLE);
 });
 
@@ -68,16 +61,16 @@ describe("formatDownloadError", () => {
 
 describe("the download event feed", () => {
 	it("tracks a progress event, then a paused one, then the resume", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
+		const { emit, unsubscribe } = subscribeCapturing();
 
-		emit(handler, { modelId: "m1", kind: "progress", pct: 41.2, label: "Model 1" });
+		emit({ modelId: "m1", kind: "progress", pct: 41.2, label: "Model 1" });
 		expect($downloads.get().active["m1"]).toEqual({
 			pct: 41.2,
 			label: "Model 1"
 		});
 
 		// speed/ETA ride along when the backend computed them
-		emit(handler, {
+		emit({
 			modelId: "m1",
 			kind: "progress",
 			pct: 44,
@@ -91,33 +84,35 @@ describe("the download event feed", () => {
 			etaSecs: 40
 		});
 
-		emit(handler, { modelId: "m1", kind: "paused", pct: 44 });
+		emit({ modelId: "m1", kind: "paused", pct: 44, label: "Model 1" });
 		expect($downloads.get().active["m1"]).toBeUndefined();
 		expect($downloads.get().paused["m1"]).toEqual({ pct: 44, label: "Model 1" });
 
 		// resuming: progress supersedes the paused marker
-		emit(handler, { modelId: "m1", kind: "progress", pct: 46 });
+		emit({ modelId: "m1", kind: "progress", pct: 46, label: "Model 1" });
 		expect($downloads.get().paused["m1"]).toBeUndefined();
 		expect($downloads.get().active["m1"]).toEqual({ pct: 46, label: "Model 1" });
 
 		// done clears everything for the model
-		emit(handler, { modelId: "m1", kind: "done" });
+		emit({ modelId: "m1", kind: "done", label: "Model 1" });
 		expect($downloads.get().active["m1"]).toBeUndefined();
 		expect($downloads.get().paused["m1"]).toBeUndefined();
 		unsubscribe();
 	});
 
 	it("records an unknown size as the indeterminate sentinel", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
-		emit(handler, { modelId: "m1", kind: "progress" });
-		expect($downloads.get().active["m1"]).toEqual({ pct: -1, label: "m1" });
+		// the typed event always carries a pct; the -1 sentinel is the
+		// optimistic seed a button press plants before the first event
+		const unsubscribe = subscribeDownloads();
+		markDownloadStarting("m1", "Model 1");
+		expect($downloads.get().active["m1"]).toEqual({ pct: -1, label: "Model 1" });
 		unsubscribe();
 	});
 
 	it("a failure reads in plain language and clears progress", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
-		emit(handler, { modelId: "m1", kind: "progress", pct: 10, label: "Model 1" });
-		emit(handler, {
+		const { emit, unsubscribe } = subscribeCapturing();
+		emit({ modelId: "m1", kind: "progress", pct: 10, label: "Model 1" });
+		emit({
 			modelId: "m1",
 			kind: "error",
 			message: "download stalled (no data for 60s) - please retry"
@@ -130,32 +125,34 @@ describe("the download event feed", () => {
 		});
 
 		// a retry event wipes the recorded failure
-		emit(handler, { modelId: "m1", kind: "progress", pct: 1 });
+		emit({ modelId: "m1", kind: "progress", pct: 1, label: "Model 1" });
 		expect($downloads.get().failures["m1"]).toBeUndefined();
 		unsubscribe();
 	});
 
 	it("a cancel is not an error: it clears progress and records nothing", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
-		emit(handler, { modelId: "m1", kind: "progress", pct: 80 });
-		emit(handler, { modelId: "m1", kind: "cancelled" });
+		const { emit, unsubscribe } = subscribeCapturing();
+		emit({ modelId: "m1", kind: "progress", pct: 80, label: "Model 1" });
+		emit({ modelId: "m1", kind: "cancelled", label: "Model 1" });
 		expect($downloads.get()).toEqual({ active: {}, paused: {}, failures: {} });
 		unsubscribe();
 	});
 
-	it("ignores events without a model id or a kind", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
-		emit(handler, { kind: "progress", pct: 10 });
-		emit(handler, { modelId: "m1" });
-		emit(handler, { modelId: "m1", kind: "activated" });
+	it("ignores channel-shaped events (no model id) and activations", () => {
+		const { emit, unsubscribe } = subscribeCapturing();
+		// the per-download channel variant carries no model id; the
+		// global event with the model id follows immediately
+		emit({ kind: "progress", pct: 10 });
+		emit({ kind: "done" });
+		emit({ modelId: "m1", kind: "activated", label: "Model 1" });
 		expect($downloads.get()).toEqual(IDLE);
 		unsubscribe();
 	});
 
 	it("clearDownloadFailure drops one recorded failure", () => {
-		const { handler, unsubscribe } = subscribeCapturing();
-		emit(handler, { modelId: "m1", kind: "error", message: "boom" });
-		emit(handler, { modelId: "m2", kind: "error", message: "boom" });
+		const { emit, unsubscribe } = subscribeCapturing();
+		emit({ modelId: "m1", kind: "error", message: "boom", label: "Model 1" });
+		emit({ modelId: "m2", kind: "error", message: "boom", label: "Model 2" });
 		clearDownloadFailure("m1");
 		expect(Object.keys($downloads.get().failures)).toEqual(["m2"]);
 		// an unknown id is a harmless no-op
@@ -193,11 +190,11 @@ describe("seedDownloads", () => {
 
 describe("subscribeDownloads", () => {
 	it("shares one listener and resets the store when the last subscriber leaves", async () => {
-		vi.mocked(listen).mockImplementation(async () => () => {});
+		mockedListen.mockImplementation(async () => () => {});
 		const first = subscribeDownloads();
 		const second = subscribeDownloads();
 		// one registration for both subscribers (the shared feed)
-		expect(vi.mocked(listen)).toHaveBeenCalledTimes(1);
+		expect(mockedListen).toHaveBeenCalledTimes(1);
 
 		$downloads.set({ active: { m: { pct: 1, label: "M" } }, paused: {}, failures: {} });
 		first();
@@ -210,7 +207,7 @@ describe("subscribeDownloads", () => {
 	it("a subscriber that leaves before registration resolves releases the listener itself", async () => {
 		const unlisten = vi.fn();
 		let release!: () => void;
-		vi.mocked(listen).mockImplementation(
+		mockedListen.mockImplementation(
 			() =>
 				new Promise((resolve) => {
 					release = () => resolve(unlisten);

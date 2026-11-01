@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent } from "@src/tauri/events";
 import { useStore } from "@nanostores/react";
 import { $userState } from "@components/global/userStore";
 
@@ -101,11 +101,11 @@ function ProfileInner() {
 	// it only adopts fresh data when not dirty).
 	useEffect(() => {
 		let unlisten: (() => void) | undefined;
-		void listen<{ reminderEnabled?: boolean }>("user-settings-changed", (event) => {
-			const enabled = event.payload?.reminderEnabled;
-			if (typeof enabled !== "boolean") return;
+		void listenEvent("userSettingsChanged", ({ reminderEnabled }) => {
 			setNotifications((prev) =>
-				prev.map((entry, index) => (index === 0 ? { ...entry, enabled } : entry))
+				prev.map((entry, index) =>
+					index === 0 ? { ...entry, enabled: reminderEnabled } : entry
+				)
 			);
 		}).then((fn) => {
 			unlisten = fn;

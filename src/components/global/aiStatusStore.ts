@@ -1,6 +1,5 @@
 import { atom, onMount } from "nanostores";
 import { getRuntimeStatusApi, type EngineStatus } from "@helpers/api/models";
-import { EVENTS } from "@src/tauri/commands";
 
 /**
  * Single source of truth for the local AI engine states, seeded once
@@ -65,7 +64,7 @@ function startLifecycle(gen: number): Promise<void> {
 
 	const attempt = async (): Promise<void> => {
 		if (gen !== generation) return;
-		const { listen } = await import("@tauri-apps/api/event");
+		const { listenEvent } = await import("@src/tauri/events");
 		if (gen !== generation) return;
 		if (unlisteners.length === 0) {
 			// Listen BEFORE reading the initial status: an event emitted
@@ -75,15 +74,15 @@ function startLifecycle(gen: number): Promise<void> {
 			const acquired: (() => void)[] = [];
 			try {
 				acquired.push(
-					await listen<EngineStatus>(EVENTS.llmStatus, (event) => {
+					await listenEvent("llmStatus", (status) => {
 						fromEvent.llm = true;
-						$aiStatus.set({ ...$aiStatus.get(), llm: event.payload });
+						$aiStatus.set({ ...$aiStatus.get(), llm: status });
 					})
 				);
 				acquired.push(
-					await listen<EngineStatus>(EVENTS.sttStatus, (event) => {
+					await listenEvent("sttStatus", (status) => {
 						fromEvent.stt = true;
-						$aiStatus.set({ ...$aiStatus.get(), stt: event.payload });
+						$aiStatus.set({ ...$aiStatus.get(), stt: status });
 					})
 				);
 			} catch (e) {
