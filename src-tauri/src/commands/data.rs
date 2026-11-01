@@ -64,45 +64,58 @@ pub async fn get_daily_status(app: tauri::AppHandle) -> Result<DailyStatus, Stri
 }
 
 /// Open the app's data folder (database, models metadata) in the
-/// system file manager.
+/// system file manager. Async: the opener call blocks, and a sync
+/// command would run it on the main (UI) thread.
 #[tauri::command]
-pub fn open_data_folder(app: tauri::AppHandle) -> Result<(), String> {
-	let dir = app.state::<AppState>().data_dir.clone();
-	open_in_file_manager(&app, &dir)
+pub async fn open_data_folder(app: tauri::AppHandle) -> Result<(), String> {
+	run_blocking("open data folder", move || {
+		let dir = app.state::<AppState>().data_dir.clone();
+		open_in_file_manager(&app, &dir)
+	})
+	.await
 }
 
-/// Reveal the newest log file in the system file manager.
+/// The newest brainstory log file in `dir` (rotation may have renamed
+/// it): the `brainstory*` entry with the latest mtime, None when the
+/// directory holds no log or cannot be read.
+fn newest_log_file(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+	std::fs::read_dir(dir).ok().and_then(|entries| {
+		entries
+			.filter_map(|entry| entry.ok())
+			.filter(|entry| {
+				entry
+					.file_name()
+					.to_string_lossy()
+					.starts_with("brainstory")
+			})
+			.max_by_key(|entry| {
+				entry
+					.metadata()
+					.ok()
+					.and_then(|meta| meta.modified().ok())
+					.map(|time| {
+						time.duration_since(std::time::UNIX_EPOCH)
+							.map(|d| d.as_secs())
+							.unwrap_or(0)
+					})
+					.unwrap_or(0)
+			})
+			.map(|entry| entry.path())
+	})
+}
+
+/// Reveal the newest log file in the system file manager. Async: the
+/// directory walk and the opener call both block.
 #[tauri::command]
-pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
-	use tauri::Manager;
-	let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
-	// the newest brainstory log file (rotation may have renamed it)
-	let log_file = std::fs::read_dir(&dir)
-		.map_err(|e| e.to_string())?
-		.filter_map(|entry| entry.ok())
-		.filter(|entry| {
-			entry
-				.file_name()
-				.to_string_lossy()
-				.starts_with("brainstory")
-		})
-		.max_by_key(|entry| {
-			entry
-				.metadata()
-				.ok()
-				.and_then(|meta| meta.modified().ok())
-				.map(|time| {
-					time.duration_since(std::time::UNIX_EPOCH)
-						.map(|d| d.as_secs())
-						.unwrap_or(0)
-				})
-				.unwrap_or(0)
-		})
-		.map(|entry| entry.path());
-	match log_file {
-		Some(file) => reveal_in_file_manager(&app, &file),
-		None => open_in_file_manager(&app, &dir),
-	}
+pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+	run_blocking("open log folder", move || {
+		let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+		match newest_log_file(&dir) {
+			Some(file) => reveal_in_file_manager(&app, &file),
+			None => open_in_file_manager(&app, &dir),
+		}
+	})
+	.await
 }
 
 fn open_in_file_manager(app: &tauri::AppHandle, path: &std::path::Path) -> Result<(), String> {
@@ -121,88 +134,77 @@ fn reveal_in_file_manager(app: &tauri::AppHandle, path: &std::path::Path) -> Res
 
 /// A diagnostics bundle for support: app version, OS, the active engine
 /// statuses, free disk space and the tail of the log. Nothing leaves the
-/// device - the caller copies it to the clipboard.
+/// device - the caller copies it to the clipboard. Async: reading the
+/// log (up to 2 MB) and the free-space stat block.
 #[tauri::command]
-pub fn copy_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
-	use tauri::Manager;
-	let state = app.state::<AppState>();
-	let mut report = String::new();
-	report.push_str(&format!(
-		"Brainstory {} ({})\n",
-		env!("CARGO_PKG_VERSION"),
-		std::env::consts::OS
-	));
-	let llm = state.llm_status.lock().unwrap_or_else(|e| e.into_inner());
-	report.push_str(&format!(
-		"LLM: {:?} {}\n",
-		llm.state,
-		llm.model_id.as_deref().unwrap_or("-")
-	));
-	drop(llm);
-	let stt = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
-	report.push_str(&format!(
-		"STT: {:?} {}\n",
-		stt.state,
-		stt.model_id.as_deref().unwrap_or("-")
-	));
-	drop(stt);
-	if let Ok(free) = fs4::available_space(&state.data_dir) {
-		report.push_str(&format!("free disk: {} MB\n", free / (1024 * 1024)));
-	}
-	if let Ok(dir) = app.path().app_log_dir() {
-		let log_file = std::fs::read_dir(&dir).ok().and_then(|entries| {
-			entries
-				.filter_map(|entry| entry.ok())
-				.filter(|entry| {
-					entry
-						.file_name()
-						.to_string_lossy()
-						.starts_with("brainstory")
-				})
-				.max_by_key(|entry| {
-					entry
-						.metadata()
-						.ok()
-						.and_then(|meta| meta.modified().ok())
-						.map(|time| {
-							time.duration_since(std::time::UNIX_EPOCH)
-								.map(|d| d.as_secs())
-								.unwrap_or(0)
-						})
-						.unwrap_or(0)
-				})
-				.map(|entry| entry.path())
-		});
-		if let Some(file) = log_file {
-			if let Ok(contents) = std::fs::read_to_string(&file) {
-				let tail: Vec<&str> = contents.lines().rev().take(50).collect();
-				report.push_str("--- last log lines ---\n");
-				for line in tail.iter().rev() {
-					report.push_str(line);
-					report.push('\n');
+pub async fn copy_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
+	run_blocking("copy diagnostics", move || {
+		let state = app.state::<AppState>();
+		let mut report = String::new();
+		report.push_str(&format!(
+			"Brainstory {} ({})\n",
+			env!("CARGO_PKG_VERSION"),
+			std::env::consts::OS
+		));
+		let llm = state.llm_status.lock().unwrap_or_else(|e| e.into_inner());
+		report.push_str(&format!(
+			"LLM: {:?} {}\n",
+			llm.state,
+			llm.model_id.as_deref().unwrap_or("-")
+		));
+		drop(llm);
+		let stt = state.stt_status.lock().unwrap_or_else(|e| e.into_inner());
+		report.push_str(&format!(
+			"STT: {:?} {}\n",
+			stt.state,
+			stt.model_id.as_deref().unwrap_or("-")
+		));
+		drop(stt);
+		if let Ok(free) = fs4::available_space(&state.data_dir) {
+			report.push_str(&format!("free disk: {} MB\n", free / (1024 * 1024)));
+		}
+		if let Ok(dir) = app.path().app_log_dir() {
+			if let Some(file) = newest_log_file(&dir) {
+				if let Ok(contents) = std::fs::read_to_string(&file) {
+					let tail: Vec<&str> = contents.lines().rev().take(50).collect();
+					report.push_str("--- last log lines ---\n");
+					for line in tail.iter().rev() {
+						report.push_str(line);
+						report.push('\n');
+					}
 				}
 			}
 		}
-	}
-	Ok(report)
-}
-
-/// Enumerate the machine's microphones: (name, is-default).
-#[tauri::command]
-pub fn list_input_devices() -> Vec<serde_json::Value> {
-	crate::voice::list_input_devices()
-		.into_iter()
-		.map(|(name, is_default)| serde_json::json!({ "name": name, "isDefault": is_default }))
-		.collect()
-}
-
-/// The stored microphone preference (empty = system default).
-#[tauri::command]
-pub fn get_input_device(app: tauri::AppHandle) -> serde_json::Value {
-	let state = app.state::<AppState>();
-	serde_json::json!({
-		"name": state.db.get_setting(crate::keys::setting::INPUT_DEVICE).unwrap_or_default(),
+		Ok(report)
 	})
+	.await
+}
+
+/// Enumerate the machine's microphones: (name, is-default). Async:
+/// cpal/CoreAudio device enumeration blocks (the same reason
+/// start_voice_capture is async).
+#[tauri::command]
+pub async fn list_input_devices() -> Result<Vec<serde_json::Value>, String> {
+	run_blocking("list input devices", move || {
+		Ok(crate::voice::list_input_devices()
+			.into_iter()
+			.map(|(name, is_default)| serde_json::json!({ "name": name, "isDefault": is_default }))
+			.collect())
+	})
+	.await
+}
+
+/// The stored microphone preference (empty = system default). Async:
+/// the SQLite read sits behind a 5 s busy timeout.
+#[tauri::command]
+pub async fn get_input_device(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+	run_blocking("get input device", move || {
+		let state = app.state::<AppState>();
+		Ok(serde_json::json!({
+			"name": state.db.get_setting(crate::keys::setting::INPUT_DEVICE).unwrap_or_default(),
+		}))
+	})
+	.await
 }
 
 /// Store the preferred microphone (empty name = system default). Takes

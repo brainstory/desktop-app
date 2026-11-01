@@ -338,6 +338,19 @@ pub fn cancel_model_load(app: tauri::AppHandle) -> Result<(), String> {
 	Ok(())
 }
 
+/// Everything the download pre-flight resolved, produced in one pass on
+/// the blocking pool: the pending-file list (hub-cache scans and stats),
+/// the created cache directory, the free-space verdict and the single
+/// settings read both the endpoint and the token come from.
+struct DownloadPreflight {
+	spec: crate::models::ModelSpec,
+	pending: Vec<crate::models::ModelSpec>,
+	pending_bytes: u64,
+	cache: std::path::PathBuf,
+	hf_endpoint: String,
+	hf_token: String,
+}
+
 #[tauri::command]
 pub async fn download_model(
 	app: tauri::AppHandle,
@@ -345,79 +358,122 @@ pub async fn download_model(
 	model_id: String,
 	on_event: Channel<serde_json::Value>,
 ) -> Result<(), String> {
-	let spec = find_model(&model_id, ModelKind::Llm)
-		.or_else(|| find_model(&model_id, ModelKind::Stt))
-		.ok_or_else(|| format!("unknown model {model_id}"))?
-		.clone();
+	// The pre-flight stats the hub cache, creates directories, checks
+	// free space and reads the settings (keychain + DB when cold) - all
+	// blocking work that must not run on the async worker (or, before
+	// this command was async, on the main thread).
+	let app_for_preflight = app.clone();
+	let model_id_for_preflight = model_id.clone();
+	let preflight =
+		tauri::async_runtime::spawn_blocking(move || -> Result<DownloadPreflight, String> {
+			let state = app_for_preflight.state::<AppState>();
+			let model_id = model_id_for_preflight;
+			let spec = find_model(&model_id, ModelKind::Llm)
+				.or_else(|| find_model(&model_id, ModelKind::Stt))
+				.ok_or_else(|| format!("unknown model {model_id}"))?
+				.clone();
+
+			// Already present (app copy or hub cache)? Nothing to
+			// download - the UI hides the button, this covers races and
+			// stale cards. A hub-cache file whose size disagrees with the
+			// pinned spec is NOT "already downloaded": a truncated or
+			// foreign copy must be re-downloadable.
+			// Every file of the model (the main file, plus the companions
+			// of a multi-file ONNX model) that is not already present. A
+			// file counts as present when it is the app copy or a
+			// hub-cache file of the pinned size; a truncated or foreign
+			// copy must be re-downloadable.
+			let present = |file: &crate::models::ModelSpec| {
+				let existing = state.resolve_model_file(file);
+				let size_matches = existing.as_ref().is_some_and(|path| {
+					std::fs::metadata(path)
+						.map(|m| m.len() == file.size_bytes)
+						.unwrap_or(false)
+				});
+				existing.is_some() && (existing == Some(state.model_path(file)) || size_matches)
+			};
+			let pending: Vec<crate::models::ModelSpec> = spec
+				.all_file_specs()
+				.into_iter()
+				.filter(|file| !present(file))
+				.collect();
+			if pending.is_empty() {
+				return Err("model is already downloaded".into());
+			}
+			let pending_bytes: u64 = pending.iter().map(|f| f.size_bytes).sum();
+
+			// Downloads land directly in the hub cache as
+			// content-addressed blobs (blobs/<pinned sha256>), the same
+			// layout other HF tooling uses, so one copy serves everyone
+			// and nothing migrates later.
+			let cache = crate::models::primary_hub_cache();
+			let dest = crate::models::hf_blob_path(&cache, &spec);
+			// All fallible setup happens BEFORE the bookkeeping is
+			// registered: a failure here must not leave the model
+			// reported as "downloading" forever (which would block
+			// re-download and delete until restart).
+			std::fs::create_dir_all(dest.parent().ok_or("blob path has no parent")?)
+				.map_err(|e| e.to_string())?;
+
+			// Pre-flight free space: a staged `.part` that can grow past
+			// the volume's limit fails late (ENOSPC mid-transfer). Refuse
+			// up front when even the model plus a 64 MiB scratch margin
+			// does not fit, crediting whatever the leftover `.part`
+			// files already hold.
+			let existing_part_len: u64 = pending
+				.iter()
+				.map(|file| {
+					std::fs::metadata(part_path(&crate::models::hf_blob_path(&cache, file)))
+						.map(|meta| meta.len())
+						.unwrap_or(0)
+				})
+				.sum();
+			let needed = pending_bytes
+				.saturating_sub(existing_part_len)
+				.saturating_add(64 * 1024 * 1024);
+			let available = fs4::available_space(&cache).map_err(|e| e.to_string())?;
+			if available < needed {
+				let short_by_mb = (needed - available) / (1024 * 1024);
+				return Err(format!(
+					"not enough disk space: this model needs about {} MB more - free some room and try again",
+					short_by_mb.max(1)
+				));
+			}
+
+			// one settings read feeds both the endpoint and the token
+			let settings = state.ai_settings();
+			Ok(DownloadPreflight {
+				spec,
+				pending,
+				pending_bytes,
+				cache,
+				hf_endpoint: crate::models::hf_endpoint(&settings),
+				hf_token: settings.hf_token,
+			})
+		})
+		.await
+		.map_err(|e| format!("download pre-flight task failed: {e}"))??;
+
+	let DownloadPreflight {
+		spec,
+		pending,
+		pending_bytes,
+		cache,
+		hf_endpoint,
+		hf_token,
+	} = preflight;
 	// Every download event carries the label, so UI surfaces outside the
 	// settings page (the sidebar progress pill, the chat setup notice)
 	// can name the model without fetching the catalog.
 	let spec_label = spec.label;
 
-	// Already present (app copy or hub cache)? Nothing to download -
-	// the UI hides the button, this covers races and stale cards. A
-	// hub-cache file whose size disagrees with the pinned spec is NOT
-	// "already downloaded": a truncated or foreign copy must be
-	// re-downloadable.
-	// Every file of the model (the main file, plus the companions of a
-	// multi-file ONNX model) that is not already present. A file counts
-	// as present when it is the app copy or a hub-cache file of the
-	// pinned size; a truncated or foreign copy must be re-downloadable.
-	let present = |file: &crate::models::ModelSpec| {
-		let existing = state.resolve_model_file(file);
-		let size_matches = existing.as_ref().is_some_and(|path| {
-			std::fs::metadata(path)
-				.map(|m| m.len() == file.size_bytes)
-				.unwrap_or(false)
-		});
-		existing.is_some() && (existing == Some(state.model_path(file)) || size_matches)
-	};
-	let pending: Vec<crate::models::ModelSpec> = spec
-		.all_file_specs()
-		.into_iter()
-		.filter(|file| !present(file))
-		.collect();
-	if pending.is_empty() {
-		return Err("model is already downloaded".into());
-	}
-	let pending_bytes: u64 = pending.iter().map(|f| f.size_bytes).sum();
-
-	// Downloads land directly in the hub cache as content-addressed
-	// blobs (blobs/<pinned sha256>), the same layout other HF tooling
-	// uses, so one copy serves everyone and nothing migrates later.
-	let cache = crate::models::primary_hub_cache();
-	let dest = crate::models::hf_blob_path(&cache, &spec);
-	// All fallible setup happens BEFORE the bookkeeping is registered: a
-	// failure here must not leave the model reported as "downloading"
-	// forever (which would block re-download and delete until restart).
-	std::fs::create_dir_all(dest.parent().ok_or("blob path has no parent")?)
-		.map_err(|e| e.to_string())?;
-
-	// Pre-flight free space: a staged `.part` that can grow past the
-	// volume's limit fails late (ENOSPC mid-transfer). Refuse up front
-	// when even the model plus a 64 MiB scratch margin does not fit,
-	// crediting whatever the leftover `.part` files already hold.
-	{
-		let existing_part_len: u64 = pending
-			.iter()
-			.map(|file| {
-				std::fs::metadata(part_path(&crate::models::hf_blob_path(&cache, file)))
-					.map(|meta| meta.len())
-					.unwrap_or(0)
-			})
-			.sum();
-		let needed = pending_bytes
-			.saturating_sub(existing_part_len)
-			.saturating_add(64 * 1024 * 1024);
-		let available = fs4::available_space(&cache).map_err(|e| e.to_string())?;
-		if available < needed {
-			let short_by_mb = (needed - available) / (1024 * 1024);
-			return Err(format!(
-				"not enough disk space: this model needs about {} MB more - free some room and try again",
-				short_by_mb.max(1)
-			));
-		}
-	}
+	// re-vet the resolved endpoint (setting, mirror or HF_ENDPOINT env)
+	// before a byte moves or the token is attached
+	crate::models::validate_endpoint_url(&hf_endpoint).map_err(|e| {
+		format!(
+			"invalid HuggingFace download endpoint (Settings, AI Models, mirror - or HF_ENDPOINT): {e}"
+		)
+	})?;
 
 	// This download gets its own cancel and pause tokens, fully
 	// independent of the generation token - chatting must never kill a
@@ -431,15 +487,6 @@ pub async fn download_model(
 	};
 
 	let app_handle = app.clone();
-	let hf_endpoint = crate::models::hf_endpoint(&state.ai_settings());
-	// re-vet the resolved endpoint (setting, mirror or HF_ENDPOINT env)
-	// before a byte moves or the token is attached
-	crate::models::validate_endpoint_url(&hf_endpoint).map_err(|e| {
-		format!(
-			"invalid HuggingFace download endpoint (Settings, AI Models, mirror - or HF_ENDPOINT): {e}"
-		)
-	})?;
-	let hf_token = state.ai_settings().hf_token;
 
 	tauri::async_runtime::spawn(async move {
 		let _guard = guard;
@@ -903,18 +950,28 @@ fn apply_activation(settings: &mut crate::models::AiSettings, spec: &crate::mode
 /// settings row is only updated once the engine actually loaded, so the
 /// recorded active model can never disagree with the runtime.
 #[tauri::command]
-pub async fn activate_model(
-	app: tauri::AppHandle,
-	state: State<'_, AppState>,
-	model_id: String,
-) -> Result<(), String> {
-	let spec = find_model(&model_id, ModelKind::Llm)
-		.or_else(|| find_model(&model_id, ModelKind::Stt))
-		.ok_or_else(|| format!("unknown model {model_id}"))?
-		.clone();
-	if !state.is_model_downloaded(&spec) {
-		return Err("model is not downloaded".into());
-	}
+pub async fn activate_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+	// The downloaded-check stats the hub cache (blocking), so it runs
+	// on the blocking pool like the load below - and off the main
+	// thread, where this ran before the command was async.
+	let app_for_check = app.clone();
+	let model_id_for_check = model_id.clone();
+	let spec = tauri::async_runtime::spawn_blocking(
+		move || -> Result<crate::models::ModelSpec, String> {
+			let state = app_for_check.state::<AppState>();
+			let model_id = model_id_for_check;
+			let spec = find_model(&model_id, ModelKind::Llm)
+				.or_else(|| find_model(&model_id, ModelKind::Stt))
+				.ok_or_else(|| format!("unknown model {model_id}"))?
+				.clone();
+			if !state.is_model_downloaded(&spec) {
+				return Err("model is not downloaded".into());
+			}
+			Ok(spec)
+		},
+	)
+	.await
+	.map_err(|e| format!("activation task failed: {e}"))??;
 
 	let app_handle = app.clone();
 	// Await the load so the invoke result tells the caller whether the

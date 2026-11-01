@@ -62,6 +62,16 @@ fn model_is_large(settings: &AiSettings) -> bool {
 	settings.uses_external_llm() || settings.llm_model.contains("E4B")
 }
 
+/// The AI settings for one generation, read once on the blocking pool
+/// (keychain + DB when the settings cache is cold), the way
+/// transcribe_wav already reads them.
+async fn read_ai_settings(app: &AppHandle) -> Result<AiSettings, String> {
+	let app = app.clone();
+	tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().ai_settings())
+		.await
+		.map_err(|e| format!("read ai settings task failed: {e}"))
+}
+
 /// RAII counter for in-flight generations: a model switch (and the
 /// quick-capture shortcut) waits for these to drain instead of yanking
 /// the page or the engine's memory out from under a live generation.
@@ -336,6 +346,10 @@ impl GenerateParams {
 /// no-op sink for the non-streaming command.
 async fn generate_and_respond<F>(
 	state: &State<'_, AppState>,
+	// settings snapshot taken once by the caller (the keychain/DB read
+	// is blocking): the whole generation runs against one consistent
+	// view instead of re-reading mid-flight
+	settings: &AiSettings,
 	request: &PromptRequest,
 	// second_pass: run the structured-JSON second pass (streaming only)
 	second_pass: bool,
@@ -347,9 +361,8 @@ where
 {
 	let request = {
 		let mut request = request.clone();
-		let settings = state.ai_settings();
-		request.built_ctx = context_budget_tokens(&settings);
-		request.model_is_large = model_is_large(&settings);
+		request.built_ctx = context_budget_tokens(settings);
+		request.model_is_large = model_is_large(settings);
 		request
 	};
 	let idea_capped = request.idea_capped_for_ctx();
@@ -360,11 +373,6 @@ where
 		.map(|m| m.content.split_whitespace().count())
 		.sum();
 	let cancel = take_cancel_token(state);
-	// A warm-cache clone in practice (the loader seeds the cache at
-	// startup); a cold read only happens after a failed save dropped it,
-	// so this stays synchronous instead of threading the app handle
-	// through the whole generation path.
-	let settings = state.ai_settings();
 
 	on_event(EmitKind::Status, "thinking...");
 
@@ -392,7 +400,7 @@ where
 	let render = request.summary_renderer();
 	let (mut output, prompt_tokens, dropped_turns) = run_generation(
 		state,
-		&settings,
+		settings,
 		system,
 		&request.messages,
 		request.summarize,
@@ -432,7 +440,7 @@ where
 				};
 				let (retry, _, _) = run_generation(
 					state,
-					&settings,
+					settings,
 					request.system_prompt(),
 					&retry_messages,
 					true,
@@ -469,7 +477,7 @@ where
 			.to_string();
 		let json_output = run_generation(
 			state,
-			&settings,
+			settings,
 			json_system,
 			&request.messages,
 			true,
@@ -506,6 +514,7 @@ where
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_response(
+	app: AppHandle,
 	state: State<'_, AppState>,
 	messages: Vec<ChatMessage>,
 	summarize: Option<bool>,
@@ -527,12 +536,16 @@ pub async fn generate_response(
 	.into_request();
 	validate_messages(&request.messages)?;
 	state.refuse_if_shutting_down()?;
-	generate_and_respond(&state, &request, false, |_, _| true).await
+	// one blocking-pool snapshot (keychain + DB when the cache is cold)
+	// feeds the whole generation - the way transcribe_wav already reads
+	let settings = read_ai_settings(&app).await?;
+	generate_and_respond(&state, &settings, &request, false, |_, _| true).await
 }
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_streaming_response(
+	app: AppHandle,
 	state: State<'_, AppState>,
 	messages: Vec<ChatMessage>,
 	summarize: Option<bool>,
@@ -555,10 +568,13 @@ pub async fn generate_streaming_response(
 	.into_request();
 	validate_messages(&request.messages)?;
 	state.refuse_if_shutting_down()?;
+	// one blocking-pool snapshot (keychain + DB when the cache is cold)
+	// feeds the whole generation - the way transcribe_wav already reads
+	let settings = read_ai_settings(&app).await?;
 	// channel events surface to the webview; a dead channel cancels
 	// generation instead of burning CPU on unseen output
 	let sender = on_event;
-	generate_and_respond(&state, &request, true, move |kind, content| {
+	generate_and_respond(&state, &settings, &request, true, move |kind, content| {
 		sender
 			.send(StreamEvent::new(kind.as_str(), content))
 			.is_ok()
@@ -576,7 +592,7 @@ pub async fn regenerate_result(
 	on_event: tauri::ipc::Channel<StreamEvent>,
 ) -> Result<serde_json::Value, String> {
 	app.state::<AppState>().refuse_if_shutting_down()?;
-	let (request, previous_result) = {
+	let (request, previous_result, settings) = {
 		let app = app.clone();
 		let idea_id = idea_id.clone();
 		tauri::async_runtime::spawn_blocking(move || {
@@ -589,6 +605,10 @@ pub async fn regenerate_result(
 			if transcript.is_empty() {
 				return Err("this idea has no transcript to regenerate from".to_string());
 			}
+			// one snapshot (this is the cold-cache case: the blocking
+			// pool, not the async worker) feeds the request build AND the
+			// generation below
+			let settings = app_state.ai_settings();
 			let mut request = PromptRequest {
 				chat_type: ChatType::parse(idea.r#type.as_deref()),
 				messages: transcript,
@@ -597,8 +617,8 @@ pub async fn regenerate_result(
 				react_to_author: None,
 				react_to_is_current_user: false,
 				structured_feedback: false,
-				built_ctx: context_budget_tokens(&app_state.ai_settings()),
-				model_is_large: model_is_large(&app_state.ai_settings()),
+				built_ctx: context_budget_tokens(&settings),
+				model_is_large: model_is_large(&settings),
 			};
 			// a feedback idea regenerates against its parent document
 			if matches!(
@@ -614,7 +634,7 @@ pub async fn regenerate_result(
 				}
 			}
 			let previous = idea.result.filter(|r| !r.is_empty());
-			Ok((request, previous))
+			Ok((request, previous, settings))
 		})
 		.await
 		.map_err(|e| format!("load idea task failed: {e}"))?
@@ -634,6 +654,7 @@ pub async fn regenerate_result(
 	let sender = on_event;
 	let outcome = generate_and_respond(
 		&app.state::<AppState>(),
+		&settings,
 		&request,
 		true,
 		move |kind, content| {
