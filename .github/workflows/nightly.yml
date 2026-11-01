@@ -185,10 +185,13 @@ jobs:
           # fails here instead of being cached
           while read -r sha file; do
             curl -fL --retry 3 -o "$dir/$file" "$base/$file"
+            # hash stdin: with a path argument, GNU sha256sum prefixes the
+            # line with "\" when the path has a backslash (RUNNER_TEMP on
+            # Windows), and the comparison below fails on a correct file
             if command -v sha256sum >/dev/null; then
-              got=$(sha256sum "$dir/$file" | cut -d' ' -f1)
+              got=$(sha256sum < "$dir/$file" | cut -d' ' -f1)
             else
-              got=$(shasum -a 256 "$dir/$file" | cut -d' ' -f1)
+              got=$(shasum -a 256 < "$dir/$file" | cut -d' ' -f1)
             fi
             if [ "$got" != "$sha" ]; then
               echo "::error::$file sha256 $got does not match the pin $sha"
