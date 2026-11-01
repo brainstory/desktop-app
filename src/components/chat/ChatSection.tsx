@@ -163,6 +163,12 @@ export function ChatSection({
 
 	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
 
+	// the specific members the interception/finish paths depend on: a
+	// whole-object dependency re-runs them on every streamed token (see
+	// the memo comments in the hooks)
+	const { ideaId: sessionIdeaId, hasUnsavedChanges, whenIdle, requestCreate } = persistence;
+	const { handleGetResult } = session;
+
 	// Cmd/Ctrl+Enter ends the session once there is something to end
 	// with (the same condition that shows a finish button)
 	// (only skips so far = nothing to save: the create would never run and
@@ -199,7 +205,7 @@ export function ChatSection({
 			const href = anchor.getAttribute("href");
 			// same-document links only; external URLs keep their default
 			if (!href || !href.startsWith("/") || href.startsWith("//")) return;
-			if (!persistence.hasUnsavedChanges()) return;
+			if (!hasUnsavedChanges()) return;
 			event.preventDefault();
 			if (leaveAnywayHrefRef.current === href) {
 				window.location.href = href;
@@ -207,7 +213,7 @@ export function ChatSection({
 			}
 			void (async () => {
 				try {
-					await persistence.whenIdle();
+					await whenIdle();
 					window.location.href = href;
 				} catch {
 					leaveAnywayHrefRef.current = href;
@@ -221,7 +227,10 @@ export function ChatSection({
 		};
 		document.addEventListener("click", onClick, true);
 		return () => document.removeEventListener("click", onClick, true);
-	}, [persistence]);
+		// the two members the interceptor reads, not the whole object: a
+		// broader key would re-register this listener on every streamed
+		// token (saveState changes while a reply streams)
+	}, [hasUnsavedChanges, whenIdle]);
 
 	// after the draft loader: its status decides whether input waits
 	const restoringDraft = draftStatus === "loading";
@@ -258,14 +267,14 @@ export function ChatSection({
 		// nothing to save or summarize yet: the create waits for a real
 		// answer, so wrapping up now would spin forever
 		if (!hasSomethingToFinish) return;
-		if (persistence.ideaId) {
-			session.handleGetResult();
+		if (sessionIdeaId) {
+			handleGetResult();
 			return;
 		}
 		finishAfterCreateRef.current = true;
 		setIsWrappingUp(true);
-		persistence.requestCreate();
-	}, [persistence, session, hasSomethingToFinish]);
+		requestCreate();
+	}, [sessionIdeaId, handleGetResult, requestCreate, hasSomethingToFinish]);
 
 	// the keyboard twin of the finish buttons (Cmd/Ctrl+Enter)
 	useEffect(() => {
@@ -283,8 +292,8 @@ export function ChatSection({
 	useEffect(() => {
 		if (!finishAfterCreateRef.current || !persistence.ideaId) return;
 		finishAfterCreateRef.current = false;
-		session.handleGetResult();
-	}, [persistence.ideaId, session]);
+		handleGetResult();
+	}, [persistence.ideaId, handleGetResult]);
 
 	if (result) {
 		return (

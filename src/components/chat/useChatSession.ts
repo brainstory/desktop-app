@@ -4,7 +4,7 @@
  * Extracted from ChatSection.
  */
 
-import { useCallback, useReducer, useRef } from "react";
+import { useCallback, useMemo, useReducer, useRef } from "react";
 import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import {
@@ -65,6 +65,14 @@ function reactionOptions(
 		reactToAuthor: parentIdea.creatorName ?? null,
 		reactToIsCurrentUser: parentIdea.creatorName == null
 	};
+}
+
+/** Index of the last user message, or -1. */
+function lastUserIndex(conversation: ChatMessage[]): number {
+	for (let i = conversation.length - 1; i >= 0; i--) {
+		if (conversation[i]!.role === "user") return i;
+	}
+	return -1;
 }
 
 /** Everything the session tracks besides the conversation itself. */
@@ -356,14 +364,6 @@ export function useChatSession(
 		[respondTo, currConversation]
 	);
 
-	/** Index of the last user message, or -1. */
-	const lastUserIndex = (conversation: ChatMessage[]): number => {
-		for (let i = conversation.length - 1; i >= 0; i--) {
-			if (conversation[i]!.role === "user") return i;
-		}
-		return -1;
-	};
-
 	/** True when the user's last answer can still be corrected: the
 	 * exchange is settled (coach replied, nothing generating) and the
 	 * last user message is a real answer (not "ask a different
@@ -383,24 +383,33 @@ export function useChatSession(
 	/** Replace the last answer and ask the coach again from there. A
 	 * mis-transcribed answer poisons the conversation, so it must be
 	 * fixable (and the reply based on it retired, not kept). */
-	const editLastUserMessage = async (newText: string): Promise<void> => {
-		if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
-			return;
-		}
-		const idx = lastUserIndex(currConversation);
-		if (idx < 0) return;
-		const next = [
-			...currConversation.slice(0, idx),
-			{ role: "user" as const, content: newText }
-		];
-		setCurrConversation(next);
-		await respondTo(next);
-	};
+	const editLastUserMessage = useCallback(
+		async (newText: string): Promise<void> => {
+			if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
+				return;
+			}
+			const idx = lastUserIndex(currConversation);
+			if (idx < 0) return;
+			const next = [
+				...currConversation.slice(0, idx),
+				{ role: "user" as const, content: newText }
+			];
+			setCurrConversation(next);
+			await respondTo(next);
+		},
+		[
+			state.conversationState,
+			state.isUserResendRequired,
+			currConversation,
+			setCurrConversation,
+			respondTo
+		]
+	);
 
 	/** Undo the last answer and the coach's reply to it: the previous
 	 * question is on screen again, ready to be answered (this time
 	 * differently). */
-	const removeLastUserTurn = (): void => {
+	const removeLastUserTurn = useCallback((): void => {
 		if (state.conversationState !== CONVERSATION_STATE.Idle || state.isUserResendRequired) {
 			return;
 		}
@@ -408,7 +417,12 @@ export function useChatSession(
 		if (idx < 0) return;
 		setCurrConversation(currConversation.slice(0, idx));
 		dispatch({ type: "userTurnRemoved" });
-	};
+	}, [
+		state.conversationState,
+		state.isUserResendRequired,
+		currConversation,
+		setCurrConversation
+	]);
 
 	/** the generated summary whose save failed, kept for a retry */
 	const unsavedResultRef = useRef<{
@@ -418,45 +432,51 @@ export function useChatSession(
 		structuredResult: unknown;
 	} | null>(null);
 
-	const persistResult = async (job: NonNullable<typeof unsavedResultRef.current>) => {
-		unsavedResultRef.current = job;
-		try {
-			await saveResult(job.ideaId, job.conversation, job.result, job.structuredResult);
-		} catch (e) {
-			// the finished-result view replaces the chat (and its error
-			// banner), so the failure is shown there, with a retry
-			dispatch({ type: "resultSaveFailed", message: normalizeApiError(e) });
-			return;
-		}
-		unsavedResultRef.current = null;
-		dispatch({ type: "resultSaved" });
-		if (fromGuideParam) {
-			markGettingStartedDone();
-		}
-	};
+	const persistResult = useCallback(
+		async (job: NonNullable<typeof unsavedResultRef.current>) => {
+			unsavedResultRef.current = job;
+			try {
+				await saveResult(job.ideaId, job.conversation, job.result, job.structuredResult);
+			} catch (e) {
+				// the finished-result view replaces the chat (and its error
+				// banner), so the failure is shown there, with a retry
+				dispatch({ type: "resultSaveFailed", message: normalizeApiError(e) });
+				return;
+			}
+			unsavedResultRef.current = null;
+			dispatch({ type: "resultSaved" });
+			if (fromGuideParam) {
+				markGettingStartedDone();
+			}
+		},
+		[saveResult, fromGuideParam]
+	);
 
 	/** Keep the partial summary as the session's result (the
 	 * stopped-early panel's "Keep this draft"). */
-	const keepPartialResult = (text: string) => {
-		if (!ideaId || !text.trim()) return;
-		void persistResult({
-			ideaId,
-			conversation: currConversation,
-			result: text,
-			structuredResult: null
-		});
-	};
+	const keepPartialResult = useCallback(
+		(text: string) => {
+			if (!ideaId || !text.trim()) return;
+			void persistResult({
+				ideaId,
+				conversation: currConversation,
+				result: text,
+				structuredResult: null
+			});
+		},
+		[ideaId, currConversation, persistResult]
+	);
 
 	/** Retry saving a generated summary after a failed save. */
-	const retrySaveResult = () => {
+	const retrySaveResult = useCallback(() => {
 		const job = unsavedResultRef.current;
 		if (!job) return;
 		dispatch({ type: "resultSaveRetried" });
 		void persistResult(job);
-	};
+	}, [persistResult]);
 
 	/** Generate idea summary result */
-	const handleGetResult = () => {
+	const handleGetResult = useCallback(() => {
 		if (chatType === CHAT_TYPE.CONTINUATION && !parentIdea?.summary) {
 			onError("The parent document is not available yet. Try again after it loads.");
 			return;
@@ -537,9 +557,18 @@ export function useChatSession(
 				onStatus: (text) => dispatch({ type: "resultStatus", text })
 			}
 		);
-	};
+	}, [
+		chatType,
+		parentIdea,
+		ideaId,
+		onError,
+		conversationEndCallbacks,
+		currConversation,
+		setResult,
+		persistResult
+	]);
 
-	const askADifferentQuestion = (): void => {
+	const askADifferentQuestion = useCallback((): void => {
 		const isUser = true;
 		addConversationMessage(
 			ASK_A_DIFFERENT_QUESTION,
@@ -548,18 +577,36 @@ export function useChatSession(
 			setCurrConversation
 		);
 		dispatch({ type: "userMessageReady" });
-	};
+	}, [currConversation, setCurrConversation]);
 
-	return {
-		...state,
-		dispatch,
-		handleGetResponse,
-		handleGetResult,
-		keepPartialResult,
-		retrySaveResult,
-		askADifferentQuestion,
-		canReviseLastAnswer,
-		editLastUserMessage,
-		removeLastUserTurn
-	};
+	// one identity while the contents are unchanged (see the matching
+	// memo in useIdeaPersistence): the state fields still re-key the
+	// object per streamed token, but the callbacks above keep their own
+	// identities, so parents can depend on those without re-registering
+	// listeners
+	return useMemo(
+		() => ({
+			...state,
+			dispatch,
+			handleGetResponse,
+			handleGetResult,
+			keepPartialResult,
+			retrySaveResult,
+			askADifferentQuestion,
+			canReviseLastAnswer,
+			editLastUserMessage,
+			removeLastUserTurn
+		}),
+		[
+			state,
+			handleGetResponse,
+			handleGetResult,
+			keepPartialResult,
+			retrySaveResult,
+			askADifferentQuestion,
+			canReviseLastAnswer,
+			editLastUserMessage,
+			removeLastUserTurn
+		]
+	);
 }

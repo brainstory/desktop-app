@@ -4,7 +4,7 @@
  * ChatSection so the component handles rendering + generation flow.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage } from "@src/types";
 import {
 	ASK_A_DIFFERENT_QUESTION,
@@ -339,29 +339,50 @@ export function useIdeaPersistence(
 		setCreateAttempt((attempt) => attempt + 1);
 	}, []);
 
-	return {
-		ideaId,
-		setIdeaId,
-		saveState,
-		setSaveState,
-		readyToCreateIdea,
-		/** a user answer other than "Ask me a different question" exists:
-		 * nothing is saved (and no session can be finished) without one */
-		hasMeaningfulAnswer,
-		requestCreate,
-		retryAutosave,
-		hasUnsavedChanges,
-		whenIdle,
-		conversationLengthRef,
-		markPersisted,
-		saveResult,
-		getIdeaApi,
-		updateIdeaApi,
-		onFatalError,
-		onParentIdea,
-		fetchedParentRef,
-		createdIdeaIdRef
-	};
+	// one identity while the contents are unchanged: the parent's
+	// effects and callbacks depend on this object, and a fresh literal
+	// per render would re-register their listeners on every streamed
+	// token (setters, refs and the module-level api functions are stable
+	// and left out of the key)
+	return useMemo(
+		() => ({
+			ideaId,
+			setIdeaId,
+			saveState,
+			setSaveState,
+			readyToCreateIdea,
+			/** a user answer other than "Ask me a different question" exists:
+			 * nothing is saved (and no session can be finished) without one */
+			hasMeaningfulAnswer,
+			requestCreate,
+			retryAutosave,
+			hasUnsavedChanges,
+			whenIdle,
+			conversationLengthRef,
+			markPersisted,
+			saveResult,
+			getIdeaApi,
+			updateIdeaApi,
+			onFatalError,
+			onParentIdea,
+			fetchedParentRef,
+			createdIdeaIdRef
+		}),
+		[
+			ideaId,
+			saveState,
+			readyToCreateIdea,
+			hasMeaningfulAnswer,
+			requestCreate,
+			retryAutosave,
+			hasUnsavedChanges,
+			whenIdle,
+			markPersisted,
+			saveResult,
+			onFatalError,
+			onParentIdea
+		]
+	);
 }
 
 /** Draft + parent idea loading, split from the autosave (different deps). */

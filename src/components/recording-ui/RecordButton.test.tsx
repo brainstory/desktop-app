@@ -113,6 +113,33 @@ describe("RecordButton", () => {
 		expect(await screen.findByText(/No speech was heard/)).toBeInTheDocument();
 	});
 
+	it("registers its keydown listener once across re-renders", async () => {
+		// the Space/Escape shortcut reads live values through a ref, so
+		// state changes (here: the parent's conversation state moving)
+		// must not re-register the window listener
+		const addSpy = vi.spyOn(window, "addEventListener");
+		const keydownAdds = () => addSpy.mock.calls.filter(([type]) => type === "keydown").length;
+
+		const first = renderRecorder(CONVERSATION_STATE.Idle);
+		const baseline = keydownAdds();
+		expect(baseline).toBeGreaterThanOrEqual(1);
+
+		first.rerender(
+			<AudioRecorder
+				{...first.props}
+				conversationState={CONVERSATION_STATE.WaitingForCoach}
+			/>
+		);
+		first.rerender(
+			<AudioRecorder
+				{...first.props}
+				conversationState={CONVERSATION_STATE.TranscribingUser}
+			/>
+		);
+		expect(keydownAdds()).toBe(baseline);
+		addSpy.mockRestore();
+	});
+
 	describe("keyboard shortcuts", () => {
 		it("Space toggles the mic when no field has focus", async () => {
 			mockInvoke({

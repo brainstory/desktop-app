@@ -211,8 +211,38 @@ function RecordButton({
 	// (and only when no field has focus - typing a space must stay
 	// typing); Escape cancels a transcription. The mic button itself
 	// stays focusable, so this is a shortcut, not the only path.
+	// The handler reads live values through a ref updated each render
+	// (the callbacksRef pattern from useVoiceCapture), so the listener
+	// registers once instead of re-registering on every streamed token.
+	const keydownStateRef = useRef({
+		isTranscribing,
+		isDisabledOverride,
+		modelLoading,
+		micBlockedReason,
+		micStarting: voice.micStarting,
+		micPermissionDenied: voice.micPermissionDenied,
+		conversationState,
+		handleCancelTranscription,
+		handleMicToggle
+	});
+	// refs are written from an effect (never during render), after every
+	// commit - before the next user keypress can arrive in practice
+	useEffect(() => {
+		keydownStateRef.current = {
+			isTranscribing,
+			isDisabledOverride,
+			modelLoading,
+			micBlockedReason,
+			micStarting: voice.micStarting,
+			micPermissionDenied: voice.micPermissionDenied,
+			conversationState,
+			handleCancelTranscription,
+			handleMicToggle
+		};
+	});
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent): void => {
+			const state = keydownStateRef.current;
 			const target = event.target as HTMLElement | null;
 			const tag = target?.tagName?.toLowerCase();
 			const inField =
@@ -221,29 +251,29 @@ function RecordButton({
 				tag === "select" ||
 				target?.isContentEditable === true;
 			if (event.key === "Escape") {
-				if (isTranscribing && !inField) {
+				if (state.isTranscribing && !inField) {
 					event.preventDefault();
-					handleCancelTranscription();
+					state.handleCancelTranscription();
 				}
 				return;
 			}
 			if (event.key !== " " || inField) return;
 			const micUsable =
-				!isDisabledOverride &&
-				!modelLoading &&
-				!micBlockedReason &&
-				!voice.micStarting &&
-				!voice.micPermissionDenied &&
-				conversationState !== CONVERSATION_STATE.WaitingForCoach &&
-				conversationState !== CONVERSATION_STATE.TranscribingUser;
+				!state.isDisabledOverride &&
+				!state.modelLoading &&
+				!state.micBlockedReason &&
+				!state.micStarting &&
+				!state.micPermissionDenied &&
+				state.conversationState !== CONVERSATION_STATE.WaitingForCoach &&
+				state.conversationState !== CONVERSATION_STATE.TranscribingUser;
 			if (micUsable) {
 				event.preventDefault();
-				handleMicToggle();
+				state.handleMicToggle();
 			}
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	});
+	}, []);
 
 	useEffect(() => {
 		if (readyToSend && !respondedRef.current) {
