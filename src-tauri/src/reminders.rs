@@ -136,21 +136,34 @@ async fn tick_in_zone(app: &AppHandle, zone: Option<Tz>) -> Duration {
 		return until_next_due(zone, now, hour, minute).min(MAX_SLEEP);
 	};
 
-	let _ = app
+	// a refused notification (denied permission is the common one) is
+	// logged, not swallowed: an invisible reminder is a support case
+	if let Err(e) = app
 		.notification()
 		.builder()
 		.title("Brainstory")
 		.body("What's on your mind today? Take a few minutes to think out loud.")
-		.show();
-	// record the firing off the async worker too (same blocking-DB rule)
+		.show()
+	{
+		log::warn!("reminder notification failed to show: {e}");
+	}
+	// record the firing off the async worker too (same blocking-DB
+	// rule). A failed write leaves LAST_FIRED unset, so the next wake
+	// re-fires the reminder - loud in the log on purpose: silently
+	// skipping the day (or looping invisibly) would be worse.
 	let record_app = app.clone();
-	let _ = tauri::async_runtime::spawn_blocking(move || {
+	let recorded = tauri::async_runtime::spawn_blocking(move || {
 		record_app
 			.state::<AppState>()
 			.db
 			.set_setting(keys::setting::REMINDER_LAST_FIRED, &today)
 	})
-	.await;
+	.await
+	.map_err(|e| e.to_string())
+	.and_then(|written| written);
+	if let Err(e) = recorded {
+		log::error!("failed to record the fired reminder: {e}");
+	}
 	until_next_due(zone, Utc::now(), hour, minute).min(MAX_SLEEP)
 }
 

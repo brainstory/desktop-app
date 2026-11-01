@@ -177,6 +177,7 @@ function ProfileInner() {
 						// explicitly, so no key-remount is needed to refresh it
 						timeZone={userTimezone || detectedTimezone()}
 						saveSettings={handleNotificationsSave}
+						openSnackbar={openSnackbar}
 					/>
 					<MicrophoneCard openSnackbar={openSnackbar} />
 					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />

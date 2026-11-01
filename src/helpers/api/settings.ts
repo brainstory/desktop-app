@@ -119,6 +119,13 @@ export function setUpdatesEnabledApi(enabled: boolean): Promise<void> {
 	return invokeCommand("setUpdatesEnabled", { enabled });
 }
 
+/** Fire a test notification (the Notifications card button). Rejects
+ * when the OS refuses - denied notification permission is the common
+ * case - so the caller can tell the user why nothing appeared. */
+export function sendTestNotificationApi(): Promise<void> {
+	return invokeCommand("sendTestNotification");
+}
+
 /** Save user settings */
 export interface SaveUserSettingsOptions {
 	name?: string | null;

@@ -739,15 +739,17 @@ pub async fn stop_and_transcribe(app: tauri::AppHandle) -> Result<serde_json::Va
 }
 
 /// Test notification command, also used to trigger the daily reminder
-/// manually from settings.
+/// manually from settings. The result surfaces an OS refusal (denied
+/// notification permission is the common one) instead of vanishing, so
+/// the settings UI can tell the user why nothing appeared.
 #[tauri::command]
-pub fn send_test_notification(app: AppHandle) {
-	let _ = app
-		.notification()
+pub fn send_test_notification(app: AppHandle) -> Result<(), String> {
+	app.notification()
 		.builder()
 		.title("Brainstory")
 		.body("Time to think out loud!")
-		.show();
+		.show()
+		.map_err(|e| e.to_string())
 }
 
 /// How long an AI command waits for an in-flight engine load (startup

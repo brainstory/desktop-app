@@ -1,5 +1,7 @@
 import { useId, useState } from "react";
 import type { NotificationSetting } from "@helpers/api/settings";
+import { sendTestNotificationApi } from "@helpers/api/settings";
+import { normalizeApiError } from "@helpers/helpers";
 
 import { Card } from "./ProfileCards";
 import { useDirtySave } from "@src/hooks/useDirtySave";
@@ -27,12 +29,16 @@ interface NotificationsCardProps {
 	timeZone?: string | null;
 	/** Resolves true once persisted, false if the save failed. */
 	saveSettings: (fields: NotificationSetting[]) => Promise<boolean>;
+	/** Surfaces a refused test notification (permission denied is the
+	 * common case) instead of showing nothing. */
+	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 export function NotificationsCard({
 	notificationsData = [],
 	timeZone,
-	saveSettings
+	saveSettings,
+	openSnackbar
 }: NotificationsCardProps) {
 	const [notificationFields, setNotificationFields] =
 		useState<NotificationSetting[]>(notificationsData);
@@ -55,6 +61,12 @@ export function NotificationsCard({
 
 	const handleSaveClick = () => {
 		void save(notificationFields, saveSettings);
+	};
+
+	const handleTestClick = () => {
+		sendTestNotificationApi().catch((e) => {
+			openSnackbar(false, normalizeApiError(e));
+		});
 	};
 
 	const renderNotificationFields = (fields: NotificationSetting[]) => {
@@ -146,14 +158,14 @@ export function NotificationsCard({
 				{renderNotificationFields(notificationFields)}
 			</div>
 
-			<Button
-				variant="pink"
-				disabled={!hasChanged || isSaving}
-				onClick={handleSaveClick}
-				classes="mt-8 mx-auto"
-			>
-				Save
-			</Button>
+			<div className="flex flex-wrap gap-2 justify-center mt-8">
+				<Button variant="pink" disabled={!hasChanged || isSaving} onClick={handleSaveClick}>
+					Save
+				</Button>
+				<Button variant="bordered" onClick={handleTestClick}>
+					Send test notification
+				</Button>
+			</div>
 		</Card>
 	);
 }
