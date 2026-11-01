@@ -131,6 +131,32 @@ impl ExternalLlm {
 	/// server has already generated it when the headers arrive).
 	const JSON_BODY_TIMEOUT_SECS: u64 = 120;
 
+	/// The client for the SAVED external-LLM settings. `api_key_override`
+	/// (a freshly typed candidate) wins over the stored key, so the
+	/// settings page's Test can validate a key before it is ever saved;
+	/// generation passes None. Single source of truth for the endpoint
+	/// construction: URL, "default" model fallback and the 0-means-
+	/// default context rule live here, not at each call site.
+	pub fn from_settings(
+		settings: &crate::models::AiSettings,
+		api_key_override: Option<&str>,
+	) -> Result<Self, String> {
+		if settings.ext_llm_base_url.is_empty() {
+			return Err("external LLM endpoint is not configured".into());
+		}
+		let model = if settings.ext_llm_model.is_empty() {
+			"default"
+		} else {
+			settings.ext_llm_model.as_str()
+		};
+		Self::new(
+			&settings.ext_llm_base_url,
+			api_key_override.unwrap_or(&settings.ext_llm_api_key),
+			model,
+			settings.ext_llm_ctx(),
+		)
+	}
+
 	pub fn new(
 		base_url: &str,
 		api_key: &str,

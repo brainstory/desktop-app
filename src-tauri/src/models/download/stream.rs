@@ -11,6 +11,25 @@ use super::USER_AGENT;
 /// to be retried before the startup sweep reclaims the disk space.
 const PART_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
+/// One HTTP client for every model download (the same shape as the
+/// shared clients in llm/external.rs and stt.rs): a client per transfer
+/// threw away its connection pool, and a resume or a companion file
+/// right after a finished download re-handshakes TCP + TLS for nothing.
+fn shared_client() -> Result<reqwest::Client, String> {
+	static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+	if let Some(client) = CLIENT.get() {
+		return Ok(client.clone());
+	}
+	let client = reqwest::Client::builder()
+		.connect_timeout(std::time::Duration::from_secs(15))
+		// never let a redirect downgrade the token-bearing transfer to
+		// plaintext http on a remote host
+		.redirect(crate::models::hardened_redirect_policy())
+		.build()
+		.map_err(|e| format!("failed to build HTTP client: {e}"))?;
+	Ok(CLIENT.get_or_init(|| client).clone())
+}
+
 /// Startup cleanup of `.part` staging files. Downloads resume from a
 /// `.part` across restarts, so only files that can never be resumed go:
 /// - in the legacy app models dir, every `.part` (downloads no longer
@@ -281,13 +300,7 @@ async fn download_with_timeouts(
 
 	let tmp = part_path(dest);
 
-	let client = reqwest::Client::builder()
-		.connect_timeout(std::time::Duration::from_secs(15))
-		// never let a redirect downgrade the token-bearing transfer to
-		// plaintext http on a remote host
-		.redirect(crate::models::hardened_redirect_policy())
-		.build()
-		.map_err(|e| e.to_string())?;
+	let client = shared_client()?;
 
 	// Resume support: a leftover .part from a quit mid-download can be
 	// continued with a Range request instead of restarting multi-GB from

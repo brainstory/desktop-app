@@ -228,6 +228,11 @@ pub async fn set_input_device(app: tauri::AppHandle, name: Option<String>) -> Re
 #[tauri::command]
 pub async fn test_input_device() -> Result<serde_json::Value, String> {
 	tauri::async_runtime::spawn_blocking(|| {
+		// a live capture (an idea being recorded) must not be stopped and
+		// its audio consumed by a two-second mic test
+		if crate::voice::is_capturing() {
+			return Err("a recording is in progress".into());
+		}
 		crate::voice::start_capture()?;
 		std::thread::sleep(std::time::Duration::from_millis(2_000));
 		let wav = crate::voice::stop_capture()?;

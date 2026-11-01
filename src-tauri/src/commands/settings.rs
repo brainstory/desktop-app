@@ -391,22 +391,7 @@ pub async fn test_llm_endpoint(
 	// candidate before it is ever saved, without sending the stored
 	// secret to a freshly configured host.
 	let candidate_key = api_key.filter(|key| !key.trim().is_empty());
-	let client = crate::llm::ExternalLlm::new(
-		&settings.ext_llm_base_url,
-		candidate_key
-			.as_deref()
-			.unwrap_or(&settings.ext_llm_api_key),
-		if settings.ext_llm_model.is_empty() {
-			"default"
-		} else {
-			&settings.ext_llm_model
-		},
-		if settings.ext_llm_ctx_tokens == 0 {
-			crate::llm::DEFAULT_EXT_CTX
-		} else {
-			settings.ext_llm_ctx_tokens
-		},
-	)?;
+	let client = crate::llm::ExternalLlm::from_settings(&settings, candidate_key.as_deref())?;
 	let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let mut got_any = false;
 	let (output, _, _) = client

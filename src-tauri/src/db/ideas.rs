@@ -858,7 +858,7 @@ impl Db {
 		}
 		for idea in &mut ideas {
 			if let Some(feedback) = children.remove(&idea.id) {
-				*idea.feedback.as_mut().unwrap() = feedback;
+				idea.feedback = Some(feedback);
 			}
 		}
 		Ok(ideas)

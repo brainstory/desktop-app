@@ -144,10 +144,9 @@ pub async fn get_apple_stt_status() -> Result<serde_json::Value, String> {
 /// that runs out of space still fails cleanly through the normal error
 /// path (hash/size verification catches the truncated file).
 #[tauri::command]
-pub async fn get_free_disk_space(state: State<'_, AppState>) -> Result<u64, String> {
+pub async fn get_free_disk_space() -> Result<u64, String> {
 	// Downloads land in the hub cache now: warn about the volume they
 	// will actually hit, not the (legacy) app models dir.
-	let _ = state;
 	tauri::async_runtime::spawn_blocking(|| {
 		let dir = crate::models::primary_hub_cache();
 		std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

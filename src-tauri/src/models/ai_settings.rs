@@ -303,6 +303,10 @@ fn valid_llm_ctx(v: u32) -> bool {
 	v == 0 || (v % 1024 == 0 && (8192..=131072).contains(&v))
 }
 
+/// Upper bound on an incoming secret string (HuggingFace token, external
+/// API keys): real credentials are orders of magnitude smaller.
+const MAX_SECRET_BYTES: usize = 4096;
+
 impl AiSettings {
 	/// The three secrets in a fixed order (hf token, ext LLM key, ext
 	/// STT key) - the index into `secrets_plaintext`.
@@ -418,11 +422,36 @@ impl AiSettings {
 		self.stt_mode == SttMode::External && !self.ext_stt_base_url.is_empty()
 	}
 
+	/// The context window an external LLM request budgets against: the
+	/// configured limit, or the app default when the setting is 0 (the
+	/// default sentinel). Single source of truth for the "0 means
+	/// default" rule, shared by generation and the endpoint test.
+	pub fn ext_llm_ctx(&self) -> u32 {
+		if self.ext_llm_ctx_tokens == 0 {
+			crate::llm::DEFAULT_EXT_CTX
+		} else {
+			self.ext_llm_ctx_tokens
+		}
+	}
+
 	/// Validate and apply a partial update from the settings form
 	/// (absent/null fields keep their value). Err rejects the whole
 	/// update; nothing is applied on failure.
 	pub fn apply_updates(&mut self, ai: &serde_json::Value) -> Result<(), String> {
 		let get_str = |key: &str| ai[key].as_str().map(|s| s.to_string());
+		// Real tokens and API keys are far smaller than this, so an
+		// oversized one is a bug or a compromised webview - reject it
+		// like every other over-long IPC string instead of storing it
+		// (and later sending it to a server).
+		let secret = |field: &str, v: String| -> Result<String, String> {
+			if v.len() > MAX_SECRET_BYTES {
+				return Err(format!(
+					"{field} is too large ({} bytes, at most {MAX_SECRET_BYTES} accepted)",
+					v.len()
+				));
+			}
+			Ok(v)
+		};
 
 		if let Some(v) = get_str("llmMode") {
 			self.llm_mode = v.parse::<LlmMode>()?;
@@ -530,13 +559,13 @@ impl AiSettings {
 			self.hf_endpoint = v.trim().trim_end_matches('/').to_string();
 		}
 		if let Some(v) = get_str("hfToken") {
-			self.hf_token = v;
+			self.hf_token = secret("hfToken", v)?;
 		}
 		if let Some(v) = get_str("extLlmApiKey") {
-			self.ext_llm_api_key = v;
+			self.ext_llm_api_key = secret("extLlmApiKey", v)?;
 		}
 		if let Some(v) = get_str("extSttApiKey") {
-			self.ext_stt_api_key = v;
+			self.ext_stt_api_key = secret("extSttApiKey", v)?;
 		}
 		Ok(())
 	}
@@ -733,6 +762,34 @@ mod tests {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let db = Db::open(&dir.path().join(format!("{name}.db"))).expect("open test db");
 		(db, dir)
+	}
+
+	#[test]
+	fn oversized_secrets_are_rejected_and_nothing_is_applied() {
+		let (db, _dir) = temp_db("secret-bounds");
+		let mut s = AiSettings::load(&db);
+		let huge = "x".repeat(super::MAX_SECRET_BYTES + 1);
+		for field in ["hfToken", "extLlmApiKey", "extSttApiKey"] {
+			let err = s
+				.apply_updates(&serde_json::json!({ field: huge }))
+				.expect_err("an oversized secret must be rejected");
+			assert!(
+				err.contains(&format!(
+					"{field} is too large ({} bytes",
+					super::MAX_SECRET_BYTES + 1
+				)),
+				"{field}: {err}"
+			);
+		}
+		// the rejected update applied nothing
+		assert_eq!(s.hf_token, "");
+		assert_eq!(s.ext_llm_api_key, "");
+		assert_eq!(s.ext_stt_api_key, "");
+		// a key at exactly the bound still saves
+		let at_bound = "k".repeat(super::MAX_SECRET_BYTES);
+		s.apply_updates(&serde_json::json!({ "hfToken": at_bound }))
+			.expect("the bound itself is accepted");
+		assert_eq!(s.hf_token.len(), super::MAX_SECRET_BYTES);
 	}
 
 	#[test]

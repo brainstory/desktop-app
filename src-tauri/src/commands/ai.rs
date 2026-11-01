@@ -44,12 +44,7 @@ fn take_transcription_token(state: &AppState) -> Arc<AtomicBool> {
 /// idea-document cap).
 fn context_budget_tokens(settings: &AiSettings) -> u32 {
 	if settings.uses_external_llm() {
-		// 0 = the default; validated to sane multiples when saved
-		if settings.ext_llm_ctx_tokens == 0 {
-			crate::llm::DEFAULT_EXT_CTX
-		} else {
-			settings.ext_llm_ctx_tokens
-		}
+		settings.ext_llm_ctx()
 	} else {
 		crate::llm::effective_ctx_for(settings.llm_ctx_tokens, None)
 	}
@@ -870,27 +865,6 @@ async fn await_stt_engine(state: &AppState) -> Result<Arc<crate::stt::SttEngine>
 	.await
 }
 
-fn external_llm(settings: &AiSettings) -> Result<ExternalLlm, String> {
-	if settings.ext_llm_base_url.is_empty() {
-		return Err("external LLM endpoint is not configured".into());
-	}
-	let ctx = if settings.ext_llm_ctx_tokens == 0 {
-		crate::llm::DEFAULT_EXT_CTX
-	} else {
-		settings.ext_llm_ctx_tokens
-	};
-	ExternalLlm::new(
-		&settings.ext_llm_base_url,
-		&settings.ext_llm_api_key,
-		if settings.ext_llm_model.is_empty() {
-			"default"
-		} else {
-			&settings.ext_llm_model
-		},
-		ctx,
-	)
-}
-
 /// Run one LLM call on the configured backend (local llama.cpp or external
 /// OpenAI-compatible endpoint), streaming pieces through `on_chunk`.
 /// Returns the final text, the prompt token count (0 when unknown, as
@@ -917,7 +891,7 @@ async fn run_generation(
 		crate::llm::MAX_NEW_TOKENS_RESPONSE
 	};
 	if settings.uses_external_llm() {
-		let client = external_llm(settings)?;
+		let client = ExternalLlm::from_settings(settings, None)?;
 		let (text, _prompt_tokens, dropped_turns) = client
 			.generate(
 				&system,
