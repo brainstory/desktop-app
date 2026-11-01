@@ -113,12 +113,15 @@ jobs:
         run: cargo fmt --check
 
       # --all-targets also compile-checks the env-gated integration tests
-      # (engine_smoke, model_prompts) and examples without needing model files
+      # (engine_smoke, model_prompts, special_tokens, speech_pipeline,
+      # apple_stt_smoke) and examples without needing model files
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      # Unit tests only: engine_smoke / model_prompts require real model
-      # files via env vars and are run manually (see README)
+      # Unit tests only: engine_smoke / speech_pipeline / special_tokens
+      # run in the nightly workflow with real (tiny) models; model_prompts
+      # and apple_stt_smoke need bigger/macOS-only fixtures and stay
+      # manual (see README)
       - name: Tests
         run: cargo test --lib --locked
 

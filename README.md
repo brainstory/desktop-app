@@ -194,8 +194,9 @@ servers" here means *no Brainstory servers*, not "no network".
 ## Manual model tests
 
 These integration tests need real model files and never run in CI's unit-test job (the
-nightly workflow runs the engine smoke test with tiny downloaded models, and the speech
-pipeline test with a cached Parakeet model and speech from each OS's own synthesizer):
+nightly workflow runs the engine smoke test and the special-token neutralization test
+with a tiny downloaded model, and the speech pipeline test with a cached Parakeet model
+and speech from each OS's own synthesizer):
 
 ```sh
 # whisper + llama coexisting in one process, with a tiny (~1 MB) test llama:
@@ -208,6 +209,9 @@ LLM_MODEL_PATH=/path/to/model.gguf cargo test --test model_prompts
 
 # Apple Speech smoke test (macOS 26 host, terminal needs speech permission):
 APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke
+
+# first-token latency benchmark (an example, not a test; use --release):
+LLM_MODEL_PATH=/path/to/model.gguf cargo run --release --example first_token_latency
 
 # the local speech pipeline on real speech: resampling, VAD, RNNoise and
 # Parakeet (plus whisper in the same process when WHISPER_MODEL_PATH is set);

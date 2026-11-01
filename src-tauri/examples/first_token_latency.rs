@@ -1,7 +1,7 @@
 //! OPTIONAL first-token-latency benchmark over the local engine,
-//! env-gated on LLM_MODEL_PATH like the other model-gated suites - but
-//! unlike them it SKIPS (with a printed note) when the variable is
-//! unset, because it is a measurement harness, not an assertion.
+//! env-gated on LLM_MODEL_PATH. An example, not a test: it measures and
+//! prints instead of asserting, so `cargo test` never picks it up
+//! (cargo still compiles it under --all-targets).
 //!
 //! Per conversation turn it prints the wall time from generate() entry
 //! to the first streamed chunk (first-token latency: context setup +
@@ -18,12 +18,12 @@
 //! come from a real run; this file is the harness):
 //!
 //!   git worktree add ../bench-base <pre-change-commit>
-//!   cp tests/first_token_latency.rs ../bench-base/src-tauri/tests/
-//!   LLM_MODEL_PATH=/path/to/model.gguf cargo test --release \
+//!   cp examples/first_token_latency.rs ../bench-base/src-tauri/examples/
+//!   LLM_MODEL_PATH=/path/to/model.gguf cargo run --release \
 //!     --manifest-path ../bench-base/src-tauri/Cargo.toml \
-//!     --test first_token_latency -- --nocapture
+//!     --example first_token_latency
 //!   LLM_MODEL_PATH=/path/to/model.gguf \
-//!     cargo test --release --test first_token_latency -- --nocapture
+//!     cargo run --release --example first_token_latency
 //!
 //! then compare the per-turn "to first chunk" columns (same model,
 //! machine and prompt; use --release, a debug build measures nothing
@@ -44,10 +44,9 @@ use std::time::Instant;
 /// a user stop, so later turns still exercise prefix reuse.
 const ENOUGH_PIECES: usize = 16;
 
-#[test]
-fn first_token_latency_by_turn() {
+fn main() {
 	let Ok(path) = std::env::var("LLM_MODEL_PATH") else {
-		println!("LLM_MODEL_PATH is not set; skipping the first-token-latency benchmark");
+		println!("LLM_MODEL_PATH is not set; pass it to run the first-token-latency benchmark");
 		return;
 	};
 	let backend = Arc::new(
