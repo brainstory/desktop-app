@@ -4,14 +4,22 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
+import { SnackbarProvider } from "@ds/Snackbar";
 import { QuickCaptureCard } from "./QuickCaptureCard";
+
+function renderCard(enabled: boolean) {
+	return render(
+		<SnackbarProvider>
+			<QuickCaptureCard enabled={enabled} />
+		</SnackbarProvider>
+	);
+}
 
 describe("QuickCaptureCard", () => {
 	it("releases the shortcut through set_quick_capture_enabled", async () => {
 		const user = userEvent.setup();
 		mockInvoke({ set_quick_capture_enabled: () => null });
-		const openSnackbar = vi.fn();
-		render(<QuickCaptureCard enabled={true} openSnackbar={openSnackbar} />);
+		renderCard(true);
 		const sw = screen.getByRole("switch", { name: "Global shortcut" });
 		expect(sw).toHaveAttribute("aria-checked", "true");
 
@@ -22,7 +30,8 @@ describe("QuickCaptureCard", () => {
 			})
 		);
 		expect(sw).toHaveAttribute("aria-checked", "false");
-		expect(openSnackbar).toHaveBeenCalledWith(true, "Saved");
+		// the snackbar host confirms the save
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
 	});
 
 	it("reverts the switch and reports when registering fails", async () => {
@@ -32,17 +41,11 @@ describe("QuickCaptureCard", () => {
 				throw new Error("another app already uses it");
 			}
 		});
-		const openSnackbar = vi.fn();
-		render(<QuickCaptureCard enabled={false} openSnackbar={openSnackbar} />);
+		renderCard(false);
 		const sw = screen.getByRole("switch", { name: "Global shortcut" });
 
 		await user.click(sw);
-		await waitFor(() =>
-			expect(openSnackbar).toHaveBeenCalledWith(
-				false,
-				expect.stringContaining("another app already uses it")
-			)
-		);
+		expect(await screen.findByText(/another app already uses it/)).toBeInTheDocument();
 		// the failed enable settles back to off
 		await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
 	});

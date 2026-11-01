@@ -40,7 +40,6 @@ export function Card({ children, title, subtitle, columns = 1, classes = "" }: C
 interface PhotoNameCardProps {
 	userName?: string | null;
 	createdAt?: string | null;
-	openSnackbar?: (isSuccess: boolean, message: string) => void;
 }
 
 export function PhotoNameCard({ userName, createdAt }: PhotoNameCardProps) {

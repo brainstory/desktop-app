@@ -1,16 +1,16 @@
 import { useRef, useState, useId } from "react";
-import { normalizeApiError } from "@helpers/helpers";
 
 import { Card } from "./ProfileCards";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { setAppPresenceApi } from "@helpers/api/settings";
+import { useApiAction } from "@src/hooks/useApiAction";
 
 interface AppPresenceCardProps {
 	presence: { dock: boolean; tray: boolean };
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
-export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps) {
+export function AppPresenceCard({ presence }: AppPresenceCardProps) {
+	const { run } = useApiAction();
 	const dockLabelId = useId();
 	const trayLabelId = useId();
 	// The switches are controlled from here; a failed save reverts the
@@ -29,14 +29,13 @@ export function AppPresenceCard({ presence, openSnackbar }: AppPresenceCardProps
 		pendingRef.current += 1;
 		setDock(nextDock);
 		setTray(nextTray);
-		setAppPresenceApi(nextDock, nextTray)
-			.then(() => {
-				if (seq > confirmedRef.current.seq) {
+		void run(setAppPresenceApi(nextDock, nextTray), { success: "Saved" })
+			.then((outcome) => {
+				// only a resolved action confirms the switches
+				if (outcome.ok && seq > confirmedRef.current.seq) {
 					confirmedRef.current = { seq, dock: nextDock, tray: nextTray };
 				}
-				openSnackbar(true, "Saved");
 			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)))
 			.finally(() => {
 				pendingRef.current -= 1;
 				if (pendingRef.current === 0) {

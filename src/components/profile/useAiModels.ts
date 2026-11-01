@@ -28,6 +28,8 @@ import {
 	type ModelsResponse
 } from "@helpers/api/models";
 import { getQueryParam, normalizeApiError, safeReturnTarget } from "@helpers/helpers";
+import { useSnackbar } from "@ds/Snackbar";
+import { useApiAction } from "@src/hooks/useApiAction";
 import { $aiStatus } from "@components/global/aiStatusStore";
 import {
 	$downloads,
@@ -67,7 +69,9 @@ const mergeSecretPresence = (
 	) as Partial<AiSettingsResponse>)
 });
 
-export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) => void) {
+export function useAiModels() {
+	const { openSnackbar } = useSnackbar();
+	const { run, isPending } = useApiAction();
 	// the first-launch detour: where "back to your idea" goes once the
 	// downloaded model is ready (null when no valid target was given)
 	const backTarget = useMemo(() => safeReturnTarget(getQueryParam(QUERY_PARAMS.return)), []);
@@ -96,8 +100,17 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
 	const [freeBytes, setFreeBytes] = useState<number | null>(null);
 	/** long-running per-row action, so the buttons can say "Deleting…"
-	 * instead of appearing dead while a load is waited out */
-	const [rowPending, setRowPending] = useState<Record<string, "delete" | "activate">>({});
+	 * instead of appearing dead while a load is waited out; tracked as
+	 * keyed pending flags in the shared api-action hook */
+	const pendingAction = useCallback(
+		(modelId: string): "delete" | "activate" | undefined =>
+			isPending(`${modelId}:delete`)
+				? "delete"
+				: isPending(`${modelId}:activate`)
+					? "activate"
+					: undefined,
+		[isPending]
+	);
 
 	/** Catalog + downloaded/active flags (downloads, deletes, activation, mode). */
 	const refreshModels = useCallback(() => {
@@ -336,53 +349,38 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 
 	const deleteModel = useCallback(
 		(modelId: string): void => {
-			setRowPending((prev) => ({ ...prev, [modelId]: "delete" }));
-			deleteModelApi(modelId)
-				.then(() => {
+			void run(
+				deleteModelApi(modelId).then(() => {
 					refreshModels();
 					refreshDiskSpace();
-				})
-				.catch((e) => openSnackbar(false, normalizeApiError(e)))
-				.finally(() =>
-					setRowPending((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					})
-				);
+				}),
+				{ key: `${modelId}:delete` }
+			);
 		},
-		[openSnackbar, refreshModels, refreshDiskSpace]
+		[run, refreshModels, refreshDiskSpace]
 	);
 
 	const cancelDownload = useCallback(
 		(modelId: string): void => {
-			cancelDownloadApi(modelId).catch((e) => openSnackbar(false, normalizeApiError(e)));
+			void run(cancelDownloadApi(modelId));
 		},
-		[openSnackbar]
+		[run]
 	);
 
 	const pauseDownload = useCallback(
 		(modelId: string): void => {
-			pauseDownloadApi(modelId).catch((e) => openSnackbar(false, normalizeApiError(e)));
+			void run(pauseDownloadApi(modelId));
 		},
-		[openSnackbar]
+		[run]
 	);
 
 	const activateModel = useCallback(
 		(modelId: string): void => {
-			setRowPending((prev) => ({ ...prev, [modelId]: "activate" }));
-			activateModelApi(modelId)
-				.then(refreshModels)
-				.catch((e) => openSnackbar(false, normalizeApiError(e)))
-				.finally(() =>
-					setRowPending((prev) => {
-						const next = { ...prev };
-						delete next[modelId];
-						return next;
-					})
-				);
+			void run(activateModelApi(modelId).then(refreshModels), {
+				key: `${modelId}:activate`
+			});
 		},
-		[openSnackbar, refreshModels]
+		[run, refreshModels]
 	);
 
 	// Row-shaped projection of the store (ModelRow reads plain numbers)
@@ -419,7 +417,7 @@ export function useAiModels(openSnackbar: (isSuccess: boolean, message: string) 
 		downloadRates,
 		pausedDownloads,
 		downloadFailures,
-		rowPending,
+		rowPending: pendingAction,
 		appleStt,
 		freeBytes,
 		settingsError,

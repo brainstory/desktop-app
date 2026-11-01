@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { SttEngineSection } from "./SttEngineSection";
+import { SnackbarProvider } from "@ds/Snackbar";
 import type { AiSettingsResponse, AppleSttStatus, ModelStatus } from "@helpers/api/models";
 import type { ModelListContext } from "./ModelRow";
 
@@ -71,7 +72,7 @@ function renderSection(
 		pausedDownloads: {},
 		downloadRates: {},
 		failures: {},
-		pending: {},
+		pending: () => undefined,
 		freeBytes: null,
 		actions: {
 			onDownload: vi.fn(),
@@ -82,21 +83,22 @@ function renderSection(
 		}
 	};
 	render(
-		<SttEngineSection
-			settings={{ ...settings, ...overrides.settings }}
-			status={{ state: "ready", model_id: "whisper-base-en" }}
-			models={overrides.models ?? [whisperBase]}
-			modelList={modelList}
-			appleStt={overrides.appleStt ?? appleUnavailable}
-			appleActive={overrides.appleActive ?? false}
-			save={save}
-			savedSettings={settings}
-			setSettings={vi.fn()}
-			setSavedSettings={vi.fn()}
-			saveSecret={vi.fn()}
-			refreshModels={vi.fn()}
-			openSnackbar={vi.fn()}
-		/>
+		<SnackbarProvider>
+			<SttEngineSection
+				settings={{ ...settings, ...overrides.settings }}
+				status={{ state: "ready", model_id: "whisper-base-en" }}
+				models={overrides.models ?? [whisperBase]}
+				modelList={modelList}
+				appleStt={overrides.appleStt ?? appleUnavailable}
+				appleActive={overrides.appleActive ?? false}
+				save={save}
+				savedSettings={settings}
+				setSettings={vi.fn()}
+				setSavedSettings={vi.fn()}
+				saveSecret={vi.fn()}
+				refreshModels={vi.fn()}
+			/>
+		</SnackbarProvider>
 	);
 	return { save };
 }

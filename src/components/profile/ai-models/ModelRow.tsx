@@ -185,8 +185,9 @@ export interface ModelListContext {
 	downloadRates: Record<string, { bytesPerSec: number; etaSecs: number | null }>;
 	/** last download failures by model id (see the $downloads store) */
 	failures: Record<string, DownloadFailure>;
-	/** long-running per-row action, if any */
-	pending: Record<string, "delete" | "activate">;
+	/** long-running per-row action, if any (a lookup into the shared
+	 * api-action hook's keyed pending flags) */
+	pending: (modelId: string) => "delete" | "activate" | undefined;
 	freeBytes: number | null;
 	actions: ModelRowActions;
 }
@@ -202,6 +203,8 @@ export function ModelList({
 	freeBytes,
 	actions
 }: ModelListContext & { models: ModelStatus[] }) {
+	// `pending` is a lookup (the api-action hook's keyed flags): resolve
+	// each row's own action before handing it to the memoised row
 	return models.map((model) => (
 		<ModelRow
 			key={model.id}
@@ -210,7 +213,7 @@ export function ModelList({
 			pausedPct={pausedDownloads[model.id]}
 			rate={downloadRates[model.id]}
 			error={failures[model.id]?.message}
-			pending={pending[model.id]}
+			pending={pending(model.id)}
 			freeBytes={freeBytes}
 			{...actions}
 		/>

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
+import { SnackbarProvider } from "@ds/Snackbar";
 import { AboutCard } from "./AboutCard";
 
 // the version call bypasses the core-invoke mock (it reads the webview
@@ -27,17 +28,24 @@ describe("AboutCard", () => {
 		mockInvoke({
 			get_runtime_status: () => null
 		});
-		render(<AboutCard openSnackbar={vi.fn()} />);
+		render(
+			<SnackbarProvider>
+				<AboutCard />
+			</SnackbarProvider>
+		);
 		expect(await screen.findByText(/Brainstory 1\.2\.3/)).toBeInTheDocument();
 	});
 
 	it("collects diagnostics into the clipboard", async () => {
-		const openSnackbar = vi.fn();
 		mockInvoke({
 			"plugin:app|version": () => "1.2.3",
 			copy_diagnostics: () => "Brainstory 1.2.3 (macos)\nLLM: Ready gemma"
 		});
-		render(<AboutCard openSnackbar={openSnackbar} />);
+		render(
+			<SnackbarProvider>
+				<AboutCard />
+			</SnackbarProvider>
+		);
 		await screen.findByText(/Brainstory 1\.2\.3/);
 
 		fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
@@ -45,7 +53,8 @@ describe("AboutCard", () => {
 		await waitFor(() => expect(writeText).toHaveBeenCalled());
 		// the raw report travels verbatim, the snackbar only confirms
 		expect(writeText).toHaveBeenCalledWith(expect.stringContaining("LLM: Ready gemma"));
-		expect(openSnackbar).toHaveBeenCalledWith(true, "Diagnostics copied");
+		// the snackbar confirms through the real host
+		expect(await screen.findByText("Diagnostics copied")).toBeInTheDocument();
 	});
 
 	it("opens the folders through the backend commands", () => {
@@ -54,7 +63,11 @@ describe("AboutCard", () => {
 			open_data_folder: () => null,
 			open_log_folder: () => null
 		});
-		render(<AboutCard openSnackbar={vi.fn()} />);
+		render(
+			<SnackbarProvider>
+				<AboutCard />
+			</SnackbarProvider>
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open data folder" }));
 		fireEvent.click(screen.getByRole("button", { name: "Open log folder" }));
 		const called = vi.mocked(invoke).mock.calls.map(([cmd]) => cmd);

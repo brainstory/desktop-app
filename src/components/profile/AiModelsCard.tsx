@@ -9,11 +9,7 @@ import { ModelDownloadsSection } from "./ai-models/ModelDownloadsSection";
 import Button from "@ds/Button";
 import ErrorSection from "@components/error/ErrorSection";
 
-interface AiModelsCardProps {
-	openSnackbar: (isSuccess: boolean, message: string) => void;
-}
-
-export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
+export function AiModelsCard() {
 	const {
 		models,
 		settings: maybeSettings,
@@ -42,7 +38,7 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 		activateModel,
 		backHref,
 		dismissBack
-	} = useAiModels(openSnackbar);
+	} = useAiModels();
 
 	if (!maybeSettings) {
 		return (
@@ -210,7 +206,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				save={save}
 				saveSecret={saveSecret}
 				refreshModels={refreshModels}
-				openSnackbar={openSnackbar}
 			/>
 
 			<hr className="my-6 border-stone-200" />
@@ -228,7 +223,6 @@ export function AiModelsCard({ openSnackbar }: AiModelsCardProps) {
 				setSavedSettings={setSavedSettings}
 				saveSecret={saveSecret}
 				refreshModels={refreshModels}
-				openSnackbar={openSnackbar}
 			/>
 
 			<hr className="my-6 border-stone-200" />

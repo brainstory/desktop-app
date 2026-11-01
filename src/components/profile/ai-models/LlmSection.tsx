@@ -1,3 +1,4 @@
+import { useSnackbar } from "@ds/Snackbar";
 import { useId, useState, type Dispatch, type SetStateAction } from "react";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import type { AiSettingsResponse, EngineStatus, ModelStatus } from "@helpers/api/models";
@@ -27,7 +28,6 @@ interface LlmSectionProps {
 	save: (updates: Partial<AiSettingsResponse>) => void;
 	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	refreshModels: () => void;
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 /** Language model: status, local/external switch, its external endpoint,
@@ -42,9 +42,9 @@ export function LlmSection({
 	modelList,
 	save,
 	saveSecret,
-	refreshModels,
-	openSnackbar
+	refreshModels
 }: LlmSectionProps) {
+	const { openSnackbar } = useSnackbar();
 	const headingId = useId();
 	const externalLlmLabelId = useId();
 	const ctxSelectId = useId();
@@ -117,7 +117,6 @@ export function LlmSection({
 					setSavedSettings={setSavedSettings}
 					refreshModels={refreshModels}
 					saveSecret={saveSecret}
-					openSnackbar={openSnackbar}
 				/>
 			</details>
 			{/* The model rows carry their own boxes; the list itself stays a

@@ -1,13 +1,12 @@
 import { useRef, useState, useId } from "react";
-import { normalizeApiError } from "@helpers/helpers";
 
 import { Card } from "./ProfileCards";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import { setQuickCaptureEnabledApi } from "@helpers/api/settings";
+import { useApiAction } from "@src/hooks/useApiAction";
 
 interface QuickCaptureCardProps {
 	enabled: boolean;
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 /**
@@ -17,7 +16,8 @@ interface QuickCaptureCardProps {
  * apps; enabling can fail when another app already owns it, which is
  * surfaced instead of pretending the shortcut exists.
  */
-export function QuickCaptureCard({ enabled, openSnackbar }: QuickCaptureCardProps) {
+export function QuickCaptureCard({ enabled }: QuickCaptureCardProps) {
+	const { run } = useApiAction();
 	const labelId = useId();
 	const [isEnabled, setIsEnabled] = useState(enabled);
 	// Overlapping toggles: the switch stays optimistic while a save is in
@@ -31,14 +31,13 @@ export function QuickCaptureCard({ enabled, openSnackbar }: QuickCaptureCardProp
 		const seq = ++seqRef.current;
 		pendingRef.current += 1;
 		setIsEnabled(next);
-		setQuickCaptureEnabledApi(next)
-			.then(() => {
-				if (seq > confirmedRef.current.seq) {
+		void run(setQuickCaptureEnabledApi(next), { success: "Saved" })
+			.then((outcome) => {
+				// only a resolved action confirms the switch(es)
+				if (outcome.ok && seq > confirmedRef.current.seq) {
 					confirmedRef.current = { seq, enabled: next };
 				}
-				openSnackbar(true, "Saved");
 			})
-			.catch((e) => openSnackbar(false, normalizeApiError(e)))
 			.finally(() => {
 				pendingRef.current -= 1;
 				if (pendingRef.current === 0) {

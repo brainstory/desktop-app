@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { NotificationsCard } from "./NotificationsCard";
 import type { NotificationSetting } from "@helpers/api/settings";
 import { mockInvoke } from "@src/test/mock-tauri";
+import { SnackbarProvider } from "@ds/Snackbar";
 
 const reminder: NotificationSetting = {
 	title: "Daily intention reminder",
@@ -17,11 +18,9 @@ const reminder: NotificationSetting = {
 describe("NotificationsCard", () => {
 	it("names each switch after its notification", () => {
 		render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={async () => true}
-			/>
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={async () => true} />
+			</SnackbarProvider>
 		);
 		expect(screen.getByRole("switch", { name: "Daily intention reminder" })).toHaveAttribute(
 			"aria-checked",
@@ -31,12 +30,13 @@ describe("NotificationsCard", () => {
 
 	it("labels the reminder hour with the stored timezone", () => {
 		render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={async () => true}
-				timeZone="Asia/Tokyo"
-			/>
+			<SnackbarProvider>
+				<NotificationsCard
+					notificationsData={[reminder]}
+					saveSettings={async () => true}
+					timeZone="Asia/Tokyo"
+				/>
+			</SnackbarProvider>
 		);
 		// the hour the picker edits is wall-clock time in the user's
 		// chosen zone, not the machine's
@@ -46,11 +46,9 @@ describe("NotificationsCard", () => {
 	it("edits the hour through the native time input", async () => {
 		const save = vi.fn(async () => true);
 		render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={save}
-			/>
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={save} />
+			</SnackbarProvider>
 		);
 		const input = screen.getByLabelText("Daily intention reminder hour");
 		expect(input).toHaveValue("09:00");
@@ -63,21 +61,23 @@ describe("NotificationsCard", () => {
 
 	it("follows a timezone change without remounting", () => {
 		const view = render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={async () => true}
-				timeZone="Europe/Berlin"
-			/>
+			<SnackbarProvider>
+				<NotificationsCard
+					notificationsData={[reminder]}
+					saveSettings={async () => true}
+					timeZone="Europe/Berlin"
+				/>
+			</SnackbarProvider>
 		);
 		expect(screen.getByText("Europe/Berlin time")).toBeInTheDocument();
 		view.rerender(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={async () => true}
-				timeZone="Asia/Tokyo"
-			/>
+			<SnackbarProvider>
+				<NotificationsCard
+					notificationsData={[reminder]}
+					saveSettings={async () => true}
+					timeZone="Asia/Tokyo"
+				/>
+			</SnackbarProvider>
 		);
 		expect(screen.getByText("Asia/Tokyo time")).toBeInTheDocument();
 		expect(screen.queryByText("Europe/Berlin time")).not.toBeInTheDocument();
@@ -87,11 +87,9 @@ describe("NotificationsCard", () => {
 		const user = userEvent.setup();
 		const saveSettings = vi.fn(async () => false);
 		render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={saveSettings}
-			/>
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={saveSettings} />
+			</SnackbarProvider>
 		);
 		const save = screen.getByRole("button", { name: "Save" });
 		expect(save).toBeDisabled();
@@ -107,11 +105,9 @@ describe("NotificationsCard", () => {
 		const user = userEvent.setup();
 		const saveSettings = vi.fn(async () => true);
 		render(
-			<NotificationsCard
-				openSnackbar={vi.fn()}
-				notificationsData={[reminder]}
-				saveSettings={saveSettings}
-			/>
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={saveSettings} />
+			</SnackbarProvider>
 		);
 		await user.click(screen.getByRole("switch", { name: "Daily intention reminder" }));
 		const save = screen.getByRole("button", { name: "Save" });
@@ -125,18 +121,14 @@ describe("NotificationsCard", () => {
 				throw new Error("permission denied");
 			}
 		});
-		const openSnackbar = vi.fn();
 		render(
-			<NotificationsCard
-				openSnackbar={openSnackbar}
-				notificationsData={[reminder]}
-				saveSettings={async () => true}
-			/>
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={async () => true} />
+			</SnackbarProvider>
 		);
 		await userEvent.click(screen.getByRole("button", { name: "Send test notification" }));
-		await waitFor(() => expect(openSnackbar).toHaveBeenCalledTimes(1));
-		const call = openSnackbar.mock.calls[0];
-		expect(call?.[0]).toBe(false);
-		expect(String(call?.[1])).toContain("permission denied");
+		// the real snackbar host shows the refusal (the error styling, not
+		// a success message)
+		expect(await screen.findByText(/permission denied/)).toBeInTheDocument();
 	});
 });

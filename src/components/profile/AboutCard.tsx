@@ -3,17 +3,14 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invokeCommand } from "@src/tauri/invoke";
 
 import Button from "@ds/Button";
+import { useSnackbar } from "@ds/Snackbar";
 import { Card } from "./ProfileCards";
-
-interface AboutCardProps {
-	/** snackbar host (copied diagnostics / failures) */
-	openSnackbar: (isSuccess: boolean, message: string) => void;
-}
 
 /** Version, support shortcuts and a diagnostics bundle for support
  * requests. The folder buttons run as Rust commands (the opener plugin
  * stays off the webview capability list). */
-export function AboutCard({ openSnackbar }: AboutCardProps) {
+export function AboutCard() {
+	const { openSnackbar } = useSnackbar();
 	const [version, setVersion] = useState<string | null>(null);
 
 	useEffect(() => {

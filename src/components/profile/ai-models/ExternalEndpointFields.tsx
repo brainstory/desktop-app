@@ -1,5 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import Button from "@ds/Button";
+import { useSnackbar } from "@ds/Snackbar";
 import { normalizeApiError } from "@helpers/helpers";
 import {
 	saveAiSettingsApi,
@@ -56,7 +57,6 @@ interface ExternalEndpointFieldsProps {
 	refreshModels: () => void;
 	/** Resolves true only after the backend confirmed the secret save. */
 	saveSecret: (key: string, value: string) => Promise<boolean> | void;
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 /**
@@ -74,9 +74,9 @@ export function ExternalEndpointFields({
 	setSettings,
 	setSavedSettings,
 	refreshModels,
-	saveSecret,
-	openSnackbar
+	saveSecret
 }: ExternalEndpointFieldsProps) {
+	const { openSnackbar } = useSnackbar();
 	const k = KINDS[kind];
 	const fieldKeys = [k.urlKey, k.modelKey] as const;
 	// the LLM endpoint also carries the context window the server allows

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
+import { SnackbarProvider } from "@ds/Snackbar";
 import { MicrophoneCard, levelVerdict } from "./MicrophoneCard";
 
 const devices = [
@@ -31,7 +32,11 @@ describe("MicrophoneCard", () => {
 			set_input_device: () => null,
 			test_input_device: () => ({ peak: 0.42 })
 		});
-		render(<MicrophoneCard openSnackbar={vi.fn()} />);
+		render(
+			<SnackbarProvider>
+				<MicrophoneCard />
+			</SnackbarProvider>
+		);
 		const select = await screen.findByLabelText("Recording device");
 		expect(select).toHaveValue("Headset");
 
@@ -50,7 +55,11 @@ describe("MicrophoneCard", () => {
 			get_input_device: () => ({ name: "" }),
 			test_input_device: () => ({ peak: 0.0001 })
 		});
-		render(<MicrophoneCard openSnackbar={vi.fn()} />);
+		render(
+			<SnackbarProvider>
+				<MicrophoneCard />
+			</SnackbarProvider>
+		);
 		await screen.findByLabelText("Recording device");
 		fireEvent.click(screen.getByRole("button", { name: "Test" }));
 		expect(await screen.findByText(/nothing was picked up/i)).toBeInTheDocument();

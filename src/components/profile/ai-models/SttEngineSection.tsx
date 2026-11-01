@@ -1,3 +1,4 @@
+import { useSnackbar } from "@ds/Snackbar";
 import { useId, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "@helpers/cn";
 import OnOffToggleButton from "@ds/OnOffToggleButton";
@@ -77,7 +78,6 @@ interface SttEngineSectionProps {
 	setSavedSettings: Dispatch<SetStateAction<AiSettingsResponse | null>>;
 	saveSecret: (key: string, value: string) => Promise<boolean> | void;
 	refreshModels: () => void;
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 /** Speech-to-text: status, engine choice, language, whisper models, and
@@ -94,9 +94,9 @@ export function SttEngineSection({
 	setSettings,
 	setSavedSettings,
 	saveSecret,
-	refreshModels,
-	openSnackbar
+	refreshModels
 }: SttEngineSectionProps) {
+	const { openSnackbar } = useSnackbar();
 	const headingId = useId();
 	const appleHintId = useId();
 	const externalLabelId = useId();
@@ -318,7 +318,6 @@ export function SttEngineSection({
 					setSavedSettings={setSavedSettings}
 					refreshModels={refreshModels}
 					saveSecret={saveSecret}
-					openSnackbar={openSnackbar}
 				/>
 			</details>
 		</section>

@@ -160,11 +160,7 @@ function ProfileInner() {
 			label: "General",
 			content: (
 				<div className="grid grid-cols-3 gap-4 divide-y divide-stone-200">
-					<PhotoNameCard
-						userName={userName}
-						createdAt={createdAt}
-						openSnackbar={openSnackbar}
-					/>
+					<PhotoNameCard userName={userName} createdAt={createdAt} />
 					<GeneralCard
 						userName={userName}
 						timezone={userTimezone}
@@ -177,13 +173,12 @@ function ProfileInner() {
 						// explicitly, so no key-remount is needed to refresh it
 						timeZone={userTimezone || detectedTimezone()}
 						saveSettings={handleNotificationsSave}
-						openSnackbar={openSnackbar}
 					/>
-					<MicrophoneCard openSnackbar={openSnackbar} />
-					<AppPresenceCard presence={presence} openSnackbar={openSnackbar} />
-					<QuickCaptureCard enabled={quickCapture} openSnackbar={openSnackbar} />
+					<MicrophoneCard />
+					<AppPresenceCard presence={presence} />
+					<QuickCaptureCard enabled={quickCapture} />
 					<UpdatesCard enabled={updates.enabled} onToggle={updates.save} />
-					<AboutCard openSnackbar={openSnackbar} />
+					<AboutCard />
 				</div>
 			)
 		},
@@ -198,7 +193,7 @@ function ProfileInner() {
 		},
 		{
 			label: "AI Models",
-			content: <AiModelsCard openSnackbar={openSnackbar} />
+			content: <AiModelsCard />
 		}
 	];
 

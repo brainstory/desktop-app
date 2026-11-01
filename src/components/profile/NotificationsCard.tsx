@@ -8,6 +8,7 @@ import { useDirtySave } from "@src/hooks/useDirtySave";
 
 import OnOffToggleButton from "@ds/OnOffToggleButton";
 import Button from "@ds/Button";
+import { useSnackbar } from "@ds/Snackbar";
 
 /** Same reminder list: same entries, same order, same field values. */
 const notificationsEqual = (a: NotificationSetting[], b: NotificationSetting[]): boolean =>
@@ -29,17 +30,14 @@ interface NotificationsCardProps {
 	timeZone?: string | null;
 	/** Resolves true once persisted, false if the save failed. */
 	saveSettings: (fields: NotificationSetting[]) => Promise<boolean>;
-	/** Surfaces a refused test notification (permission denied is the
-	 * common case) instead of showing nothing. */
-	openSnackbar: (isSuccess: boolean, message: string) => void;
 }
 
 export function NotificationsCard({
 	notificationsData = [],
 	timeZone,
-	saveSettings,
-	openSnackbar
+	saveSettings
 }: NotificationsCardProps) {
+	const { openSnackbar } = useSnackbar();
 	const [notificationFields, setNotificationFields] =
 		useState<NotificationSetting[]>(notificationsData);
 	const titleIdBase = useId();

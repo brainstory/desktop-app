@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invokeCommand } from "@src/tauri/invoke";
 
 import Button from "@ds/Button";
+import { useSnackbar } from "@ds/Snackbar";
 import { Card } from "./ProfileCards";
 
 interface InputDevice {
@@ -22,11 +23,8 @@ export function levelVerdict(peak: number): { label: string; ok: boolean } {
  * two-second test recording that reports the peak level so the wrong
  * device is visible before talking into it.
  */
-export function MicrophoneCard({
-	openSnackbar
-}: {
-	openSnackbar: (isSuccess: boolean, message: string) => void;
-}) {
+export function MicrophoneCard() {
+	const { openSnackbar } = useSnackbar();
 	const [devices, setDevices] = useState<InputDevice[] | null>(null);
 	const [selected, setSelected] = useState<string>("");
 	const [isTesting, setIsTesting] = useState(false);

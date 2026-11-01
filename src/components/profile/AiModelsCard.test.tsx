@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 
 import { mockInvoke } from "@src/test/mock-tauri";
@@ -8,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockedListen } from "@src/test/mock-tauri";
 import type { EventCallback } from "@tauri-apps/api/event";
 import { $aiStatus } from "@components/global/aiStatusStore";
+import { SnackbarProvider } from "@ds/Snackbar";
 import AiModelsCard from "./AiModelsCard";
 import { useAiModels } from "./useAiModels";
 import { EVENTS } from "@src/tauri/commands";
@@ -69,18 +69,15 @@ const models = {
 	]
 };
 
-/** Render the card with a host that surfaces snackbar messages in the DOM. */
+/** Render the card inside the real snackbar host: shown messages
+ * appear in the DOM (the host renders them), so assertions can read
+ * them like any other text. */
 function renderCard() {
-	function Host() {
-		const [message, setMessage] = useState<string | null>(null);
-		return (
-			<>
-				{message && <p>{message}</p>}
-				<AiModelsCard openSnackbar={(_ok, msg) => setMessage(msg)} />
-			</>
-		);
-	}
-	return render(<Host />);
+	return render(
+		<SnackbarProvider>
+			<AiModelsCard />
+		</SnackbarProvider>
+	);
 }
 
 /** Capture the backend event handlers the card subscribes to. */
@@ -781,9 +778,14 @@ describe("AiModelsCard", () => {
 			kind: "error",
 			message: "download stalled (no data for 60s) - please retry"
 		});
-		// the row carries the plain-language failure…
-		const alert = await screen.findByRole("alert");
-		expect(alert).toHaveTextContent(/The download stalled/);
+		// the row carries the plain-language failure… (the snackbar host
+		// toasts the same text, so several alerts can exist at once)
+		const alert = await waitFor(() => {
+			const alerts = screen.getAllByRole("alert");
+			expect(alerts.length).toBeGreaterThan(0);
+			return alerts;
+		});
+		expect(alert.some((a) => /The download stalled/.test(a.textContent ?? ""))).toBe(true);
 		// …and the retry affordance sits where the download button was
 		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 	});
@@ -986,8 +988,9 @@ describe("AiModelsCard", () => {
 describe("useAiModels.saveSecret", () => {
 	it("refreshes the displayed presence and hint after a confirmed save", async () => {
 		mockSecretBackend("hfToken", "••••hf42");
-		const openSnackbar = vi.fn();
-		const { result } = renderHook(() => useAiModels(openSnackbar));
+		const { result } = renderHook(() => useAiModels(), {
+			wrapper: ({ children }) => <SnackbarProvider>{children}</SnackbarProvider>
+		});
 		await waitFor(() => expect(result.current.settings).not.toBeNull());
 		let confirmed: boolean | undefined;
 		await act(async () => {
@@ -1002,7 +1005,9 @@ describe("useAiModels.saveSecret", () => {
 
 	it("drops presence in both snapshots after a confirmed clear", async () => {
 		mockSecretBackend("extLlmApiKey", "••••llm99", { initialStored: true });
-		const { result } = renderHook(() => useAiModels(vi.fn()));
+		const { result } = renderHook(() => useAiModels(), {
+			wrapper: ({ children }) => <SnackbarProvider>{children}</SnackbarProvider>
+		});
 		await waitFor(() => expect(result.current.settings?.extLlmApiKeySet).toBe(true));
 		let confirmed: boolean | undefined;
 		await act(async () => {
