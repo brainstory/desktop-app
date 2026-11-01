@@ -6,6 +6,7 @@
 mod ai_settings;
 mod catalog;
 mod download;
+pub(crate) mod loader;
 mod state;
 
 pub use ai_settings::{
