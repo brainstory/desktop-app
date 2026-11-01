@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanStores } from "nanostores";
 import { invoke } from "@tauri-apps/api/core";
-import { mockedListen } from "@src/test/mock-tauri";
+import { mockedListen, mockInvoke } from "@src/test/mock-tauri";
 
-import { mockInvoke } from "@src/test/mock-tauri";
 import { $aiStatus, initAiStatus, llmAvailability, llmBusy, type AiStatus } from "./aiStatusStore";
 
 type Handler = (event: { payload: unknown }) => void;

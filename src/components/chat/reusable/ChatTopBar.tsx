@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import type { IconName } from "@ds/Icon";
 import { CHAT_SAVE_STATE, type ChatSaveState } from "@src/const";
 import { cn } from "@helpers/cn";
 import type { ParentIdea } from "@components/chat/types";
@@ -11,7 +12,7 @@ interface ChatTopBarProps {
 	parentIdea?: ParentIdea | null;
 	showTranscript: boolean;
 	setShowTranscript: Dispatch<SetStateAction<boolean>>;
-	leftButtonIcon?: string | null;
+	leftButtonIcon?: IconName | null;
 	leftButtonHref?: string;
 	saveState: ChatSaveState;
 }
@@ -27,7 +28,7 @@ export default function ChatTopBar({
 	const isLeftButton = leftButtonHref && leftButtonIcon;
 
 	// derived from saveState; no effect/state needed
-	const saveIconName =
+	const saveIconName: IconName | undefined =
 		saveState === CHAT_SAVE_STATE.SAVING
 			? "sync-outline" //reload-circle-outline
 			: saveState === CHAT_SAVE_STATE.SUCCESS

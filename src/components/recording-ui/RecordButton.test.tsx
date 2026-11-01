@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -27,9 +27,14 @@ function renderRecorder(conversationState = CONVERSATION_STATE.Idle) {
 }
 
 async function recordAndStop() {
-	const user = userEvent.setup();
-	await user.click(screen.getByRole("button", { name: "Start recording" }));
-	await user.click(await screen.findByRole("button", { name: "Stop recording" }));
+	// fireEvent (not userEvent) so plain fake timers never stall
+	// userEvent's internal pointer waits
+	fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+	// flush the start's promise microtasks (RTL's findBy would never
+	// poll under fake timers), then the stop button is simply there
+	await act(async () => {});
+	fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+	await act(async () => {});
 }
 
 describe("RecordButton", () => {
@@ -227,7 +232,7 @@ describe("RecordButton", () => {
 		});
 
 		it("does not retry a permanent transcription error", async () => {
-			vi.useFakeTimers({ shouldAdvanceTime: true });
+			vi.useFakeTimers();
 			vi.spyOn(console, "error").mockImplementation(() => {});
 			mockInvoke({
 				start_voice_capture: () => null,
@@ -236,8 +241,11 @@ describe("RecordButton", () => {
 				}
 			});
 			renderRecorder();
+			// plain fake timers: userEvent advances them per action, and
+			// the waits below advance them explicitly
 			await recordAndStop();
-			expect(await screen.findByRole("alert")).toHaveTextContent("No audio was captured.");
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			expect(screen.getByRole("alert")).toHaveTextContent("No audio was captured.");
 			await act(() => vi.advanceTimersByTimeAsync(2000));
 			// one call, no retry (the error is permanent)
 			expect(callsTo("stop_and_transcribe")).toHaveLength(1);
@@ -245,7 +253,7 @@ describe("RecordButton", () => {
 		});
 
 		it("unmounting cancels a pending transcription retry", async () => {
-			vi.useFakeTimers({ shouldAdvanceTime: true });
+			vi.useFakeTimers();
 			mockInvoke({
 				start_voice_capture: () => null,
 				stop_and_transcribe: () => {
@@ -273,7 +281,7 @@ describe("RecordButton", () => {
 		});
 
 		it("restarts the recording timer at 0:00 after a failed transcription", async () => {
-			vi.useFakeTimers({ shouldAdvanceTime: true });
+			vi.useFakeTimers();
 			vi.spyOn(console, "error").mockImplementation(() => {});
 			let calls = 0;
 			mockInvoke({
@@ -287,15 +295,15 @@ describe("RecordButton", () => {
 			renderRecorder();
 			// first recording runs long enough that a stale timer would
 			// trigger the "almost reached" warning on the next one
-			const user = userEvent.setup();
-			await user.click(screen.getByRole("button", { name: "Start recording" }));
+			fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
 			await act(() => vi.advanceTimersByTimeAsync(215_000));
 			expect(screen.getByText("recording · 3:35")).toBeInTheDocument();
-			await user.click(screen.getByRole("button", { name: "Stop recording" }));
-			expect(await screen.findByRole("alert")).toBeInTheDocument();
+			fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+			await act(() => vi.advanceTimersByTimeAsync(0));
+			expect(screen.getByRole("alert")).toBeInTheDocument();
 
 			// second recording: the readout starts at zero again...
-			await user.click(screen.getByRole("button", { name: "Start recording" }));
+			fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
 			expect(screen.getByText("recording · 0:00")).toBeInTheDocument();
 			// ...and the 4-minute warning is not carried over from the
 			// failed attempt

@@ -13,7 +13,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkVendoredAssets, iconNamesIn, replaceDir, vendorAssets } from "./vendor-assets.mjs";
+import {
+	checkVendoredAssets,
+	iconNamesFromIconModule,
+	iconNamesIn,
+	replaceDir,
+	vendorAssets
+} from "./vendor-assets.mjs";
+
+/** The icon module fixture: the typed list is the sprite's source. */
+function writeIconModule(dir, names) {
+	const iconDir = join(dir, "src", "components", "global", "design-system");
+	mkdirSync(iconDir, { recursive: true });
+	writeFileSync(
+		join(iconDir, "Icon.tsx"),
+		`export const ICON_NAMES = [\n${names.map((n) => `\t"${n}"`).join(",\n")}\n] as const;\n`
+	);
+}
 
 /** A throwaway frontend root with an ionicons svg dir and a stale public/vendor/. */
 function fakeFrontend(t, { withIonicons = true } = {}) {
@@ -21,12 +37,20 @@ function fakeFrontend(t, { withIonicons = true } = {}) {
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	mkdirSync(join(dir, "src"), { recursive: true });
 	writeFileSync(join(dir, "src", "App.tsx"), "export const x = 1;\n");
+	writeIconModule(dir, ["add", "square"]);
 	mkdirSync(join(dir, "public", "vendor"), { recursive: true });
 	writeFileSync(join(dir, "public", "vendor", "previous.txt"), "old build");
 	if (withIonicons) {
 		const svgDir = join(dir, "node_modules", "ionicons", "dist", "svg");
 		mkdirSync(svgDir, { recursive: true });
-		writeFileSync(join(svgDir, "add.svg"), "<svg/>");
+		writeFileSync(
+			join(svgDir, "add.svg"),
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M1 1"/></svg>'
+		);
+		writeFileSync(
+			join(svgDir, "square.svg"),
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M2 2"/></svg>'
+		);
 	}
 	return dir;
 }
@@ -46,6 +70,11 @@ test("vendorAssets swaps a complete tree into public/vendor", (t) => {
 	assert.ok(!existsSync(join(vendor, "previous.txt")), "stale files are replaced");
 	const sprite = readFileSync(join(dir, "public", "icons.svg"), "utf8");
 	assert.ok(sprite.includes('<symbol id="add"'), "the sprite carries the used icon");
+	// each symbol keeps its own SVG's viewBox, not a hard-coded one
+	assert.ok(
+		sprite.includes('<symbol id="add" viewBox="0 0 448 512">'),
+		`the add symbol carries its source viewBox: ${sprite}`
+	);
 	assert.deepEqual(stagingLeftovers(dir), []);
 });
 
@@ -114,6 +143,14 @@ test("iconNamesIn finds literal icon names, not other strings", () => {
 	]);
 });
 
+test("iconNamesFromIconModule reads the typed list", () => {
+	const dir = mkdtempSync(join(tmpdir(), "vendor-assets-test-"));
+	rmSync(dir, { recursive: true, force: true });
+	writeIconModule(dir, ["add", "mic-off"]);
+	assert.deepEqual(iconNamesFromIconModule(dir), ["add", "mic-off"]);
+	rmSync(dir, { recursive: true, force: true });
+});
+
 test("check mode passes on a fresh vendor tree", (t) => {
 	const dir = fakeFrontend(t);
 	writeFileSync(join(dir, "src", "App.tsx"), '<ion-icon name="add" />\n');
@@ -136,9 +173,22 @@ test("check mode reports missing, stale and extra vendored files", (t) => {
 	assert.deepEqual(checkVendoredAssets(dir), ["public/vendor is missing"]);
 });
 
-test("check mode fails on an icon name without an svg", (t) => {
+test("check mode fails on an icon name outside the typed list", (t) => {
 	const dir = fakeFrontend(t);
 	writeFileSync(join(dir, "src", "App.tsx"), '<Button icon="ad" />\n');
 	vendorAssets(dir);
-	assert.deepEqual(checkVendoredAssets(dir), ["unknown icon name: ad (src/App.tsx)"]);
+	// the name is not in ICON_NAMES (and has no svg either): the fix is
+	// to declare it, so the message says so
+	assert.deepEqual(checkVendoredAssets(dir), [
+		"unknown icon name: ad (src/App.tsx) - add it to ICON_NAMES"
+	]);
+});
+
+test("check mode fails on a declared icon without an svg", (t) => {
+	const dir = fakeFrontend(t);
+	// declared in the list, but ionicons ships no such svg
+	writeIconModule(dir, ["add", "square", "ghost-outline"]);
+	writeFileSync(join(dir, "src", "App.tsx"), '<Icon name="ghost-outline" />\n');
+	vendorAssets(dir);
+	assert.deepEqual(checkVendoredAssets(dir), ["unknown icon name: ghost-outline (src/App.tsx)"]);
 });

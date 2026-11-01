@@ -1,9 +1,9 @@
+import type { ReactNode } from "react";
+
 interface TextsFadeInProps {
 	children: ReactNode[];
 	classes?: string;
 }
-
-import type { ReactNode } from "react";
 
 export default function TextsFadeIn({ children, classes }: TextsFadeInProps) {
 	// global.css defines appear0..appear6; wrap around instead of

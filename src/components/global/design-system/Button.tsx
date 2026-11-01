@@ -1,7 +1,7 @@
 import React from "react";
 import { cn } from "@helpers/cn";
 import { safeHref } from "@helpers/helpers";
-import Icon from "./Icon";
+import Icon, { type IconName } from "./Icon";
 
 /** Colour schemes (formerly PinkButton / BlackButton / BorderedButton /
  * TransparentButton). Without a variant the button is uncoloured. */
@@ -20,7 +20,7 @@ export type ButtonVariant = keyof typeof VARIANT_CLASSES;
 export interface ButtonProps extends Omit<React.ComponentProps<"button">, "children" | "disabled"> {
 	children?: React.ReactNode;
 	variant?: ButtonVariant;
-	icon?: string | null;
+	icon?: IconName | null;
 	full?: boolean;
 	left?: boolean;
 	iconClasses?: string;

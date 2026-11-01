@@ -4,16 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { mockInvoke } from "@src/test/mock-tauri";
 
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import UpdaterBanner from "./UpdaterBanner";
+
 // the banner only runs inside the Tauri webview (checked at import time)
 vi.hoisted(() => {
 	Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
 });
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
-
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import UpdaterBanner from "./UpdaterBanner";
 
 const THROTTLE_KEY = "last_update_check_ms";
 /** mirrors the local metadata key the component persists under */

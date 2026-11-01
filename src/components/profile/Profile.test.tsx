@@ -2,10 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import { mockedListen } from "@src/test/mock-tauri";
+import { mockedListen, mockInvoke } from "@src/test/mock-tauri";
 import type { EventCallback } from "@tauri-apps/api/event";
 
-import { mockInvoke } from "@src/test/mock-tauri";
 import Profile from "./Profile";
 
 // The AI models card has its own tests and IPC; keep it out of the way.

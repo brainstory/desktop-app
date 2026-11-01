@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import type { IconName } from "@ds/Icon";
 import UpdaterBanner from "@ds/UpdaterBanner";
 import Button from "@ds/Button";
 import { useMediaQuery } from "@src/hooks/useMediaQuery";
@@ -6,9 +7,9 @@ import { cn } from "@helpers/cn";
 import DownloadProgressPill from "@components/global/DownloadProgressPill";
 
 const buttons = [
-	{ icon: "add", text: "New", href: "/chat", id: "new-idea" },
-	{ icon: "home", text: "Dashboard", href: "/dashboard", id: "dashboard" },
-	{ icon: "settings-outline", text: "Settings", href: "/profile", id: "profile" }
+	{ icon: "add" as IconName, text: "New", href: "/chat", id: "new-idea" },
+	{ icon: "home" as IconName, text: "Dashboard", href: "/dashboard", id: "dashboard" },
+	{ icon: "settings-outline" as IconName, text: "Settings", href: "/profile", id: "profile" }
 ];
 
 function Navigation() {

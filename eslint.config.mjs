@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
+import importX from "eslint-plugin-import-x";
 import eslintReact from "@eslint-react/eslint-plugin";
 import reactHooks from "eslint-plugin-react-hooks";
 import jsxA11y from "eslint-plugin-jsx-a11y-x";
@@ -55,7 +56,9 @@ export default tseslint.config(
 			eslintReact.configs["recommended-type-checked"]
 		],
 		languageOptions: {
-			globals: { ...globals.browser, ...globals.node },
+			// app code runs in the webview: node globals belong to tests
+			// and the node scripts block below, not to the app bundle
+			globals: { ...globals.browser },
 			parserOptions: {
 				ecmaVersion: "latest",
 				sourceType: "module",
@@ -65,7 +68,8 @@ export default tseslint.config(
 			}
 		},
 		plugins: {
-			"react-hooks": reactHooks
+			"react-hooks": reactHooks,
+			"import-x": importX
 		},
 		rules: {
 			...reactHooks.configs.recommended.rules,
@@ -81,6 +85,9 @@ export default tseslint.config(
 			"@eslint-react/static-components": "off",
 			"@eslint-react/unsupported-syntax": "off",
 			"@eslint-react/use-memo": "off",
+			// imports stay ordered and deduplicated across the alias soup
+			"import-x/first": "error",
+			"import-x/no-duplicates": "error",
 			// ion-icon is a web component; its `class` attribute is fine
 			"@eslint-react/dom-no-unknown-property": ["error", { ignore: ["class"] }],
 			// Style rules @eslint-react adds that eslint-plugin-react never
@@ -137,6 +144,13 @@ export default tseslint.config(
 		languageOptions: {
 			globals: { ...globals.browser },
 			parserOptions: { parser: tseslint.parser, extraFileExtensions: [".astro"] }
+		}
+	},
+	// tests read real files and URLs like the node scripts do
+	{
+		files: ["src/test/**/*.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
+		languageOptions: {
+			globals: { ...globals.browser, ...globals.node }
 		}
 	},
 	// plain node scripts: untyped rules only (no project service)

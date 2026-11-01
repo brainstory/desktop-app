@@ -2,9 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { mockInvoke } from "@src/test/mock-tauri";
+import { mockInvoke, mockedListen } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
-import { mockedListen } from "@src/test/mock-tauri";
 import type { EventCallback } from "@tauri-apps/api/event";
 import { cleanStores } from "nanostores";
 import { $aiStatus } from "@components/global/aiStatusStore";

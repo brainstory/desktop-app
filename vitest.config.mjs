@@ -1,20 +1,10 @@
 import { defineConfig } from "vitest/config";
-import { fileURLToPath } from "node:url";
+import tsconfigPaths from "vite-tsconfig-paths";
 
-// Mirrors the path aliases in tsconfig.json so tests can import through
-// the same "@..." specifiers the app code uses.
-const resolveFromRoot = (p) => fileURLToPath(new URL(p, import.meta.url));
-
+// path aliases come from tsconfig.json (vite-tsconfig-paths): the
+// single source of truth the app code itself is checked against
 export default defineConfig({
-	resolve: {
-		alias: {
-			"@src": resolveFromRoot("./src"),
-			"@components": resolveFromRoot("./src/components"),
-			"@helpers": resolveFromRoot("./src/helpers"),
-			"@layouts": resolveFromRoot("./src/layouts"),
-			"@ds": resolveFromRoot("./src/components/global/design-system")
-		}
-	},
+	plugins: [tsconfigPaths()],
 	test: {
 		environment: "jsdom",
 		include: ["src/**/*.test.{ts,tsx}"],

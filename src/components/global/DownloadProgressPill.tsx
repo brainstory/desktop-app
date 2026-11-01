@@ -1,6 +1,6 @@
 import { useStore } from "@nanostores/react";
 import { $downloads, clearDownloadFailure } from "./downloadStore";
-import Icon from "@ds/Icon";
+import Icon, { type IconName } from "@ds/Icon";
 
 /**
  * Sidebar shortcut to whatever download is in flight (or failed), so
@@ -19,7 +19,7 @@ export default function DownloadProgressPill() {
 	const failed = Object.entries(failures);
 	if (downloads.length === 0 && failed.length === 0) return null;
 
-	let icon = "cloud-download-outline";
+	let icon: IconName = "cloud-download-outline";
 	let title: string;
 	let detail = "";
 	let isError = false;

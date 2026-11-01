@@ -1,7 +1,9 @@
+import type { IconName } from "@ds/Icon";
+
 export interface Topic {
 	topic: string;
 	prompt: string;
-	iconName: string;
+	iconName: IconName;
 }
 
 export const TOPICS: Topic[] = [
