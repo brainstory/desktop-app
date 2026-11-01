@@ -162,6 +162,79 @@ jobs:
           LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
         run: cargo test --test engine_smoke --locked
 
+      # The speech pipeline test runs VAD, RNNoise and Parakeet (ONNX
+      # Runtime, statically linked) on real speech - the only check that
+      # ONNX Runtime links and runs on every platform we ship. The ~670 MB
+      # model is cached; the key carries the pinned encoder sha256 (see
+      # src-tauri/src/models/catalog.rs), so a catalog bump refetches it.
+      - name: Restore Parakeet test model
+        id: parakeet-model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/parakeet-tdt-0.6b-v3
+          key: parakeet-tdt-0.6b-v3-int8-6139d2fa7e1b
+
+      - name: Download Parakeet test model
+        if: steps.parakeet-model.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          dir="${RUNNER_TEMP}/parakeet-tdt-0.6b-v3"
+          mkdir -p "$dir"
+          base="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
+          # the same pins as the app's catalog: a changed upstream file
+          # fails here instead of being cached
+          while read -r sha file; do
+            curl -fL --retry 3 -o "$dir/$file" "$base/$file"
+            if command -v sha256sum >/dev/null; then
+              got=$(sha256sum "$dir/$file" | cut -d' ' -f1)
+            else
+              got=$(shasum -a 256 "$dir/$file" | cut -d' ' -f1)
+            fi
+            if [ "$got" != "$sha" ]; then
+              echo "::error::$file sha256 $got does not match the pin $sha"
+              rm -rf "$dir"
+              exit 1
+            fi
+          done <<'PINS'
+          6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09 encoder-model.int8.onnx
+          eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70 decoder_joint-model.int8.onnx
+          a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f nemo128.onnx
+          d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d vocab.txt
+          PINS
+
+      # Test speech from each OS's own speech synthesizer (no audio file
+      # in the repo): espeak-ng on Linux, `say` on macOS, SAPI on Windows.
+      - name: Synthesize test speech (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y espeak-ng
+          espeak-ng -v en-us -s 150 -w "${RUNNER_TEMP}/speech.wav" \
+            "The quick brown fox jumps over the lazy dog."
+
+      - name: Synthesize test speech (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          say --file-format=WAVE --data-format=LEI16@22050 -o "${RUNNER_TEMP}/speech.wav" \
+            "The quick brown fox jumps over the lazy dog."
+
+      - name: Synthesize test speech (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $voice.SetOutputToWaveFile("$env:RUNNER_TEMP\speech.wav")
+          $voice.Speak("The quick brown fox jumps over the lazy dog.")
+          $voice.Dispose()
+
+      - name: Speech pipeline test (VAD, RNNoise, Parakeet)
+        shell: bash
+        working-directory: src-tauri
+        env:
+          PARAKEET_MODEL_DIR: ${{ runner.temp }}/parakeet-tdt-0.6b-v3
+          SPEECH_WAV: ${{ runner.temp }}/speech.wav
+        run: cargo test --test speech_pipeline --locked -- --nocapture
+
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
