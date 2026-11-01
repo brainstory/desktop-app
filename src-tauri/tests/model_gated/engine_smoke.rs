@@ -1,7 +1,6 @@
 //! Verifies that whisper.cpp and llama.cpp can run in the same process
 //! despite each vendoring its own ggml copy (duplicate symbol link warnings).
 //! Point the env vars at any whisper ggml + llama gguf.
-#![allow(linker_messages)]
 
 use brainstory_lib::llm::LocalLlm;
 use brainstory_lib::stt::SttEngine;

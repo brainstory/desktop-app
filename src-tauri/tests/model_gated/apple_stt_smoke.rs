@@ -2,7 +2,7 @@
 //! macOS 26+). Run on a Mac with the macOS 26 SDK, speech-recognition
 //! permission granted to the test runner, and en-US dictation assets:
 //!
-//!     APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke -- --nocapture
+//!     APPLE_STT_SMOKE=1 cargo test --test model_gated apple_stt_smoke -- --nocapture
 //!
 //! Skips silently otherwise (no env var, wrong OS, or no permission).
 

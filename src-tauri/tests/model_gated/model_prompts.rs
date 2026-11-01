@@ -7,8 +7,7 @@
 //! oversized payloads; they need a fixture whose trained context is at
 //! least 8192 tokens (smaller windows degenerate: the summarize budget
 //! `trained - 4096 - 64` saturates at zero and generation collapses).
-//! Run: LLM_MODEL_PATH=<gguf> cargo test --test model_prompts -- --nocapture
-#![allow(linker_messages)]
+//! Run: LLM_MODEL_PATH=<gguf> cargo test --test model_gated model_prompts -- --nocapture
 
 use brainstory_lib::llm::LocalLlm;
 use brainstory_lib::prompts::{ChatType, PromptRequest};

@@ -13,7 +13,6 @@
 //!   over the lazy dog." (any rate/channels), e.g.
 //!   `espeak-ng -w speech.wav "The quick brown fox jumps over the lazy dog."`
 //! - `WHISPER_MODEL_PATH` (optional): a whisper ggml model
-#![allow(linker_messages)]
 
 use brainstory_lib::stt::{wav_to_samples, SttEngine, TRANSCRIPTION_CANCELLED};
 use std::sync::atomic::AtomicBool;

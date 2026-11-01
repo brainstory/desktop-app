@@ -203,13 +203,13 @@ from each OS's own synthesizer):
 # whisper + llama coexisting in one process, with a tiny (~1 MB) test llama:
 WHISPER_MODEL_PATH=/path/to/ggml-tiny.en.bin \
 LLM_MODEL_PATH=/path/to/tiny.gguf \
-cargo test --test engine_smoke
+cargo test --test model_gated engine_smoke
 
 # prompt quality against a real model:
-LLM_MODEL_PATH=/path/to/model.gguf cargo test --test model_prompts
+LLM_MODEL_PATH=/path/to/model.gguf cargo test --test model_gated model_prompts
 
 # Apple Speech smoke test (macOS 26 host, terminal needs speech permission):
-APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke
+APPLE_STT_SMOKE=1 cargo test --test model_gated apple_stt_smoke
 
 # first-token latency benchmark (an example, not a test; use --release):
 LLM_MODEL_PATH=/path/to/model.gguf cargo run --release --example first_token_latency
@@ -219,7 +219,7 @@ LLM_MODEL_PATH=/path/to/model.gguf cargo run --release --example first_token_lat
 # PARAKEET_MODEL_DIR holds istupakov/parakeet-tdt-0.6b-v3-onnx's int8 files
 espeak-ng -w /tmp/speech.wav "The quick brown fox jumps over the lazy dog."
 PARAKEET_MODEL_DIR=/path/to/parakeet-tdt-0.6b-v3-onnx SPEECH_WAV=/tmp/speech.wav \
-cargo test --release --test speech_pipeline
+cargo test --release --test model_gated speech_pipeline
 ```
 
 ## Development
@@ -252,7 +252,7 @@ Xcode 26 SDK the Apple Speech engine (macOS 26+) compiles in, and with an older
 SDK it is stubbed out with a build warning (the app still runs, whisper handles
 transcription). CI enforces the 26 SDK via `REQUIRE_MACOS26_SDK=1` so a stubbed
 build can never ship. The env-gated Apple Speech smoke test runs with
-`APPLE_STT_SMOKE=1 cargo test --test apple_stt_smoke` on a macOS 26 machine
+`APPLE_STT_SMOKE=1 cargo test --test model_gated apple_stt_smoke` on a macOS 26 machine
 (synthesizes audio via `say`, needs speech-recognition permission for the
 terminal).
 

@@ -168,7 +168,7 @@ jobs:
         env:
           WHISPER_MODEL_PATH: ${{ runner.temp }}/engine-models/whisper-tiny.en.bin
           LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
-        run: cargo test --test engine_smoke --locked
+        run: cargo test --test model_gated --locked engine_smoke
 
       # The only check that neutralized turn markers never tokenize to
       # control tokens on a real vocabulary; needs the cached tiny.gguf.
@@ -180,7 +180,7 @@ jobs:
         working-directory: src-tauri
         env:
           LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
-        run: cargo test --test special_tokens --locked
+        run: cargo test --test model_gated --locked special_tokens
 
       # The speech pipeline test runs VAD, RNNoise and Parakeet (ONNX
       # Runtime, statically linked) on real speech - the only check that
@@ -256,7 +256,7 @@ jobs:
         env:
           PARAKEET_MODEL_DIR: ${{ runner.temp }}/parakeet-tdt-0.6b-v3
           SPEECH_WAV: ${{ runner.temp }}/speech.wav
-        run: cargo test --test speech_pipeline --locked -- --nocapture
+        run: cargo test --test model_gated --locked speech_pipeline -- --nocapture
 
       - name: Upload artifacts (macOS)
         if: runner.os == 'macOS'

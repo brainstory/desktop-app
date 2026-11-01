@@ -4,8 +4,7 @@
 //! spelling a chat control marker would otherwise become that control
 //! token. After `neutralize_turn_markers` none of those spellings may map
 //! to a control or end-of-generation token in the model's vocabulary.
-//! Run: LLM_MODEL_PATH=<gguf> cargo test --test special_tokens -- --nocapture
-#![allow(linker_messages)]
+//! Run: LLM_MODEL_PATH=<gguf> cargo test --test model_gated special_tokens -- --nocapture
 
 use brainstory_lib::llm::neutralize_turn_markers;
 use llama_cpp_2::llama_backend::LlamaBackend;
