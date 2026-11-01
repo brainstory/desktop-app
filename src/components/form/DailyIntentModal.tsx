@@ -21,7 +21,7 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 	const [logItems, setLogItems] = useState<LogFormAnswer[]>([]);
 	const [isSaving, setIsSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
-	const modalRef = useRef<HTMLDivElement | null>(null);
+	const dialogRef = useRef<HTMLDialogElement | null>(null);
 	const retryButtonRef = useRef<HTMLButtonElement | null>(null);
 
 	// A load or save that settles after the modal closed (or after a newer
@@ -101,121 +101,97 @@ export default function DailyIntentModal({ setLogId, onClose }: DailyIntentModal
 			});
 	};
 
-	// Escape closes the modal; Tab is trapped inside it. Focus starts on
-	// the first control and returns to the opener on close.
-	// the close handler is read through a ref so the trap effect runs
-	// exactly once: re-running it on every parent render re-captured
-	// "previously focused" from inside the modal
-	const onCloseRef = useRef(onClose);
+	// The native dialog's top layer owns Escape (via cancel), focus
+	// trapping and aria-modal handling; this effect opens it, lands
+	// focus on the first control and returns focus to the opener on
+	// close. Every close path routes through the dialog's own close
+	// machinery so `onClose` fires exactly once.
 	useEffect(() => {
-		onCloseRef.current = onClose;
-	}, [onClose]);
-
-	useEffect(() => {
-		const modal = modalRef.current;
+		const dialog = dialogRef.current;
+		if (!dialog) return;
 		const previouslyFocused = document.activeElement as HTMLElement | null;
-
-		const focusableSelector =
-			'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
-		const focusables = (): HTMLElement[] =>
-			Array.from(modal?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
-
-		focusables()[0]?.focus();
-
-		const onKeyDown = (event: globalThis.KeyboardEvent): void => {
-			if (event.key === "Escape") {
-				onCloseRef.current();
-				return;
-			}
-			if (event.key === "Tab") {
-				const items = focusables();
-				if (items.length === 0) return;
-				const first = items[0]!;
-				const last = items[items.length - 1]!;
-				if (event.shiftKey && document.activeElement === first) {
-					event.preventDefault();
-					last.focus();
-				} else if (!event.shiftKey && document.activeElement === last) {
-					event.preventDefault();
-					first.focus();
-				}
-			}
-		};
-		window.addEventListener("keydown", onKeyDown);
+		dialog.showModal();
+		const firstControl = dialog.querySelector<HTMLElement>(
+			'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+		);
+		firstControl?.focus();
 		return () => {
-			window.removeEventListener("keydown", onKeyDown);
+			dialog.close();
 			previouslyFocused?.focus();
 		};
 	}, []);
 
+	const requestClose = () => dialogRef.current?.close();
+
 	return (
-		<div
-			role="dialog"
-			aria-modal="true"
+		<dialog
+			ref={dialogRef}
 			aria-label="Daily Intent Log"
-			className="fixed inset-0 z-50 flex items-center justify-center"
+			onClose={onClose}
+			// Escape synthesizes cancel; closing through the dialog keeps
+			// one close path
+			onCancel={requestClose}
+			className="bg-transparent p-0 max-w-none w-auto"
 		>
-			{/* backdrop: click to dismiss */}
-			<div
-				className="fixed inset-0 bg-black opacity-40"
-				aria-hidden="true"
-				onClick={onClose}
-			></div>
-			<div
-				ref={modalRef}
-				className="flex flex-col max-w-[600px] w-[90vw] max-h-[95vh] bg-white mx-auto rounded-lg relative shadow-md p-5 md:p-7"
-			>
-				<ModalTitleBar title="Daily Intent Log" onClose={onClose} classes="mb-2" />
-				{isLogLoading ? (
-					<div className="py-10">
-						<LoadingAnimation text="Loading your daily questions..." />
-					</div>
-				) : loadError !== null ? (
-					// a failed load shows the error and a retry instead of the
-					// form: an empty answer list must never be submittable as
-					// if the load had succeeded
-					<div
-						role="alert"
-						className="flex flex-col items-start gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm my-5"
-					>
-						<p>
-							<b>Couldn’t load your daily questions.</b> {loadError} Nothing was saved
-							— try again.
-						</p>
-						<Button variant="pink" ref={retryButtonRef} onClick={onRetryLoad}>
-							Try again
-						</Button>
-					</div>
-				) : (
-					<>
-						{saveError !== null && (
-							<div
-								role="alert"
-								className="border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm mb-2"
-							>
-								<b>Couldn’t save your daily log.</b> {saveError} Your answers are
-								still here — press Submit to try again.
-							</div>
-						)}
-						<StartLogSection
-							logItems={logItems}
-							setLogItems={setLogItems}
-							disabled={isSaving}
-						/>
-						<Button
-							variant="pink"
-							disabled={isSaving}
-							onClick={onSubmit}
-							classes="mx-auto mt-auto w-[12rem]"
+			{/* the visual + click-dismiss backdrop, inside the dialog so
+			    the top layer keeps Escape and focus; aria-hidden keeps the
+			    decorative layer out of the a11y tree (same as before the
+			    native-dialog move) */}
+			<div aria-hidden="true" className="fixed inset-0 bg-black/40" onClick={requestClose} />
+			<div className="relative flex flex-col max-w-[600px] w-[90vw] max-h-[95vh] bg-white mx-auto rounded-lg shadow-md p-5 md:p-7">
+				<>
+					<ModalTitleBar title="Daily Intent Log" onClose={requestClose} classes="mb-2" />
+					{isLogLoading ? (
+						<div className="py-10">
+							<LoadingAnimation text="Loading your daily questions..." />
+						</div>
+					) : loadError !== null ? (
+						// a failed load shows the error and a retry instead of the
+						// form: an empty answer list must never be submittable as
+						// if the load had succeeded
+						<div
+							role="alert"
+							className="flex flex-col items-start gap-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm my-5"
 						>
-							{isSaving && (
-								<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />
+							<p>
+								<b>Couldn’t load your daily questions.</b> {loadError} Nothing was
+								saved — try again.
+							</p>
+							<Button variant="pink" ref={retryButtonRef} onClick={onRetryLoad}>
+								Try again
+							</Button>
+						</div>
+					) : (
+						<>
+							{saveError !== null && (
+								<div
+									role="alert"
+									className="border border-amber-300 bg-amber-50 text-amber-900 rounded-lg p-4 text-sm mb-2"
+								>
+									<b>Couldn’t save your daily log.</b> {saveError} Your answers
+									are still here — press Submit to try again.
+								</div>
 							)}
-							{isSaving ? "Saving" : "Submit"}
-						</Button>
-					</>
-				)}
+							<StartLogSection
+								logItems={logItems}
+								setLogItems={setLogItems}
+								disabled={isSaving}
+							/>
+							<Button
+								variant="pink"
+								disabled={isSaving}
+								onClick={onSubmit}
+								classes="mx-auto mt-auto w-[12rem]"
+							>
+								{isSaving && (
+									<div className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent text-white rounded-full mr-2" />
+								)}
+								{isSaving ? "Saving" : "Submit"}
+							</Button>
+						</>
+					)}
+				</>
 			</div>
-		</div>
+		</dialog>
 	);
 }

@@ -31,17 +31,20 @@ import ErrorBoundary from "@components/global/ErrorBoundary";
 import { SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 import { useIdeaReactions } from "./reactions/useIdeaReactions";
 
-function IdeaResultContentInner() {
-	const tabs: Record<string, number> = {
-		summary: 0,
-		transcript: 1,
-		feedback: 2
-	};
+/** the idea page's tabs, by query-param name */
+const IDEA_TABS = {
+	summary: 0,
+	transcript: 1,
+	feedback: 2
+} as const;
 
+function IdeaResultContentInner() {
 	const ideaId = getQueryParam(QUERY_PARAMS.id) ?? undefined;
 	const [activeTab] = useState<number>(() => {
 		const tab = getQueryParam(QUERY_PARAMS.tab);
-		return tab ? (tabs[tab] ?? 0) : tabs.summary!;
+		return tab
+			? (IDEA_TABS[tab as keyof typeof IDEA_TABS] ?? IDEA_TABS.summary)
+			: IDEA_TABS.summary;
 	});
 	const [isLoading, setIsLoading] = useState(true);
 	const [idea, setIdea] = useState<IdeaDetail>({ id: "" });
@@ -523,27 +526,16 @@ function mapComments(
 
 function useMarkReadApi(id: string | undefined, isUnread: boolean): void {
 	useEffect(() => {
-		let isCurrent = true;
-
 		if (!isUnread) {
 			return;
 		}
 
 		if (id === undefined) return;
-		markIdeaReadApi(id)
-			.then((res) => {
-				if (isCurrent) {
-					console.error("marked idea as read: ", res);
-				}
-			})
-			.catch((err) => {
-				// best-effort flag: failing to mark read must not surface
-				// as an unhandled rejection
-				console.error("failed to mark idea as read", id, err);
-			});
-		return () => {
-			isCurrent = false;
-		};
+		markIdeaReadApi(id).catch((err) => {
+			// best-effort flag: failing to mark read must not surface
+			// as an unhandled rejection
+			console.error("failed to mark idea as read", id, err);
+		});
 	}, [id, isUnread]);
 }
 

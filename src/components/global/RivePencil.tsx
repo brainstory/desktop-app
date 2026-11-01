@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useRive, RuntimeLoader } from "@rive-app/react-canvas";
+import { useMediaQuery } from "@src/hooks/useMediaQuery";
 
 // Load the Rive WASM engine from the app bundle instead of the unpkg CDN
 // (see scripts/vendor-assets.mjs) so animations work fully offline.
@@ -38,32 +39,43 @@ function Layer({ active, children }: { active: boolean; children: React.ReactNod
 			className={`absolute inset-0 transition-opacity duration-150 ${
 				active ? "opacity-100" : "opacity-0 pointer-events-none"
 			}`}
-			aria-hidden={!active}
+			// the whole mascot is decoration: hidden from the a11y tree
+			// whether playing or not
+			aria-hidden="true"
 		>
 			{children}
 		</div>
 	);
 }
 
+// the mascot is decorative: reduced-motion users get the static first
+// frame instead of autoplaying animations
+function useReducedMotion(): boolean {
+	return useMediaQuery("(prefers-reduced-motion: reduce)");
+}
+
 function Wave({ active }: { active: boolean }) {
+	const reduceMotion = useReducedMotion();
 	const { rive, RiveComponent } = useRive({
 		src: "/rive/pencilwave_375_460.riv",
-		autoplay: true
+		autoplay: !reduceMotion
 	});
 
 	useEffect(() => {
 		if (!rive) return;
-		if (active) {
+		if (active && !reduceMotion) {
 			rive.play();
 		} else {
 			rive.pause();
 		}
-	}, [rive, active]);
+	}, [rive, active, reduceMotion]);
 
 	return (
 		<Layer active={active}>
 			<RiveComponent
-				onMouseEnter={() => rive && rive.play()}
+				onMouseEnter={() => {
+					if (rive && !reduceMotion) rive.play();
+				}}
 				onMouseLeave={() => rive && rive.pause()}
 			/>
 		</Layer>
@@ -71,19 +83,20 @@ function Wave({ active }: { active: boolean }) {
 }
 
 function Jump({ active }: { active: boolean }) {
+	const reduceMotion = useReducedMotion();
 	const { rive, RiveComponent } = useRive({
 		src: "/rive/penciljump.riv",
-		autoplay: true
+		autoplay: !reduceMotion
 	});
 
 	useEffect(() => {
 		if (!rive) return;
-		if (active) {
+		if (active && !reduceMotion) {
 			rive.play();
 		} else {
 			rive.pause();
 		}
-	}, [rive, active]);
+	}, [rive, active, reduceMotion]);
 
 	return (
 		<Layer active={active}>

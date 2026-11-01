@@ -72,7 +72,7 @@ export default function ChatApp() {
 	const parentId = draftMode ? draftMode.parentId : urlParentId;
 	const isFromGuide = getQueryParam(QUERY_PARAMS.topic);
 	const [logId, setLogId] = useState<string | null | undefined>(undefined);
-	const [draftId, setDraftId] = useState(getQueryParam(QUERY_PARAMS.id));
+	const [draftId, setDraftId] = useState(() => getQueryParam(QUERY_PARAMS.id));
 	const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 	/** the daily-status read failed: warn + offer a retry instead of
 	 * silently leaving the session unlinked from today's log */

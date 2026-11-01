@@ -39,7 +39,7 @@ function gridEntries(ideas: IdeaListItem[]): GridEntry[] {
 export default function IdeaGrid({ userIdeas = [] }: IdeaGridProps) {
 	// locally-removed draft ids: a delete updates the grid in place
 	// instead of reloading the whole page
-	const [removed, setRemoved] = useState<Set<string>>(new Set());
+	const [removed, setRemoved] = useState<Set<string>>(() => new Set());
 	const visible = gridEntries(userIdeas ?? []).filter(({ idea }) => !removed.has(idea.id));
 
 	if (userIdeas === null) {

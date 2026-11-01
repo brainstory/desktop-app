@@ -25,7 +25,8 @@ import Button from "@ds/Button";
 import { SUCCESS_COPY, SnackbarProvider, useSnackbar } from "@ds/Snackbar";
 import { TailwindComposedTabs } from "@ds/TailwindTabs";
 
-const TAB_MAP: Record<string, number> = {
+/** settings-tab query values -> tab index (see TailwindComposedTabs) */
+const TAB_MAP: Partial<Record<string, number>> = {
 	general: 0,
 	dailyLog: 1,
 	aiModels: 2

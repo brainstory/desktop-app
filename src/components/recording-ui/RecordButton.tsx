@@ -65,7 +65,7 @@ function RecordButton({
 	const [announcement, setAnnouncement] = useState("");
 	/** local mirror of the parent's transcribing flag: this component needs
 	 * it to offer the cancel affordance while a transcription runs */
-	const [isTranscribing, setIsTranscribingLocal] = useState(false);
+	const [isTranscribingLocal, setIsTranscribingLocal] = useState(false);
 	const updateTranscribing = (value: boolean): void => {
 		setIsTranscribingLocal(value);
 		setIsTranscribing(value);
@@ -215,7 +215,7 @@ function RecordButton({
 	// (the callbacksRef pattern from useVoiceCapture), so the listener
 	// registers once instead of re-registering on every streamed token.
 	const keydownStateRef = useRef({
-		isTranscribing,
+		isTranscribing: isTranscribingLocal,
 		isDisabledOverride,
 		modelLoading,
 		micBlockedReason,
@@ -229,7 +229,7 @@ function RecordButton({
 	// commit - before the next user keypress can arrive in practice
 	useEffect(() => {
 		keydownStateRef.current = {
-			isTranscribing,
+			isTranscribing: isTranscribingLocal,
 			isDisabledOverride,
 			modelLoading,
 			micBlockedReason,
@@ -346,7 +346,7 @@ function RecordButton({
 					isCompressed={isCompressed}
 				/>
 			)}
-			{isTranscribing && (
+			{isTranscribingLocal && (
 				<div className="text-center mt-1">
 					<button
 						type="button"

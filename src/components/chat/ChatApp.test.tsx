@@ -262,9 +262,15 @@ describe("ChatApp daily intent log handling", () => {
 		window.history.replaceState(null, "", "/chat?dailyIntent=true");
 		render(<ChatApp />);
 
-		// no log today: the modal opens; Escape dismisses it
+		// no log today: the modal opens; Escape dismisses it (dispatch
+		// the cancel event the browser synthesizes for a top-layer
+		// dialog; jsdom does not do that translation)
 		expect(await screen.findByRole("dialog", { name: "Daily Intent Log" })).toBeInTheDocument();
-		await userEvent.keyboard("{Escape}");
+		await act(async () => {
+			screen
+				.getByRole("dialog", { name: "Daily Intent Log" })
+				.dispatchEvent(new Event("cancel", { cancelable: true }));
+		});
 
 		// the persistent strip replaces the silently-unlinked session
 		const strip = await screen.findByText(/daily log isn.t filled in yet/i);
@@ -290,9 +296,14 @@ describe("ChatApp daily intent log handling", () => {
 		window.history.replaceState(null, "", "/chat?dailyIntent=true&id=idea-1");
 		render(<ChatApp />);
 
-		// no log today: the modal opens first, dismiss it to reach the strip
+		// no log today: the modal opens first, dismiss it to reach the
+		// strip (cancel = the browser's Escape for a top-layer dialog)
 		expect(await screen.findByRole("dialog", { name: "Daily Intent Log" })).toBeInTheDocument();
-		await userEvent.keyboard("{Escape}");
+		await act(async () => {
+			screen
+				.getByRole("dialog", { name: "Daily Intent Log" })
+				.dispatchEvent(new Event("cancel", { cancelable: true }));
+		});
 		expect(await screen.findByText(/daily log isn.t filled in yet/i)).toBeInTheDocument();
 		// fill the log in from the strip
 		await userEvent.click(screen.getByRole("button", { name: "Fill it in" }));

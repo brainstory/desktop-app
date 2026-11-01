@@ -58,11 +58,6 @@ export const CHAT_SAVE_STATE = {
 } as const;
 export type ChatSaveState = (typeof CHAT_SAVE_STATE)[keyof typeof CHAT_SAVE_STATE];
 
-export const MIN_CONVERSATION_LENGTH_BEFORE_SAVE: Record<string, number> = {
-	DEFAULT: 4, // 4 messages = [assistant, user, assistant, user]
-	daily_intent: 2 // 2 messages = [assistant, user]
-};
-
 export const CHAT_TYPE = {
 	ORIGINAL: "original",
 	FEEDBACK: "feedback",
@@ -70,6 +65,15 @@ export const CHAT_TYPE = {
 	DAILY_INTENT: "daily_intent"
 } as const;
 export type ChatType = (typeof CHAT_TYPE)[keyof typeof CHAT_TYPE];
+
+/** Minimum conversation length before an idea row is created, per chat
+ * type (DEFAULT covers every type without its own entry). */
+export const MIN_CONVERSATION_LENGTH_BEFORE_SAVE: Partial<Record<ChatType, number>> & {
+	DEFAULT: number;
+} = {
+	DEFAULT: 4, // 4 messages = [assistant, user, assistant, user]
+	daily_intent: 2 // 2 messages = [assistant, user]
+};
 
 /**
  * The fixed set of reactions people can put on an idea's sections and on

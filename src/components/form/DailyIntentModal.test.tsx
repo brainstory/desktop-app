@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -39,24 +39,24 @@ function Host({ onClose, setLogId }: { onClose?: () => void; setLogId?: (id: str
 	);
 }
 
+/** The browser synthesizes `cancel` for Escape on a top-layer dialog;
+ * jsdom does not, so tests dispatch what the browser would. */
+async function pressEscape() {
+	const dialog = screen.getByRole("dialog");
+	await act(async () => {
+		dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+	});
+}
+
 describe("DailyIntentModal", () => {
-	it("moves focus into the dialog and traps Tab inside it", async () => {
+	it("moves focus into the dialog (the top layer traps the rest)", async () => {
 		const user = userEvent.setup();
 		render(<Host />);
 		await user.click(screen.getByRole("button", { name: "Open log" }));
 		const dialog = screen.getByRole("dialog", { name: "Daily Intent Log" });
+		// focus landed on the dialog's first control; keeping it there is
+		// the browser's top-layer job (showModal), not trap code anymore
 		expect(dialog).toContainElement(document.activeElement as HTMLElement);
-
-		// wait for the questions so the dialog has all its controls
-		await screen.findByText("Slept well?");
-		for (let i = 0; i < 8; i++) {
-			await user.tab();
-			expect(dialog).toContainElement(document.activeElement as HTMLElement);
-		}
-		for (let i = 0; i < 8; i++) {
-			await user.tab({ shift: true });
-			expect(dialog).toContainElement(document.activeElement as HTMLElement);
-		}
 	});
 
 	it("closes on Escape", async () => {
@@ -65,7 +65,7 @@ describe("DailyIntentModal", () => {
 		render(<Host onClose={onClose} />);
 		await user.click(screen.getByRole("button", { name: "Open log" }));
 		await screen.findByText("Slept well?");
-		await user.keyboard("{Escape}");
+		await pressEscape();
 		expect(onClose).toHaveBeenCalledTimes(1);
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
@@ -257,7 +257,7 @@ describe("DailyIntentModal load and save failures", () => {
 		expect(screen.getByRole("button", { name: "Saving" })).toBeDisabled();
 
 		// close while the save is still pending
-		await user.keyboard("{Escape}");
+		await pressEscape();
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(onClose).toHaveBeenCalledTimes(1);
 
@@ -280,7 +280,7 @@ describe("DailyIntentModal load and save failures", () => {
 		await openModal(user);
 		expect(screen.getByText("Loading your daily questions...")).toBeInTheDocument();
 
-		await user.keyboard("{Escape}");
+		await pressEscape();
 		expect(onClose).toHaveBeenCalledTimes(1);
 
 		// the late rejection must not update anything or crash

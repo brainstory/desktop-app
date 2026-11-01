@@ -95,7 +95,6 @@ export default tseslint.config(
 			"@eslint-react/naming-convention-id-name": "off",
 			"@eslint-react/naming-convention-ref-name": "off",
 			// - lazy useState initialisers (the flagged ones are cheap reads)
-			"@eslint-react/use-state": "off",
 			// - index keys: the flagged lists are static or re-rendered whole
 			"@eslint-react/no-array-index-key": "off",
 			// - the tabs and tooltip primitives use the Children API and

@@ -101,13 +101,16 @@ export function ChatSection({
 	const llmBlocked = modelAvailability === "missing" || modelAvailability === "error";
 	const sttBlocked = speechAvailability === "missing" || speechAvailability === "error";
 
-	const firstPrompt = getFirstPrompt(chatType);
-	const [currConversation, setCurrConversation] = useState<ChatMessage[]>([
-		{ role: "assistant", content: firstPrompt }
+	// computed once: the prompt only matters for the initial message, so
+	// the lazy initializer keeps it out of every later render
+	const [currConversation, setCurrConversation] = useState<ChatMessage[]>(() => [
+		{ role: "assistant", content: getFirstPrompt(chatType) }
 	]);
+	// per-type minimum (daily-intent sessions need less), typed so the
+	// DEFAULT fallback needs no non-null assertion
 	const minConversationLenForCreateAndEnd =
 		MIN_CONVERSATION_LENGTH_BEFORE_SAVE[chatType] ??
-		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT!;
+		MIN_CONVERSATION_LENGTH_BEFORE_SAVE.DEFAULT;
 
 	const fetchParentIdea = (parentId: string): void => {
 		getIdeaApi(parentId)

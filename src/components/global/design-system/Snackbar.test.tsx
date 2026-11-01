@@ -6,8 +6,9 @@ import { Snackbar, SnackbarProvider, useSnackbar } from "./Snackbar";
 
 /** Re-renders itself once, 2s in (past the midway point of the countdown). */
 function RerenderingHost({ onClose }: { onClose: () => void }) {
-	const [, setTick] = useState(0);
-	setTimeout(() => setTick((t) => t + 1), 2000);
+	const [tick, setTick] = useState(0);
+	setTimeout(() => setTick((current) => current + 1), 2000);
+	void tick;
 	return <Snackbar isSuccess={false} message="first" onClose={onClose} />;
 }
 

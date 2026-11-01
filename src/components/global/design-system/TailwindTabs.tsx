@@ -54,11 +54,11 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 	// nothing.
 	const tabCount = countTabs(children);
 	const clamp = (index: number) => Math.max(0, Math.min(index, tabCount - 1));
-	const [activeIndex, setActiveIndexRaw] = useState(() => clamp(activeTab));
+	const [activeTabIndex, setActiveTabIndex] = useState(() => clamp(activeTab));
 
 	const setActiveIndex = (index: number) => {
 		const next = clamp(index);
-		setActiveIndexRaw(next);
+		setActiveTabIndex(next);
 		const param = tabParams?.[next];
 		if (param) {
 			const url = new URL(window.location.href);
@@ -70,7 +70,7 @@ function TailwindTabs({ children, activeTab = 0, tabParams }: TailwindTabsProps)
 	return (
 		<TabsContext.Provider
 			value={{
-				activeIndex,
+				activeIndex: activeTabIndex,
 				setActiveIndex,
 				tabCount,
 				idPrefix
@@ -119,11 +119,11 @@ function TailwindTab({
 } & Omit<ComponentProps<"button">, "children">) {
 	const index = useContext(TabContext);
 	const ctx = useContext(TabsContext);
-	const activeIndex = ctx?.activeIndex ?? 0;
+	const activeTabIndex = ctx?.activeIndex ?? 0;
 	const setActiveIndex = ctx?.setActiveIndex ?? (() => {});
 	const tabCount = ctx?.tabCount ?? 1;
 	const idPrefix = ctx?.idPrefix ?? "tw";
-	const isActive = index === activeIndex;
+	const isActive = index === activeTabIndex;
 	const tooltipId = `${idPrefix}-tab-${index}-tooltip`;
 	const hasTooltip = tooltipText !== "";
 

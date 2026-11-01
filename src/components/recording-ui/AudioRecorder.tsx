@@ -55,7 +55,7 @@ const AudioRecorder = ({
 	startRecordingCallback
 }: AudioRecorderProps) => {
 	const [time, setTime] = useState(0);
-	const [isRunning, setIsRunningState] = useState(false);
+	const [isRunningState, setIsRunningState] = useState(false);
 
 	// stable identity: RecordButton keeps this in effect dependencies
 	const resetTimer = useCallback(() => setTime(0), []);
@@ -71,13 +71,13 @@ const AudioRecorder = ({
 	}, []);
 
 	// Timer
-	useTimer(isRunning, setTime);
+	useTimer(isRunningState, setTime);
 
 	useEffect(() => {
-		if (isRunning) {
+		if (isRunningState) {
 			startRecordingCallback?.();
 		}
-	}, [isRunning, startRecordingCallback]);
+	}, [isRunningState, startRecordingCallback]);
 
 	return (
 		<div className="w-full text-center">
@@ -95,7 +95,7 @@ const AudioRecorder = ({
 			>
 				<RecordButton
 					isCompressed={isCompressed}
-					isRecording={isRunning}
+					isRecording={isRunningState}
 					// while waiting on the coach or a transcription the mic
 					// stays rendered but disabled - display:none dropped
 					// focus to <body>
