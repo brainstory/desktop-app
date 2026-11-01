@@ -97,12 +97,9 @@ fn pick_input_device(host: &cpal::Host) -> Result<cpal::Device, String> {
 		.ok_or_else(|| "no microphone found".to_string())?;
 	// read without a db handle: callers pass nothing today and the
 	// preference is read at capture start by the command layer
-	let Some(preferred) = PREFERRED_DEVICE.get().cloned() else {
+	let Some(preferred) = preferred_device_name() else {
 		return Ok(default);
 	};
-	if preferred.is_empty() {
-		return Ok(default);
-	}
 	match host.input_devices() {
 		Ok(devices) => {
 			for device in devices {
@@ -117,14 +114,32 @@ fn pick_input_device(host: &cpal::Host) -> Result<cpal::Device, String> {
 	}
 }
 
-/// The preferred microphone name, set once at startup from the settings
-/// row (empty = system default). A static: cpal device enumeration on
-/// every capture start would race a settings change anyway.
-static PREFERRED_DEVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// The preferred microphone name (None = system default). Seeded at
+/// startup from the settings row and re-written whenever the user
+/// changes the preference, so it can change at runtime. A static: cpal
+/// device enumeration on every capture start would race a settings
+/// change anyway.
+static PREFERRED_DEVICE: Mutex<Option<String>> = Mutex::new(None);
 
-/// Record the preferred microphone for subsequent captures.
+/// Record the preferred microphone for subsequent captures. An empty
+/// name clears the preference (system default).
 pub fn set_preferred_device(name: &str) {
-	let _ = PREFERRED_DEVICE.set(name.to_string());
+	let mut guard = PREFERRED_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+	if name.is_empty() {
+		*guard = None;
+	} else {
+		*guard = Some(name.to_string());
+	}
+}
+
+/// The preferred microphone name, if one is set. Shared by
+/// `pick_input_device` and the tests so the stored value is observable
+/// without audio hardware.
+pub fn preferred_device_name() -> Option<String> {
+	PREFERRED_DEVICE
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.clone()
 }
 
 /// Enumerate input devices with their names, marking the system default.
@@ -426,6 +441,28 @@ mod wav_tests {
 				"{original} vs {roundtripped}"
 			);
 		}
+	}
+}
+
+/// The preference behind `pick_input_device`, tested without audio
+/// hardware: the value the next capture would consult. Serializes on
+/// its own lock because the static is process-global and tests run in
+/// parallel threads.
+#[cfg(test)]
+mod preferred_device_tests {
+	use super::{preferred_device_name, set_preferred_device};
+
+	#[test]
+	fn a_later_preference_wins_and_empty_clears_it() {
+		set_preferred_device("A");
+		set_preferred_device("B");
+		assert_eq!(
+			preferred_device_name().as_deref(),
+			Some("B"),
+			"the last set_preferred_device wins without a restart"
+		);
+		set_preferred_device("");
+		assert_eq!(preferred_device_name(), None, "empty means system default");
 	}
 }
 
