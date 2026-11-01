@@ -1,24 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanStores } from "nanostores";
 
 import {
 	$downloads,
 	clearDownloadFailure,
 	formatDownloadError,
 	markDownloadStarting,
-	seedDownloads,
-	subscribeDownloads
+	seedDownloads
 } from "./downloadStore";
 import type { DownloadEvent } from "@src/tauri/generated/DownloadEvent";
 import { captureListen, mockedListen } from "@src/test/mock-tauri";
 
-/** Subscribe for a test and hand back an emitter of typed events. */
+/** Read the store for a test (which mounts its onMount listener) and
+ * hand back an emitter of typed events. */
 function subscribeCapturing(): {
 	emit: (payload: DownloadEvent) => void;
 	unsubscribe: () => void;
 } {
 	const { emit, handlers } = captureListen();
-	const unsubscribe = subscribeDownloads();
-	// the mock runs synchronously inside subscribeDownloads
+	const unsubscribe = $downloads.subscribe(() => {});
+	// the mock runs synchronously inside the mount
 	const downloadHandlers = handlers;
 	if (downloadHandlers.length === 0) {
 		throw new Error("the feed did not register its listener");
@@ -32,6 +33,10 @@ afterEach(() => {
 	mockedListen.mockReset();
 	mockedListen.mockImplementation(async () => () => {});
 	$downloads.set(IDLE);
+	// nanostores delays the real unmount by a second (churn guard):
+	// force it so every test starts with an unmounted store
+	cleanStores($downloads);
+	vi.useRealTimers();
 });
 
 describe("formatDownloadError", () => {
@@ -103,7 +108,7 @@ describe("the download event feed", () => {
 	it("records an unknown size as the indeterminate sentinel", () => {
 		// the typed event always carries a pct; the -1 sentinel is the
 		// optimistic seed a button press plants before the first event
-		const unsubscribe = subscribeDownloads();
+		const unsubscribe = $downloads.subscribe(() => {});
 		markDownloadStarting("m1", "Model 1");
 		expect($downloads.get().active["m1"]).toEqual({ pct: -1, label: "Model 1" });
 		unsubscribe();
@@ -188,23 +193,28 @@ describe("seedDownloads", () => {
 	});
 });
 
-describe("subscribeDownloads", () => {
-	it("shares one listener and resets the store when the last subscriber leaves", async () => {
+describe("the store lifecycle (onMount)", () => {
+	it("shares one listener and resets the store when the last reader leaves", () => {
+		vi.useFakeTimers();
 		mockedListen.mockImplementation(async () => () => {});
-		const first = subscribeDownloads();
-		const second = subscribeDownloads();
-		// one registration for both subscribers (the shared feed)
+		const first = $downloads.subscribe(() => {});
+		const second = $downloads.subscribe(() => {});
+		// one registration for both readers (the shared feed)
 		expect(mockedListen).toHaveBeenCalledTimes(1);
 
 		$downloads.set({ active: { m: { pct: 1, label: "M" } }, paused: {}, failures: {} });
 		first();
-		// the second subscriber keeps the feed alive: state survives
+		// the second reader keeps the feed alive: state survives
 		expect($downloads.get().active["m"]).toBeDefined();
 		second();
+		// nanostores delays the unmount (a churn guard for pages that
+		// swap readers within a second): after it, the feed resets
+		vi.advanceTimersByTime(1000);
 		expect($downloads.get()).toEqual(IDLE);
 	});
 
-	it("a subscriber that leaves before registration resolves releases the listener itself", async () => {
+	it("a reader that leaves before registration resolves releases the listener itself", async () => {
+		vi.useFakeTimers();
 		const unlisten = vi.fn();
 		let release!: () => void;
 		mockedListen.mockImplementation(
@@ -213,9 +223,11 @@ describe("subscribeDownloads", () => {
 					release = () => resolve(unlisten);
 				})
 		);
-		const unsubscribe = subscribeDownloads();
+		const unsubscribe = $downloads.subscribe(() => {});
 		unsubscribe();
-		// the registration resolves after the subscriber left
+		// the unmount's teardown runs after the churn-guard delay, then
+		// the registration that resolves afterwards releases itself
+		vi.advanceTimersByTime(1000);
 		release();
 		await Promise.resolve();
 		await Promise.resolve();

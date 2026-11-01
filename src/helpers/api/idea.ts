@@ -6,10 +6,8 @@ import type { GenerationResult } from "@helpers/chat";
 import type { IdeaItem } from "@src/tauri/generated/IdeaItem";
 
 import { safeParse } from "valibot";
-import { getQueryParam } from "@helpers/helpers";
 import { FeedbackItemSchema, ResultSectionsSchema, StructuredFeedbackSchema } from "./schemas";
 import { draftSummaryOf, stripResultPreview } from "@helpers/ideas";
-import { QUERY_PARAMS } from "@src/tauri/commands";
 
 /** Validate a stored result document; null for absent or malformed. */
 function parseResultJson(blob: IdeaItem["result_json"], ideaId: string): IdeaDetail["resultJson"] {
@@ -125,21 +123,21 @@ export async function createIdeaApi(
 	ideaType: ChatType = CHAT_TYPE.ORIGINAL,
 	parentIdeaId: string | null = null,
 	logId: string | null = null,
-	ideaMetadata: Record<string, unknown> = {}
+	ideaMetadata: Record<string, unknown> = {},
+	topicIndex: number | null = null
 ): Promise<string> {
-	const i = getQueryParam(QUERY_PARAMS.topic);
-	if (i !== null) {
-		ideaMetadata.suggestion = {
-			index: i,
-			topic: TOPICS[Number(i)]
-		};
-	}
+	// the caller owns the URL read (and validates it); the suggestion
+	// rides in a fresh object instead of mutating the caller's metadata
+	const metadata =
+		topicIndex !== null
+			? { ...ideaMetadata, suggestion: { index: topicIndex, topic: TOPICS[topicIndex] } }
+			: ideaMetadata;
 
 	const response = await invokeCommand("createIdea", {
 		result,
 		transcript,
 		parentIdeaId,
-		ideaMetadata,
+		ideaMetadata: metadata,
 		ideaType,
 		logId
 	});

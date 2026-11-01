@@ -3,6 +3,14 @@ import BaseHead from "@components/BaseHead.astro";
 import Navigation from "@components/global/Navigation";
 import Footer from "@components/global/Footer.astro";
 
+interface Props {
+	title?: string;
+	/** drop the main section's inner padding (chat-like full-bleed pages) */
+	hidePadding?: boolean;
+	/** render the (empty spacer) footer */
+	showFooter?: boolean;
+}
+
 const { title, hidePadding, showFooter } = Astro.props;
 
 // The footer is an empty spacer now: 2rem footer + 1rem top padding on
@@ -27,7 +35,11 @@ const mainSectionStyle = `min-h-[calc(100vh-5rem)] sm:min-h-[calc(100vh-3rem)] b
 			>Skip to main content</a
 		>
 		<div class="sm:flex">
-			<Navigation client:idle />
+			<!-- transition:persist keeps the navigation island mounted
+			     across client-side navigations, so it neither re-renders
+			     nor flashes between pages -->
+			<Navigation client:idle transition:persist />
+
 			<div class="flex flex-col flex-grow">
 				<main id="main" class="p-4 pt-0 sm:pt-4">
 					<div

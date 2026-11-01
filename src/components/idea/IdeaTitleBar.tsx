@@ -162,13 +162,7 @@ export default function IdeaTitleBar({
 			// own ideas get notes instead (the feedback interview asks a
 			// stranger's questions about your own text)
 			buttons.push(
-				<Button
-					variant="pink"
-					key="give-feedback"
-					onClick={() => {
-						window.location.href = `/chat?parentId=${idea.id}`;
-					}}
-				>
+				<Button variant="pink" key="give-feedback" href={`/chat?parentId=${idea.id}`}>
 					Give Feedback
 				</Button>
 			);
@@ -178,9 +172,7 @@ export default function IdeaTitleBar({
 				<Button
 					variant="pink"
 					key="continue-thinking"
-					onClick={() => {
-						window.location.href = continuationChatUrl({ parentId: idea.id });
-					}}
+					href={continuationChatUrl({ parentId: idea.id })}
 				>
 					Continue thinking
 				</Button>

@@ -45,6 +45,6 @@ describe("StickyLoadingSection", () => {
 
 		rerender(<StickyLoadingSection isFinishedGenerating ideaId="i1" droppedTurns={14} />);
 		expect(screen.getByText(/14 earlier turns were left out/)).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Open your idea →" })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Open your idea →" })).toBeInTheDocument();
 	});
 });

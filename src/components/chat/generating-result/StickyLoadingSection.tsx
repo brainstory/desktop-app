@@ -124,10 +124,7 @@ export default function StickyLoadingSection({
 						>
 							Copy as Markdown
 						</Button>
-						<Button
-							variant="bordered"
-							onClick={() => (window.location.href = `/idea?id=${ideaId}`)}
-						>
+						<Button variant="bordered" href={`/idea?id=${ideaId}`}>
 							Open your idea &rarr;
 						</Button>
 					</div>

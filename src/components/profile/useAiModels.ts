@@ -37,7 +37,6 @@ import {
 	formatDownloadError,
 	seedDownloads,
 	onDownloadEvent,
-	subscribeDownloads,
 	markDownloadStarting,
 	removeActiveDownload
 } from "@components/global/downloadStore";
@@ -194,7 +193,6 @@ export function useAiModels() {
 		// The shared feed owns display state (progress, failures,
 		// cancels); this page adds its side effects on top. The feed is
 		// refcounted and lives exactly as long as something needs it.
-		const unsubscribe = subscribeDownloads();
 		// Side effects ride the store's ONE model-download listener (no
 		// second registration next to it): the feed above owns display
 		// state, this owns the catalog refreshes and toasts.
@@ -234,7 +232,6 @@ export function useAiModels() {
 		});
 		return () => {
 			unsubscribeEvents();
-			unsubscribe();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);

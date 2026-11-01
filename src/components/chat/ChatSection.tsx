@@ -8,7 +8,6 @@ import {
 	type ChatType
 } from "@src/const";
 import { findMostRecentAssistantContent, getFirstPrompt } from "@helpers/chat";
-import { useIdeaIdFromUrl } from "@src/hooks/useIdeaIdFromUrl";
 import type { ChatMessage } from "@src/types";
 import type { ChatErrorSource, ParentIdea } from "@components/chat/types";
 import { getIdeaApi } from "@helpers/api/idea";
@@ -32,6 +31,15 @@ import {
 import { AssistantResponseText } from "@components/chat/AssistantResponseText";
 import LastAnswerActions from "@components/chat/reusable/LastAnswerActions";
 import ChatTopBar from "./reusable/ChatTopBar";
+
+/** Astro's client-router before-preparation event (the subset used
+ * here; the full shape lives in astro:transitions/client). Wrapping or
+ * calling `loader` performs the prepared swap. */
+interface BeforePreparationEvent extends Event {
+	/** the destination URL */
+	to: string;
+	loader: () => Promise<void> | void;
+}
 
 interface ChatSectionProps {
 	draftId?: string;
@@ -123,8 +131,6 @@ export function ChatSection({
 			});
 	};
 
-	const hasMounted = useRef(false);
-
 	const persistence = useIdeaPersistence(currConversation, result, {
 		initialIdeaId: draftId,
 		chatType,
@@ -161,8 +167,6 @@ export function ChatSection({
 		onFatalError: setFatalError
 	});
 
-	useIdeaIdFromUrl(hasMounted, (id) => persistence.setIdeaId(id));
-
 	// the specific members the interception/finish paths depend on: a
 	// whole-object dependency re-runs them on every streamed token (see
 	// the memo comments in the hooks)
@@ -183,50 +187,40 @@ export function ChatSection({
 	 * it again leaves without the unsaved changes */
 	const leaveAnywayHrefRef = useRef<string | null>(null);
 
-	// Sidebar links are full-document navigations: a pending autosave
-	// would be dropped (the pagehide flush is fire-and-forget). Intercept
-	// plain left-clicks on in-page anchors while anything is unsaved,
-	// wait for the writes to land, then continue the navigation. When the
-	// save can't land, say so and let a second click leave anyway.
+	// Client-side navigation (Astro's router) unloads this page's state:
+	// a pending autosave would be dropped (the pagehide flush is
+	// fire-and-forget). Hold any same-app navigation while anything is
+	// unsaved, wait for the writes to land, then run the router's own
+	// loader. When the save can't land, say so and let a second attempt
+	// leave anyway.
 	useEffect(() => {
-		const onClick = (event: MouseEvent) => {
-			if (
-				event.defaultPrevented ||
-				event.button !== 0 ||
-				event.metaKey ||
-				event.ctrlKey ||
-				event.shiftKey ||
-				event.altKey
-			) {
-				return;
-			}
-			const anchor = (event.target as HTMLElement | null)?.closest?.("a[href]");
-			if (!anchor) return;
-			const href = anchor.getAttribute("href");
-			// same-document links only; external URLs keep their default
-			if (!href || !href.startsWith("/") || href.startsWith("//")) return;
+		const onBeforePreparation = (event: Event) => {
+			const routerEvent = event as BeforePreparationEvent;
 			if (!hasUnsavedChanges()) return;
-			event.preventDefault();
-			if (leaveAnywayHrefRef.current === href) {
-				window.location.href = href;
+			if (leaveAnywayHrefRef.current === routerEvent.to) {
+				leaveAnywayHrefRef.current = null;
 				return;
 			}
+			// take the navigation out of the router's hands; either run it
+			// once the saves land, or explain and stay
+			event.preventDefault();
 			void (async () => {
 				try {
 					await whenIdle();
-					window.location.href = href;
 				} catch {
-					leaveAnywayHrefRef.current = href;
+					leaveAnywayHrefRef.current = routerEvent.to;
 					setChatError({
 						message:
 							"Your latest changes are not saved yet. Retry saving, or click the link again to leave without them.",
 						source: "save"
 					});
+					return;
 				}
+				await routerEvent.loader();
 			})();
 		};
-		document.addEventListener("click", onClick, true);
-		return () => document.removeEventListener("click", onClick, true);
+		document.addEventListener("astro:before-preparation", onBeforePreparation);
+		return () => document.removeEventListener("astro:before-preparation", onBeforePreparation);
 		// the two members the interceptor reads, not the whole object: a
 		// broader key would re-register this listener on every streamed
 		// token (saveState changes while a reply streams)

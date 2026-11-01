@@ -14,7 +14,7 @@ import {
 	type ChatType
 } from "@src/const";
 import { createIdeaApi, getIdeaApi, updateIdeaApi } from "@helpers/api/idea";
-import { normalizeApiError } from "@helpers/helpers";
+import { getQueryParam, normalizeApiError } from "@helpers/helpers";
 import { describeError } from "@helpers/describeError";
 import { QUERY_PARAMS } from "@src/tauri/commands";
 
@@ -199,7 +199,20 @@ export function useIdeaPersistence(
 			creatingIdeaRef.current = true;
 			const createdWith = conversation;
 			setSaveState(CHAT_SAVE_STATE.SAVING);
-			const create = createIdeaApi(result, createdWith, chatType, parentIdParam, dailyLogId)
+			// ?topic (guide entry): validated like chat.ts's own read of the
+			// same param - digits only
+			const topicParam = getQueryParam(QUERY_PARAMS.topic);
+			const topicIndex =
+				topicParam !== null && /^\d+$/.test(topicParam) ? Number(topicParam) : null;
+			const create = createIdeaApi(
+				result,
+				createdWith,
+				chatType,
+				parentIdParam,
+				dailyLogId,
+				{},
+				topicIndex
+			)
 				.then((createdIdeaId) => {
 					creatingIdeaRef.current = false;
 					createdIdeaIdRef.current = createdIdeaId;
@@ -282,8 +295,10 @@ export function useIdeaPersistence(
 	}, [conversation, ideaId, minLength, flushAutosave]);
 
 	// Never drop the last change: flush the pending save when the chat
-	// unmounts or the page goes away (Astro navigations are full page
-	// loads, so React never unmounts on them)
+	// unmounts or the page goes away. Same-app navigations are held and
+	// flushed by the router interceptor (see ChatSection); pagehide
+	// still covers window close, reload and any navigation the router
+	// does not route through that interceptor.
 	useEffect(() => {
 		window.addEventListener("pagehide", flushAutosave);
 		return () => {

@@ -1,4 +1,4 @@
-import { atom } from "nanostores";
+import { atom, onMount } from "nanostores";
 import type { DownloadEvent } from "@src/tauri/generated/DownloadEvent";
 import { listenEvent } from "@src/tauri/events";
 
@@ -231,16 +231,6 @@ export function seedDownloads(
 }
 
 /**
- * Keep the download feed live while at least one component is subscribed
- * to it (the sidebar pill on every page, the models card in settings).
- * Refcounted on purpose: the listener exists exactly while the app shows
- * something that needs it, and a React effect can own it directly - no
- * store-lifecycle indirection.
- */
-let liveCount = 0;
-let stopListening: (() => void) | null = null;
-
-/**
  * Side-effect subscribers (the models page's refreshes and toasts) hang
  * off the ONE listener this store owns - no component registers its own
  * model-download listener.
@@ -254,30 +244,38 @@ export function onDownloadEvent(callback: (event: DownloadEvent) => void): () =>
 	};
 }
 
-export function subscribeDownloads(): () => void {
-	liveCount++;
-	if (liveCount === 1) {
-		void listenEvent("modelDownload", (payload) => {
-			applyEvent(payload);
-			for (const callback of eventCallbacks) {
-				callback(payload);
-			}
-		}).then((unlisten) => {
-			// a subscriber that left before the registration resolved
-			// releases the listener itself; otherwise it is the shared one
-			if (liveCount > 0 && stopListening === null) {
-				stopListening = unlisten;
-			} else {
-				unlisten();
-			}
-		});
-	}
-	return () => {
-		liveCount = Math.max(0, liveCount - 1);
-		if (liveCount === 0) {
-			stopListening?.();
-			stopListening = null;
-			$downloads.set(IDLE);
+/**
+ * The feed lives while at least one component reads the store (nanostores
+ * onMount: the first subscription registers the listener, the last
+ * teardown releases it and clears the state) - the same lifecycle the
+ * user and ai-status stores use. With the client router keeping the
+ * module scope alive across pages, a subscription never flickers on
+ * navigation either.
+ */
+onMount($downloads, () => {
+	// astro's island prerender reads the store at build time (Node, no
+	// window and no Tauri IPC): skip registration there; the hydrated
+	// webview re-mounts the store and listens for real
+	if (typeof window === "undefined") return;
+	let stopListening: (() => void) | null = null;
+	let disposed = false;
+	void listenEvent("modelDownload", (payload) => {
+		applyEvent(payload);
+		for (const callback of eventCallbacks) {
+			callback(payload);
 		}
+	}).then((unlisten) => {
+		// the store lost its last reader before the registration resolved
+		if (disposed) {
+			unlisten();
+		} else {
+			stopListening = unlisten;
+		}
+	});
+	return () => {
+		disposed = true;
+		stopListening?.();
+		stopListening = null;
+		$downloads.set(IDLE);
 	};
-}
+});

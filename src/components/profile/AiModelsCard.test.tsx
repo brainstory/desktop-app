@@ -6,7 +6,9 @@ import { mockInvoke } from "@src/test/mock-tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { mockedListen } from "@src/test/mock-tauri";
 import type { EventCallback } from "@tauri-apps/api/event";
+import { cleanStores } from "nanostores";
 import { $aiStatus } from "@components/global/aiStatusStore";
+import { $downloads } from "@components/global/downloadStore";
 import { SnackbarProvider } from "@ds/Snackbar";
 import AiModelsCard from "./AiModelsCard";
 import { useAiModels } from "./useAiModels";
@@ -82,6 +84,10 @@ function renderCard() {
 
 /** Capture the backend event handlers the card subscribes to. */
 function captureListeners(): Record<string, EventCallback<unknown>[]> {
+	// the downloads store now owns its listener through onMount, which
+	// nanostores keeps alive for a second after the last reader leaves:
+	// force the unmount so this test's render registers fresh handlers
+	cleanStores($downloads);
 	const handlers: Record<string, EventCallback<unknown>[]> = {};
 	mockedListen.mockImplementation(async (event, handler) => {
 		(handlers[event] ??= []).push(handler);

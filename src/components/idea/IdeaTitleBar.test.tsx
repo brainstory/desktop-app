@@ -218,7 +218,7 @@ describe("IdeaTitleBar delete", () => {
 describe("IdeaTitleBar actions", () => {
 	it("offers continuation only for owned completed ideas", () => {
 		renderBar({ summary: "# My idea" });
-		expect(screen.getByRole("button", { name: "Continue thinking" })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Continue thinking" })).toBeInTheDocument();
 	});
 
 	it("keeps the export note out of the button row so the buttons share one height", () => {
@@ -238,7 +238,7 @@ describe("IdeaTitleBar actions", () => {
 				<IdeaTitleBar idea={{ ...idea, creatorName: "Ada" }} isOwnIdea={false} />
 			</SnackbarProvider>
 		);
-		expect(screen.getByRole("button", { name: "Give Feedback" })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Give Feedback" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Add Note" })).not.toBeInTheDocument();
 	});
 

@@ -367,7 +367,20 @@ describe("ChatSection", () => {
 		expect(alert).not.toHaveTextContent(/AI couldn/);
 	});
 
-	it("waits for an in-flight save before following an in-page link", async () => {
+	/** Astro's client router event, as the interceptor consumes it (the
+	 * loader performs the prepared page swap). */
+	function fireBeforePreparation(
+		to: string
+	): Event & { to: string; loader: ReturnType<typeof vi.fn> } {
+		const event = Object.assign(
+			new CustomEvent("astro:before-preparation", { cancelable: true }),
+			{ to, loader: vi.fn(async () => {}) }
+		);
+		document.dispatchEvent(event);
+		return event;
+	}
+
+	it("holds a router navigation until an in-flight save lands, then runs it", async () => {
 		let landSave!: () => void;
 		mockChat({
 			create_idea: () => ({ id: "idea-1" }),
@@ -375,52 +388,38 @@ describe("ChatSection", () => {
 			update_idea: () => new Promise((res) => (landSave = () => res({ id: "idea-1" }))),
 			generate_streaming_response: () => ({ response: "and then?" })
 		});
-		// jsdom blocks real navigation: swap in an observable location
-		const originalLocation = window.location;
-		Object.defineProperty(window, "location", {
-			configurable: true,
-			value: { ...originalLocation, href: "http://localhost/chat" }
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("a calm day");
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
+		// the exchange ended on an assistant reply: the save fired
+		// without waiting out the debounce
+		await waitFor(() =>
+			expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "update_idea")).toHaveLength(
+				1
+			)
+		);
+
+		const event = fireBeforePreparation("/dashboard");
+		// the navigation was taken out of the router's hands while the
+		// write is in flight
+		expect(event.defaultPrevented).toBe(true);
+		expect(event.loader).not.toHaveBeenCalled();
+
+		await act(async () => {
+			landSave();
+			await Promise.resolve();
 		});
-		try {
-			render(
-				<>
-					<a href="/dashboard">Library</a>
-					<ChatSection
-						chatType="daily_intent"
-						dailyLogId={null}
-						conversationEndCallbacks={() => {}}
-					/>
-				</>
-			);
-			await sendTyped("a calm day");
-			expect(await screen.findByText("and then?")).toBeInTheDocument();
-			// the exchange ended on an assistant reply: the save fired
-			// without waiting out the debounce
-			await waitFor(() =>
-				expect(
-					vi.mocked(invoke).mock.calls.filter(([c]) => c === "update_idea")
-				).toHaveLength(1)
-			);
-
-			const user = userEvent.setup();
-			await user.click(screen.getByRole("link", { name: "Library" }));
-			// the click was intercepted while the write is in flight
-			expect(window.location.href).toBe("http://localhost/chat");
-
-			await act(async () => {
-				landSave();
-				await Promise.resolve();
-			});
-			await waitFor(() => expect(window.location.href).toBe("/dashboard"));
-		} finally {
-			Object.defineProperty(window, "location", {
-				configurable: true,
-				value: originalLocation
-			});
-		}
+		// the save landed: the router's own loader performs the swap
+		await waitFor(() => expect(event.loader).toHaveBeenCalledTimes(1));
 	});
 
-	it("lets a second click leave when the session can't be saved", async () => {
+	it("lets a second navigation leave when the session can't be saved", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		mockChat({
 			create_idea: () => {
@@ -428,42 +427,28 @@ describe("ChatSection", () => {
 			},
 			generate_streaming_response: () => ({ response: "and then?" })
 		});
-		const originalLocation = window.location;
-		Object.defineProperty(window, "location", {
-			configurable: true,
-			value: { ...originalLocation, href: "http://localhost/chat" }
-		});
-		try {
-			render(
-				<>
-					<a href="/dashboard">Library</a>
-					<ChatSection
-						chatType="daily_intent"
-						dailyLogId={null}
-						conversationEndCallbacks={() => {}}
-					/>
-				</>
-			);
-			await sendTyped("a calm day");
-			expect(await screen.findByText("and then?")).toBeInTheDocument();
+		render(
+			<ChatSection
+				chatType="daily_intent"
+				dailyLogId={null}
+				conversationEndCallbacks={() => {}}
+			/>
+		);
+		await sendTyped("a calm day");
+		expect(await screen.findByText("and then?")).toBeInTheDocument();
 
-			const user = userEvent.setup();
-			await user.click(screen.getByRole("link", { name: "Library" }));
-			// held back, and the user is told why
-			expect(
-				await screen.findByText(/click the link again to leave without them/)
-			).toBeInTheDocument();
-			expect(window.location.href).toBe("http://localhost/chat");
+		const first = fireBeforePreparation("/dashboard");
+		// held back, and the user is told why
+		expect(
+			await screen.findByText(/click the link again to leave without them/)
+		).toBeInTheDocument();
+		expect(first.defaultPrevented).toBe(true);
 
-			await user.click(screen.getByRole("link", { name: "Library" }));
-			expect(window.location.href).toBe("/dashboard");
-		} finally {
-			Object.defineProperty(window, "location", {
-				configurable: true,
-				value: originalLocation
-			});
-			vi.mocked(console.error).mockRestore();
-		}
+		// the second attempt at the same destination proceeds untouched
+		const second = fireBeforePreparation("/dashboard");
+		expect(second.defaultPrevented).toBe(false);
+		expect(second.loader).not.toHaveBeenCalled();
+		vi.mocked(console.error).mockRestore();
 	});
 
 	it("offers no finish while every answer is a skip", async () => {

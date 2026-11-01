@@ -115,10 +115,12 @@ export function useVoiceCapture(options: {
 		};
 	}, [teardownRecording]);
 
-	// Astro full-document navigation can discard the page without ever
-	// running React unmount cleanup; pagehide is the browser's own
-	// "this page is going away" signal, so it gets the same best-effort
-	// teardown (see teardownRecording for the native backstop).
+	// A page swap can discard this component without ever running React
+	// unmount cleanup (client-router view transitions keep the document
+	// alive while replacing islands; hard navigations replace it
+	// outright); pagehide is the browser's own "this page is going away"
+	// signal, so it gets the same best-effort teardown (see
+	// teardownRecording for the native backstop).
 	useEffect(() => {
 		const onPageHide = () => teardownRecording();
 		window.addEventListener("pagehide", onPageHide);

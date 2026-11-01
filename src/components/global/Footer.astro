@@ -1,4 +1,9 @@
 ---
+interface Props {
+	/** the desktop sidebar is present: keep the footer's left margin */
+	hasSideNavbar?: boolean;
+}
+
 const { hasSideNavbar } = Astro.props;
 ---
 

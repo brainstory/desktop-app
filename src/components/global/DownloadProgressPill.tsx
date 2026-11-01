@@ -1,6 +1,5 @@
 import { useStore } from "@nanostores/react";
-import { useEffect } from "react";
-import { $downloads, clearDownloadFailure, subscribeDownloads } from "./downloadStore";
+import { $downloads, clearDownloadFailure } from "./downloadStore";
 import Icon from "@ds/Icon";
 
 /**
@@ -12,7 +11,6 @@ import Icon from "@ds/Icon";
  */
 export default function DownloadProgressPill() {
 	// the pill is on every page: it is the feed's dependable subscriber
-	useEffect(() => subscribeDownloads(), []);
 	const { active, paused, failures } = useStore($downloads);
 	// a paused download stays visible: Resume must be reachable from
 	// every page, not only the settings one
