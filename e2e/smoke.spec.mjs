@@ -26,13 +26,18 @@ describe("brainstory smoke", () => {
 		});
 		await newIdea.click();
 
-		// the chat page: switch the recorder from the mic to typing
-		const textMode = await $('[data-testid="text-mode-toggle"]');
-		await textMode.waitForDisplayed({ timeout: 60_000 });
-		await textMode.click();
-
+		// the recorder starts in whatever mode the profile dictates: on a
+		// fresh profile the mic is blocked (no speech model yet), which
+		// forces text input on. Only toggle when the composer is absent.
 		const composer = await $('[data-testid="composer"]');
-		await composer.waitForDisplayed({ timeout: 30_000 });
+		try {
+			await composer.waitForDisplayed({ timeout: 10_000 });
+		} catch {
+			const textMode = await $('[data-testid="text-mode-toggle"]');
+			await textMode.waitForDisplayed({ timeout: 60_000 });
+			await textMode.click();
+			await composer.waitForDisplayed({ timeout: 30_000 });
+		}
 		const sentence = "I want to organize my garage workshop this weekend.";
 		await composer.setValue(sentence);
 
