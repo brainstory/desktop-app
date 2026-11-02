@@ -158,10 +158,24 @@ jobs:
       - name: Run e2e smoke test (Linux)
         if: runner.os == 'Linux'
         continue-on-error: true
+        working-directory: ${{ github.workspace }}
         run: |
+          # the debug binary's embedded URL is the DEV server (the other
+          # half of `tauri dev`): serve the frontend before driving it,
+          # or the webview shows only connection-refused
+          pnpm astro dev --port 5173 > astro-dev.log 2>&1 &
+          echo $! > astro-dev.pid
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5173/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:5173/ >/dev/null || { cat astro-dev.log; exit 1; }
           cd e2e
           pnpm install --frozen-lockfile
           xvfb-run -a pnpm test
+          status=$?
+          kill "$(cat ../astro-dev.pid)" 2>/dev/null || true
+          exit $status
 
       - name: Upload e2e screenshots (Linux)
         if: runner.os == 'Linux' && failure()

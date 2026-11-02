@@ -239,7 +239,8 @@ pnpm test             # vitest
 pnpm lint             # eslint
 pnpm vendor:check     # vendored icons/WASM complete, icon names valid
 
-# e2e smoke test (Linux only, needs tauri-driver + xvfb + a debug build):
+# e2e smoke test (Linux only; needs tauri-driver, xvfb, a debug build and
+# `pnpm astro dev --port 5173` running - the debug binary loads the dev server):
 cd e2e && pnpm install && pnpm test
 ```
 
