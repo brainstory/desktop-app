@@ -1,0 +1,6 @@
+# Deliberately empty: pnpm stops its workspace search at the FIRST
+# pnpm-workspace.yaml it finds walking up, so this file makes e2e/ its
+# own workspace root instead of a subdirectory of the app's workspace.
+# Without it, `pnpm install` here installs the root workspace and the
+# wdio binary never lands in e2e/node_modules (the root workspace has no
+# `packages` field, so e2e is not even an importer there).
