@@ -142,8 +142,8 @@ jobs:
 
       # End-to-end smoke test (Linux only): tauri-driver drives the real
       # debug binary through WebKitGTK under xvfb. Text-mode only - no
-      # model download, no LLM call. continue-on-error until the
-      # webkit2gtk-driver/tauri-driver combination proves stable in CI.
+      # model download, no LLM call. Green since the first full pass;
+      # a failure fails the nightly (that is what a smoke test is for).
       - name: Install e2e dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -157,7 +157,6 @@ jobs:
 
       - name: Run e2e smoke test (Linux)
         if: runner.os == 'Linux'
-        continue-on-error: true
         working-directory: ${{ github.workspace }}
         run: |
           # the debug binary's embedded URL is the DEV server (the other
