@@ -62,9 +62,19 @@ export function NotificationsCard({
 	};
 
 	const handleTestClick = () => {
-		sendTestNotificationApi().catch((e) => {
-			openSnackbar(false, normalizeApiError(e));
-		});
+		void sendTestNotificationApi()
+			.then(() => {
+				// the send succeeded as far as the OS reports: if no banner
+				// appeared, the system suppressed it (notifications off for
+				// this app - Terminal in dev builds - or a Focus mode)
+				openSnackbar(
+					true,
+					"Test notification sent. Nothing appeared? Allow notifications for Brainstory (dev builds deliver through Terminal) in System Settings → Notifications."
+				);
+			})
+			.catch((e) => {
+				openSnackbar(false, normalizeApiError(e));
+			});
 	};
 
 	const renderNotificationFields = (fields: NotificationSetting[]) => {

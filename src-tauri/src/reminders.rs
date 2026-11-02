@@ -3,7 +3,6 @@ use std::time::Duration;
 use chrono::{DateTime, LocalResult, NaiveDateTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_notification::NotificationExt;
 
 use crate::keys;
 use crate::models::AppState;
@@ -137,14 +136,22 @@ async fn tick_in_zone(app: &AppHandle, zone: Option<Tz>) -> Duration {
 	};
 
 	// a refused notification (denied permission is the common one) is
-	// logged, not swallowed: an invisible reminder is a support case
-	if let Err(e) = app
-		.notification()
-		.builder()
-		.title("Brainstory")
-		.body("What's on your mind today? Take a few minutes to think out loud.")
-		.show()
-	{
+	// logged, not swallowed: an invisible reminder is a support case.
+	// Sent through the real-result helper (src/notify.rs); delivery is
+	// blocking-bounded, and this tick already runs on the async runtime,
+	// so the send moves to the blocking pool.
+	let reminder_app = app.clone();
+	let shown = tauri::async_runtime::spawn_blocking(move || {
+		crate::notify::show(
+			&reminder_app,
+			"Brainstory",
+			"What's on your mind today? Take a few minutes to think out loud.",
+		)
+	})
+	.await
+	.map_err(|e| e.to_string())
+	.and_then(|sent| sent);
+	if let Err(e) = shown {
 		log::warn!("reminder notification failed to show: {e}");
 	}
 	// record the firing off the async worker too (same blocking-DB

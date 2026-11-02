@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_notification::NotificationExt;
 
 use crate::llm::{ExternalLlm, GenerationResult};
 use crate::models::{AiSettings, AppState};
@@ -692,17 +691,16 @@ pub async fn stop_and_transcribe(app: tauri::AppHandle) -> Result<serde_json::Va
 }
 
 /// Test notification command, also used to trigger the daily reminder
-/// manually from settings. The result surfaces an OS refusal (denied
-/// notification permission is the common one) instead of vanishing, so
-/// the settings UI can tell the user why nothing appeared.
+/// manually from settings. Sent through the real-result helper (see
+/// src/notify.rs) so a refusal reaches the settings UI instead of
+/// vanishing behind the plugin's discarded delivery result.
 #[tauri::command]
-pub fn send_test_notification(app: AppHandle) -> Result<(), String> {
-	app.notification()
-		.builder()
-		.title("Brainstory")
-		.body("Time to think out loud!")
-		.show()
-		.map_err(|e| e.to_string())
+pub async fn send_test_notification(app: AppHandle) -> Result<(), String> {
+	tauri::async_runtime::spawn_blocking(move || {
+		crate::notify::show(&app, "Brainstory", "Time to think out loud!")
+	})
+	.await
+	.map_err(|e| format!("notification task failed: {e}"))?
 }
 
 /// How long an AI command waits for an in-flight engine load (startup

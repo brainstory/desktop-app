@@ -83,7 +83,9 @@ The author name shown to others is your profile name (Settings → General).
 Set a time under Settings → General → Notifications (or toggle it from the tray icon
 menu). The app keeps running in the system tray when the window is closed and sends
 a system notification once per day at the configured time. Quit fully from the tray
-menu.
+menu. In `pnpm tauri:dev` notifications are delivered through Terminal (dev
+binaries are unbundled), so allow Terminal under System Settings → Notifications
+to see them while developing.
 
 ## Quick capture
 

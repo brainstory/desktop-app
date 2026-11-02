@@ -6,6 +6,7 @@ pub mod denoise;
 pub mod keys;
 pub mod llm;
 pub mod models;
+mod notify;
 pub mod prompts;
 pub mod reactions;
 mod reminders;

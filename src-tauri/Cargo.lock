@@ -450,6 +450,7 @@ dependencies = [
  "llama-cpp-sys-2",
  "log",
  "nnnoiseless",
+ "notify-rust",
  "num_cpus",
  "objc2",
  "objc2-app-kit",

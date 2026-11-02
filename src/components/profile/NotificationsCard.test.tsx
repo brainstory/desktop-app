@@ -115,6 +115,20 @@ describe("NotificationsCard", () => {
 		await waitFor(() => expect(saveSettings).toHaveBeenCalledOnce());
 		expect(save).toBeDisabled();
 	});
+	it("confirms a successful send, with a hint for the silent case", async () => {
+		mockInvoke({ send_test_notification: () => null });
+		render(
+			<SnackbarProvider>
+				<NotificationsCard notificationsData={[reminder]} saveSettings={async () => true} />
+			</SnackbarProvider>
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Send test notification" }));
+		expect(
+			await screen.findByText(/Test notification sent/, { exact: false })
+		).toBeInTheDocument();
+		expect(await screen.findByText(/Terminal/, { exact: false })).toBeInTheDocument();
+	});
+
 	it("shows an OS refusal through the snackbar instead of nothing", async () => {
 		mockInvoke({
 			send_test_notification: () => {

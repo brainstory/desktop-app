@@ -22,6 +22,11 @@ tauri = { version = "2", features = ["tray-icon"] }
 # generates the TypeScript types in src/tauri/generated from the IPC
 # structs (serde-compat keeps the wire format the single source of truth)
 ts-rs = { version = "12", features = ["serde-compat"] }
+# direct use beside tauri-plugin-notification: the plugin's show()
+# fires delivery on a background task and discards its result, so OS
+# refusals resolved Ok (see src/notify.rs). Same version/features the
+# plugin itself pulls in.
+notify-rust = "4.18"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
