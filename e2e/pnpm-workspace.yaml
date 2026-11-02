@@ -1,6 +1,14 @@
-# Deliberately empty: pnpm stops its workspace search at the FIRST
-# pnpm-workspace.yaml it finds walking up, so this file makes e2e/ its
-# own workspace root instead of a subdirectory of the app's workspace.
-# Without it, `pnpm install` here installs the root workspace and the
-# wdio binary never lands in e2e/node_modules (the root workspace has no
-# `packages` field, so e2e is not even an importer there).
+# Deliberately no `packages` field: pnpm stops its workspace search at
+# the FIRST pnpm-workspace.yaml it finds walking up, so this file makes
+# e2e/ its own workspace root instead of a subdirectory of the app's
+# workspace (without it, `pnpm install` here installs the root
+# workspace and the wdio binary never lands in e2e/node_modules).
+#
+# Build-script decisions (pnpm 12 errors on undecided ones):
+allowBuilds:
+  # wdio loads/bundles specs and config through esbuild at runtime
+  esbuild: true
+  # the browser drivers are never used - the suite drives tauri-driver;
+  # their scripts would download tens of MB of unused driver binaries
+  edgedriver: false
+  geckodriver: false
