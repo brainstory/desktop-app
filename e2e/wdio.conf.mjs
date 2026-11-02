@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -11,6 +12,8 @@ const debugBinary = resolve(import.meta.dirname, "../src-tauri/target/debug/brai
 // A fresh data dir per run: the test must never touch a real database
 // (a first-run app also skips any stale state the dev machine has).
 const dataDir = mkdtempSync(join(tmpdir(), "brainstory-e2e-"));
+
+const require = createRequire(import.meta.url);
 
 let tauriDriver;
 
@@ -33,19 +36,24 @@ export const config = {
 	framework: "mocha",
 	mochaOpts: {
 		ui: "bdd",
-		timeout: 120_000
+		// the debug binary under xvfb/llvmpipe paints slowly; islands
+		// hydrate seconds later
+		timeout: 240_000
 	},
 	reporters: ["spec"],
-	screenshotPath: resolve(import.meta.dirname, "./screenshots"),
 	afterTest(test, context, { error }) {
-		// one screenshot per failure, next to the spec (uploaded by CI)
+		// one screenshot per failure, next to the spec (uploaded by CI);
+		// the dir is created here so a fresh checkout works
 		if (!error) return;
-		import("fs").then(({ mkdirSync }) =>
-			mkdirSync(resolve(import.meta.dirname, "screenshots"), { recursive: true })
-		);
-		return browser.saveScreenshot(
-			resolve(import.meta.dirname, "screenshots", `${Date.now()}-failure.png`)
-		);
+		const dir = resolve(import.meta.dirname, "screenshots");
+		mkdirSync(dir, { recursive: true });
+		return browser
+			.getUrl()
+			.then((url) => console.error(`failing page: ${url}`))
+			.catch(() => {})
+			.then(() =>
+				browser.saveScreenshot(resolve(dir, `${Date.now()}-failure.png`))
+			);
 	},
 	//
 	// Start tauri-driver before the session; the app it spawns inherits
