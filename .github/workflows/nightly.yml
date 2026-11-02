@@ -160,7 +160,9 @@ jobs:
         continue-on-error: true
         run: |
           cd e2e
-          pnpm install --frozen-lockfile || pnpm install
+          # --ignore-workspace: without it pnpm installs the ROOT
+          # workspace here and the wdio binary never lands in e2e
+          pnpm install --frozen-lockfile --ignore-workspace
           xvfb-run -a pnpm test
 
       - name: Upload e2e screenshots (Linux)
