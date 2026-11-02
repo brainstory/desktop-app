@@ -32,13 +32,19 @@ fn attribution_identifier(is_dev: bool, configured: &str) -> &str {
 /// ~2 s delivery timeout), so call this from the blocking pool, not the
 /// main thread or an async worker.
 pub fn show(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
+	// resolved on every platform so `app` and the helper stay live
+	// outside macOS (only the macOS backend applies an attribution)
+	let identifier = attribution_identifier(tauri::is_dev(), &app.config().identifier);
 	#[cfg(target_os = "macos")]
 	{
 		// mirrors the plugin's build(): without this the macOS backend
 		// errors with "application not set"
-		let identifier = attribution_identifier(tauri::is_dev(), &app.config().identifier);
 		notify_rust::set_application(identifier).map_err(|e| e.to_string())?;
 	}
+	// the same intentionally-unused marker apply_presence uses for its
+	// macOS-only dock parameter
+	#[cfg(not(target_os = "macos"))]
+	let _ = identifier;
 	let mut notification = notify_rust::Notification::new();
 	notification.summary(title).body(body);
 	notification.show().map_err(|e| e.to_string()).map(|_| ())

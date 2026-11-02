@@ -125,10 +125,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      # Unit tests only: engine_smoke / speech_pipeline / special_tokens
-      # run in the nightly workflow with real (tiny) models; model_prompts
-      # and apple_stt_smoke need bigger/macOS-only fixtures and stay
-      # manual (see README)
+      # Unit tests only: engine_smoke and the speech pipeline run in the
+      # nightly workflow with real (tiny) fixtures; special_tokens,
+      # model_prompts and apple_stt_smoke need gemma/qwen-family or
+      # macOS-only models and stay manual (see README)
       - name: Tests
         if: runner.os != 'Linux'
         run: cargo test --lib --locked

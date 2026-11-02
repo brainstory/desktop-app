@@ -202,17 +202,13 @@ jobs:
           LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
         run: cargo test --test model_gated --locked engine_smoke
 
-      # The only check that neutralized turn markers never tokenize to
-      # control tokens on a real vocabulary; needs the cached tiny.gguf.
-      # model_prompts stays manual: its truncation probes require a
-      # fixture with a trained context of at least 8192 tokens (its own
-      # module doc says so), which stories260K is not.
-      - name: Special-token neutralization test
-        shell: bash
-        working-directory: src-tauri
-        env:
-          LLM_MODEL_PATH: ${{ runner.temp }}/engine-models/tiny.gguf
-        run: cargo test --test model_gated --locked special_tokens
+      # NOTE: special_tokens and model_prompts both stay manual. The
+      # cached stories260K fixture cannot run either: its truncation
+      # probes need a trained context of at least 8192 tokens, and its
+      # vocabulary has no control-token spellings, so special_tokens'
+      # own vacuity guard ("no raw marker tokenized to a special token")
+      # correctly refuses to pass against it. Both need a
+      # gemma/qwen-family model.
 
       # The speech pipeline test runs VAD, RNNoise and Parakeet (ONNX
       # Runtime, statically linked) on real speech - the only check that
