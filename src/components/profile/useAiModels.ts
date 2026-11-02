@@ -18,7 +18,6 @@ import {
 	downloadModelApi,
 	getAiSettingsApi,
 	getAppleSttStatusApi,
-	getFreeDiskSpaceApi,
 	listModelsApi,
 	pauseDownloadApi,
 	saveAiSettingsApi,
@@ -97,7 +96,6 @@ export function useAiModels() {
 		failures: downloadFailures
 	} = useStore($downloads);
 	const [appleStt, setAppleStt] = useState<AppleSttStatus | null>(null);
-	const [freeBytes, setFreeBytes] = useState<number | null>(null);
 	/** long-running per-row action, so the buttons can say "Deleting…"
 	 * instead of appearing dead while a load is waited out; tracked as
 	 * keyed pending flags in the shared api-action hook */
@@ -146,13 +144,6 @@ export function useAiModels() {
 			});
 	}, []);
 
-	/** Free space on the models volume (downloads and deletions change it). */
-	const refreshDiskSpace = useCallback(() => {
-		getFreeDiskSpaceApi()
-			.then(setFreeBytes)
-			.catch((e) => console.error("free disk space failed", e));
-	}, []);
-
 	/** Read the settings into the form. Also the retry path, so a failed
 	 * initial read is recoverable without reloading the page. */
 	const loadSettings = useCallback(() => {
@@ -184,7 +175,6 @@ export function useAiModels() {
 	useEffect(() => {
 		loadSettings();
 		refreshModels();
-		refreshDiskSpace();
 		// a system capability: it doesn't change while the page is open
 		getAppleSttStatusApi()
 			.then(setAppleStt)
@@ -202,7 +192,6 @@ export function useAiModels() {
 					setDownloadLanded(true);
 					openSnackbar(true, "Model downloaded");
 					refreshModels();
-					refreshDiskSpace();
 					break;
 				case "paused":
 					// the paused flag and stop point live in the listing; the
@@ -224,7 +213,6 @@ export function useAiModels() {
 						`Model downloaded, but turning it on failed: ${event.message}`
 					);
 					refreshModels();
-					refreshDiskSpace();
 					break;
 				// "progress" and "cancelled" change no catalog data: nothing
 				// to refresh, and a cancel is deliberately not toasted.
@@ -349,12 +337,11 @@ export function useAiModels() {
 			void run(
 				deleteModelApi(modelId).then(() => {
 					refreshModels();
-					refreshDiskSpace();
 				}),
 				{ key: `${modelId}:delete` }
 			);
 		},
-		[run, refreshModels, refreshDiskSpace]
+		[run, refreshModels]
 	);
 
 	const cancelDownload = useCallback(
@@ -416,7 +403,6 @@ export function useAiModels() {
 		downloadFailures,
 		rowPending: pendingAction,
 		appleStt,
-		freeBytes,
 		settingsError,
 		modelsError,
 		// actions

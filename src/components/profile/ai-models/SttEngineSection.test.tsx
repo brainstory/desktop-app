@@ -73,7 +73,6 @@ function renderSection(
 		downloadRates: {},
 		failures: {},
 		pending: () => undefined,
-		freeBytes: null,
 		actions: {
 			onDownload: vi.fn(),
 			onCancel: vi.fn(),

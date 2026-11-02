@@ -21,7 +21,6 @@ export function AiModelsCard() {
 		downloadFailures,
 		rowPending,
 		appleStt,
-		freeBytes,
 		settingsError,
 		modelsError,
 		refreshModels,
@@ -88,7 +87,6 @@ export function AiModelsCard() {
 		downloadRates,
 		failures: downloadFailures,
 		pending: rowPending,
-		freeBytes,
 		actions: {
 			onDownload: download,
 			onCancel: cancelDownload,

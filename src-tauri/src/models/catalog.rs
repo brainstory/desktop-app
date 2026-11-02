@@ -137,7 +137,50 @@ pub const LLM_MODELS: [ModelSpec; 4] = [
 	},
 ];
 
+/// The STT model a fresh install selects. Named, not positional: the
+/// download list leads with Parakeet, and the default must not silently
+/// follow the list order.
+pub const DEFAULT_STT_MODEL: &str = "whisper-base";
+
+/// STT models no longer offered for download, kept in the catalog so an
+/// install that already downloaded or selected one keeps working (and
+/// can still delete it): whisper tiny's accuracy is too rough to
+/// recommend next to the models worth having.
+const RETIRED_STT_MODELS: [&str; 1] = ["whisper-tiny-en"];
+
+/// True when the model should appear in the settings download list.
+pub fn is_offered_for_download(spec: &ModelSpec) -> bool {
+	!RETIRED_STT_MODELS.contains(&spec.id)
+}
+
 pub const STT_MODELS: [ModelSpec; 7] = [
+	ModelSpec {
+		id: "parakeet-tdt-0.6b-v3",
+		kind: ModelKind::Stt,
+		label: "Parakeet TDT v3 (25 languages)",
+		description: "NVIDIA Parakeet (~670 MB): more accurate than Whisper large v3 turbo and several times faster. English and 24 European languages.",
+		repo: "istupakov/parakeet-tdt-0.6b-v3-onnx",
+		filename: "encoder-model.int8.onnx",
+		size_bytes: 652_183_999,
+		sha256: "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+		companions: &[
+			CompanionFile {
+				filename: "decoder_joint-model.int8.onnx",
+				size_bytes: 18_202_004,
+				sha256: "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+			},
+			CompanionFile {
+				filename: "nemo128.onnx",
+				size_bytes: 139_764,
+				sha256: "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f",
+			},
+			CompanionFile {
+				filename: "vocab.txt",
+				size_bytes: 93_939,
+				sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+			},
+		],
+	},
 	ModelSpec {
 		id: "whisper-base",
 		kind: ModelKind::Stt,
@@ -203,33 +246,6 @@ pub const STT_MODELS: [ModelSpec; 7] = [
 		size_bytes: 1_624_555_275,
 		sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
 		companions: &[],
-	},
-	ModelSpec {
-		id: "parakeet-tdt-0.6b-v3",
-		kind: ModelKind::Stt,
-		label: "Parakeet TDT v3 (25 languages)",
-		description: "NVIDIA Parakeet (~670 MB): more accurate than Whisper large v3 turbo and several times faster. English and 24 European languages.",
-		repo: "istupakov/parakeet-tdt-0.6b-v3-onnx",
-		filename: "encoder-model.int8.onnx",
-		size_bytes: 652_183_999,
-		sha256: "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
-		companions: &[
-			CompanionFile {
-				filename: "decoder_joint-model.int8.onnx",
-				size_bytes: 18_202_004,
-				sha256: "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
-			},
-			CompanionFile {
-				filename: "nemo128.onnx",
-				size_bytes: 139_764,
-				sha256: "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f",
-			},
-			CompanionFile {
-				filename: "vocab.txt",
-				size_bytes: 93_939,
-				sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
-			},
-		],
 	},
 ];
 
@@ -335,8 +351,41 @@ mod tests {
 			);
 		}
 		// whisper rows are not LLMs; they too get the documented fallback
-		assert_eq!(kv_bytes_per_token(&STT_MODELS[0]), fallback);
+		let whisper = super::find_model("whisper-base", ModelKind::Stt).expect("catalog");
+		assert_eq!(kv_bytes_per_token(whisper), fallback);
 	}
+	#[test]
+	fn the_stt_list_leads_with_parakeet_and_the_default_stays_pinned() {
+		assert_eq!(
+			STT_MODELS[0].id, "parakeet-tdt-0.6b-v3",
+			"the list leads with Parakeet"
+		);
+		// the default must NOT follow the list order: it was STT_MODELS[0]
+		// before Parakeet moved first, and fresh installs keep whisper base
+		assert_eq!(super::DEFAULT_STT_MODEL, "whisper-base");
+		assert!(
+			super::find_model(super::DEFAULT_STT_MODEL, ModelKind::Stt).is_some(),
+			"the default names a catalog model"
+		);
+	}
+
+	#[test]
+	fn retired_models_stay_in_the_catalog_but_leave_the_download_list() {
+		let tiny = super::find_model("whisper-tiny-en", ModelKind::Stt)
+			.expect("kept for existing installs");
+		assert!(!super::is_offered_for_download(tiny));
+		for spec in STT_MODELS
+			.iter()
+			.filter(|spec| spec.id != "whisper-tiny-en")
+		{
+			assert!(
+				super::is_offered_for_download(spec),
+				"{} stays offered",
+				spec.id
+			);
+		}
+	}
+
 	#[test]
 	fn companions_are_pinned_files_of_the_same_model() {
 		let parakeet = super::find_model("parakeet-tdt-0.6b-v3", ModelKind::Stt).expect("catalog");

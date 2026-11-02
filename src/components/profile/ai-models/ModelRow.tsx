@@ -6,7 +6,6 @@ import type { DownloadFailure } from "@components/global/downloadStore";
 import { formatEta, formatRate, formatSize } from "./format";
 
 /** Headroom required on top of the model file before we warn about space */
-const DOWNLOAD_SPACE_MARGIN_BYTES = 1_000_000_000;
 
 /**
  * Display percentage for a download: null while the backend could not
@@ -37,7 +36,6 @@ interface ModelRowProps extends ModelRowActions {
 	/** a long-running action for this row (delete/activate can wait out a
 	 * model load): its buttons say what is happening */
 	pending?: "delete" | "activate";
-	freeBytes: number | null;
 }
 
 /**
@@ -51,7 +49,6 @@ export const ModelRow = memo(function ModelRow({
 	rate,
 	error,
 	pending,
-	freeBytes,
 	onDownload,
 	onCancel,
 	onPause,
@@ -115,9 +112,6 @@ export const ModelRow = memo(function ModelRow({
 							<Button variant="pink" onClick={() => onDownload(model.id)}>
 								{error ? "Retry" : `Download (${formatSize(model.sizeBytes)})`}
 							</Button>
-							{freeBytes !== null && (
-								<FreeSpaceNote freeBytes={freeBytes} needBytes={model.sizeBytes} />
-							)}
 						</>
 					)}
 					{isDownloading && (
@@ -188,7 +182,6 @@ export interface ModelListContext {
 	/** long-running per-row action, if any (a lookup into the shared
 	 * api-action hook's keyed pending flags) */
 	pending: (modelId: string) => "delete" | "activate" | undefined;
-	freeBytes: number | null;
 	actions: ModelRowActions;
 }
 
@@ -200,7 +193,6 @@ export function ModelList({
 	downloadRates,
 	failures,
 	pending,
-	freeBytes,
 	actions
 }: ModelListContext & { models: ModelStatus[] }) {
 	// `pending` is a lookup (the api-action hook's keyed flags): resolve
@@ -214,7 +206,6 @@ export function ModelList({
 			rate={downloadRates[model.id]}
 			error={failures[model.id]?.message}
 			pending={pending(model.id)}
-			freeBytes={freeBytes}
 			{...actions}
 		/>
 	));
@@ -291,28 +282,5 @@ function DiscardDownloadButton({
 				"Discard"
 			)}
 		</Button>
-	);
-}
-
-/**
- * Warn-only disk space note next to a Download button: muted when there's
- * enough room, amber when free space is below the model size plus a
- * margin. Never blocks the download - running out mid-transfer fails
- * cleanly through the normal verification path.
- */
-function FreeSpaceNote({ freeBytes, needBytes }: { freeBytes: number; needBytes?: number }) {
-	if (!needBytes) return null;
-	const isLow = freeBytes < needBytes + DOWNLOAD_SPACE_MARGIN_BYTES;
-	if (isLow) {
-		return (
-			<span className="text-xs font-medium text-amber-700 whitespace-nowrap">
-				Only {formatSize(freeBytes)} free — needs {formatSize(needBytes)}
-			</span>
-		);
-	}
-	return (
-		<span className="text-xs text-stone-500 whitespace-nowrap">
-			{formatSize(freeBytes)} free
-		</span>
 	);
 }

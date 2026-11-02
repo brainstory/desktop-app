@@ -49,7 +49,6 @@ function mockBase(extra: Record<string, (args: unknown) => unknown> = {}) {
 		get_runtime_status: () => emptyStatus,
 		list_models: () => emptyModels,
 		get_ai_settings: () => emptyAiSettings,
-		get_free_disk_space: () => 1_000_000_000_000,
 		...extra
 	});
 }

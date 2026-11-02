@@ -15,8 +15,8 @@ pub use ai_settings::{
 	AiSettingsResponse, LlmMode, SpeechEngine, SttMode,
 };
 pub use catalog::{
-	find_model, kv_bytes_per_token, CompanionFile, ModelKind, ModelSpec, SttBackend, LLM_MODELS,
-	STT_MODELS,
+	find_model, is_offered_for_download, kv_bytes_per_token, CompanionFile, ModelKind, ModelSpec,
+	SttBackend, DEFAULT_STT_MODEL, LLM_MODELS, STT_MODELS,
 };
 pub use download::{
 	download_model_file, download_model_file_with_pause, hf_blob_path, hf_cache_model_path,

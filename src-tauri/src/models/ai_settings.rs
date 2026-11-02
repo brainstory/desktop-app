@@ -1,7 +1,7 @@
 //! AI settings: modes, engines, validation, persistence, endpoint
 //! resolution.
 
-use super::catalog::{find_model, ModelKind, LLM_MODELS, STT_MODELS};
+use super::catalog::{find_model, ModelKind, LLM_MODELS};
 use crate::db::Db;
 use crate::keys::setting;
 
@@ -441,7 +441,7 @@ impl AiSettings {
 			stt_model: {
 				let m = get(setting::AI_STT_MODEL);
 				if m.is_empty() {
-					STT_MODELS[0].id.to_string()
+					super::DEFAULT_STT_MODEL.to_string()
 				} else {
 					m
 				}

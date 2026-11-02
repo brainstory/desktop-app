@@ -75,7 +75,6 @@ export const COMMANDS = {
 	listModels: "list_models",
 	getRuntimeStatus: "get_runtime_status",
 	getAppleSttStatus: "get_apple_stt_status",
-	getFreeDiskSpace: "get_free_disk_space",
 	downloadModel: "download_model",
 	cancelModelLoad: "cancel_model_load",
 	cancelDownload: "cancel_download",
@@ -194,7 +193,6 @@ interface CommandSignatures {
 	listModels: { args: undefined; result: { llm: ModelStatus[]; stt: ModelStatus[] } };
 	getRuntimeStatus: { args: undefined; result: { llm: EngineStatus; stt: EngineStatus } };
 	getAppleSttStatus: { args: undefined; result: AppleSttStatus };
-	getFreeDiskSpace: { args: undefined; result: number };
 	downloadModel: { args: ModelIdArgs & { onEvent: Channel<DownloadEvent> }; result: void };
 	cancelModelLoad: { args: undefined; result: null };
 	cancelDownload: { args: ModelIdArgs; result: void };

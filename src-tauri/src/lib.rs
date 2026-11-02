@@ -294,7 +294,6 @@ pub fn run() {
 			commands::models_cmd::list_models,
 			commands::models_cmd::get_runtime_status,
 			commands::models_cmd::get_apple_stt_status,
-			commands::models_cmd::get_free_disk_space,
 			commands::models_cmd::cancel_model_load,
 			commands::models_cmd::download_model,
 			commands::models_cmd::cancel_download,

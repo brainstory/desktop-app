@@ -46,6 +46,11 @@ pub async fn list_models(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 				ModelKind::Stt => &crate::models::STT_MODELS,
 			};
 			list.iter()
+				// retired models stay listed only for installs that already
+				// have them (their row allows deleting/switching away)
+				.filter(|spec| {
+					crate::models::is_offered_for_download(spec) || state.is_model_downloaded(spec)
+				})
 				.map(|spec| {
 					// an actively downloading model's live pct wins over
 					// the marker a pause left behind
@@ -137,23 +142,6 @@ pub async fn get_apple_stt_status() -> Result<serde_json::Value, String> {
 	})
 	.await
 	.map_err(|e| format!("apple stt status task failed: {e}"))?
-}
-
-/// Free space (bytes) on the volume holding the models directory, so the
-/// UI can warn before a multi-GB download. Warn-only: an actual download
-/// that runs out of space still fails cleanly through the normal error
-/// path (hash/size verification catches the truncated file).
-#[tauri::command]
-pub async fn get_free_disk_space() -> Result<u64, String> {
-	// Downloads land in the hub cache now: warn about the volume they
-	// will actually hit, not the (legacy) app models dir.
-	tauri::async_runtime::spawn_blocking(|| {
-		let dir = crate::models::primary_hub_cache();
-		std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-		fs4::available_space(&dir).map_err(|e| e.to_string())
-	})
-	.await
-	.map_err(|e| format!("disk space task failed: {e}"))?
 }
 
 /// Removes the download's bookkeeping entries when dropped, so even a

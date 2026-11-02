@@ -35,11 +35,6 @@ export function getAppleSttStatusApi(): Promise<AppleSttStatus> {
 	return invokeCommand("getAppleSttStatus");
 }
 
-/** Free bytes on the volume holding the models directory (warn-only UI) */
-export function getFreeDiskSpaceApi(): Promise<number> {
-	return invokeCommand("getFreeDiskSpace");
-}
-
 /**
  * Download a model. Progress events arrive on the returned channel and
  * are also broadcast app-wide (see the $downloads store), which drives

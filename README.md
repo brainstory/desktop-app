@@ -14,12 +14,13 @@ First launch (or from **Settings → AI Models**), download:
   (QAT 4-bit, ~5.2 GB), Qwen3.5 4B (Q4_K_M, ~2.7 GB; run with thinking off),
   or MiniCPM5 2B (~1.6 GB) for lighter machines.
   Runs via llama.cpp with Metal acceleration on Apple Silicon.
-- **STT** — whisper.cpp tiny.en (~78 MB), base.en (~148 MB, default), small.en
-  (~488 MB), large-v3-turbo (~1.6 GB), or the multilingual base/small builds
-  (same sizes) for non-English speech; or NVIDIA Parakeet TDT 0.6B v3 (int8
-  ONNX, ~670 MB, via ONNX Runtime) — more accurate than large-v3-turbo and
-  several times faster, detecting English and 24 European languages by
-  itself. On macOS 26+, the built-in Apple
+- **STT** — NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX, ~670 MB, via ONNX
+  Runtime) — more accurate than whisper large-v3-turbo and several times
+  faster, detecting English and 24 European languages by itself; or
+  whisper.cpp base.en (~148 MB, default), small.en (~488 MB),
+  large-v3-turbo (~1.6 GB), or the multilingual base/small builds (same
+  sizes) for non-English speech. The whisper tiny build is no longer
+  offered (too rough); installs that already downloaded it keep it. On macOS 26+, the built-in Apple
   Speech engine (Speech.framework, on-device) is available instead — no model
   download at all, with a selectable language and the downloaded model as the
   automatic fallback.

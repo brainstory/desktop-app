@@ -42,7 +42,6 @@ function renderRow(
 			rate={overrides.rate}
 			error={overrides.error}
 			pending={overrides.pending}
-			freeBytes={null}
 			{...actions}
 		/>
 	);

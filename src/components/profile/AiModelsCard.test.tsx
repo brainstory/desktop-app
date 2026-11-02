@@ -117,7 +117,6 @@ function mockCard(extra: Record<string, (args: unknown) => unknown> = {}) {
 			supportedLocales: [],
 			installedLocales: []
 		}),
-		get_free_disk_space: () => 1_000_000_000_000,
 		save_ai_settings: () => undefined,
 		...extra
 	});

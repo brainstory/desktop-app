@@ -1,10 +1,21 @@
-use super::super::catalog::{LLM_MODELS, STT_MODELS};
+use super::super::catalog::{find_model, ModelKind, LLM_MODELS};
 use super::{rollback_candidate, LLM_ROLLBACK_ON_SAME, STT_ROLLBACK_ON_SAME};
+
+/// Two distinct whisper specs, looked up by id: the catalog order
+/// changed once (Parakeet moved to the front) and these positional
+/// indexes silently selected different models than their names claimed.
+fn whisper_pair() -> (
+	&'static crate::models::ModelSpec,
+	&'static crate::models::ModelSpec,
+) {
+	let first = find_model("whisper-small-en", ModelKind::Stt).expect("catalog");
+	let second = find_model("whisper-base-en", ModelKind::Stt).expect("catalog");
+	(first, second)
+}
 
 #[test]
 fn whisper_retries_the_same_model_llama_does_not() {
-	let small = &STT_MODELS[1];
-	let tiny = &STT_MODELS[2];
+	let (small, tiny) = whisper_pair();
 	// a failed reload of the active whisper model gets a retry
 	// (339b19e): its engine was already dropped
 	let retry = rollback_candidate(Some(small.clone()), small, STT_ROLLBACK_ON_SAME);
