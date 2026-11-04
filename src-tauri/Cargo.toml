@@ -75,7 +75,7 @@ transcribe-rs = { version = "=0.3.12", default-features = false, features = ["on
 # transcribe-rs only asks for ^2.0.0-rc.12, but ort's pre-releases break
 # API between candidates (rc.15 no longer builds it): pin the release
 # transcribe-rs 0.3.12 was built and tested against.
-ort = "=2.0.0-rc.12"
+ort = "=2.0.0-rc.15"
 
 encoding_rs = "0.8"
 libc = "0.2"
@@ -102,7 +102,7 @@ objc2 = "0.6"
 # a deliberate upgrade should re-verify the analyzer surface (see
 # tests/apple_stt_smoke.rs). Requires Xcode with the macOS 26 SDK for the
 # SpeechAnalyzer family; older SDKs compile those paths as stubs.
-speech = "=0.9.0"
+speech = "=0.9.1"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = "=0.16.0"
