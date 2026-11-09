@@ -4874,9 +4874,9 @@ dependencies = [
 
 [[package]]
 name = "speech"
-version = "0.9.1"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1799701b362008bc447a1d1c1b723fdb4f3b99d7a70a5c4a9932a5b2203ce248"
+checksum = "fd9a178b7c1e0aa8ededd262ef47a67daec03d296a51d24aa7bcef32bfe05681"
 dependencies = [
  "doom-fish-utils",
  "serde",
