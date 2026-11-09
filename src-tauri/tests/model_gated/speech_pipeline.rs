@@ -62,6 +62,12 @@ fn speech_pipeline_transcribes_real_speech() {
 		return;
 	};
 	let speech = wav_to_samples(&std::fs::read(wav).expect("read SPEECH_WAV")).expect("decode");
+	// Diagnose a broken synthesizer/fixture before blaming VAD or the model.
+	assert!(
+		speech.len() >= RATE,
+		"SPEECH_WAV must contain at least one second of speech, got {} samples",
+		speech.len()
+	);
 	let samples = recording(&speech);
 
 	// VAD finds the two sentences and drops the pauses around them

@@ -184,7 +184,11 @@ test("all three platform builds run without signing credentials and skip updater
 			[],
 			`Build (${platform}) must not see the updater signing env (frontend hooks, Cargo build scripts and pnpm auto-install all inherit it)`
 		);
-		assert.match(step.run, /tauri build/, `Build (${platform}) builds via the tauri CLI`);
+		assert.match(
+			step.run,
+			/bash scripts\/tauri-build\.sh/,
+			`Build (${platform}) builds via the tested tauri CLI wrapper`
+		);
 		assert.match(
 			step.run,
 			/--no-sign/,

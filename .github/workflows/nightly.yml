@@ -39,7 +39,8 @@ jobs:
             os: windows-latest
             bundles: nsis
           - name: linux
-            os: ubuntu-latest
+            # Keep WebKitGTK/WebDriver and the oldest shipped glibc stable.
+            os: ubuntu-24.04
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
     # release build + bundling + the engine smoke test (a debug build of
@@ -126,7 +127,8 @@ jobs:
       # Windows default shell) can strip the quotes from a JSON argument.
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --bundles app --config src-tauri/tauri.nightly.conf.json
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles app --config src-tauri/tauri.nightly.conf.json
 
       - name: Package DMG (macOS)
         if: runner.os == 'macOS'
@@ -134,11 +136,13 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build --bundles nsis --config src-tauri/tauri.nightly.conf.json
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles nsis --config src-tauri/tauri.nightly.conf.json
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config src-tauri/tauri.nightly.conf.json
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles ${{ matrix.bundles }} --config src-tauri/tauri.nightly.conf.json
 
       # End-to-end smoke test (Linux only): tauri-driver drives the real
       # debug binary through WebKitGTK under xvfb. Text-mode only - no
@@ -278,7 +282,8 @@ jobs:
       - name: Synthesize test speech (macOS)
         if: runner.os == 'macOS'
         run: |
-          say --file-format=WAVE --data-format=LEI16@22050 -o "${RUNNER_TEMP}/speech.wav" \
+          # Do not depend on the runner's changing default voice.
+          say -v Samantha --file-format=WAVE --data-format=LEI16@22050 -o "${RUNNER_TEMP}/speech.wav" \
             "The quick brown fox jumps over the lazy dog."
 
       - name: Synthesize test speech (Windows)

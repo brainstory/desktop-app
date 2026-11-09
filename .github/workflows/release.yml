@@ -43,7 +43,8 @@ jobs:
             os: windows-latest
             bundles: nsis
           - name: linux
-            os: ubuntu-latest
+            # Keep WebKitGTK/WebDriver and the oldest shipped glibc stable.
+            os: ubuntu-24.04
             bundles: deb rpm appimage
     runs-on: ${{ matrix.os }}
     # cold-cache llama.cpp + whisper.cpp release builds run long; still
@@ -133,7 +134,8 @@ jobs:
       # one explicit step that runs no dependency code.
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --bundles app --no-sign
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles app --no-sign
 
       # tauri's own dmg bundler needs Finder/AppleScript; use the repo's
       # headless hdiutil packaging instead
@@ -143,11 +145,13 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build --bundles nsis --no-sign
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles nsis --no-sign
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles deb rpm appimage --no-sign
+        shell: bash
+        run: bash scripts/tauri-build.sh --bundles deb rpm appimage --no-sign
 
       - name: Upload updater artifacts (macOS)
         if: runner.os == 'macOS'
