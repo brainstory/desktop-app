@@ -100,8 +100,23 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake
+          # GitHub-hosted Ubuntu runners have transient DNS outages that can
+          # leave apt-get retrying "Temporary failure resolving" for 45+
+          # minutes. Fail fast (short acquire timeouts, outer timeout) and
+          # retry with backoff: bounded, and it recovers as soon as DNS
+          # comes back instead of hanging the job.
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 240 bash -c 'sudo apt-get -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 -o Acquire::Retries=1 update
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=2 install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake'; then
+              break
+            fi
+            if [ "$attempt" = 6 ]; then
+              echo "::error::apt-get failed after 6 attempts (runner DNS/network outage)"
+              exit 1
+            fi
+            echo "apt-get attempt $attempt failed; retrying in $((attempt * 20))s" >&2
+            sleep $((attempt * 20))
+          done
 
       - name: Stamp nightly version
         shell: bash
@@ -151,7 +166,18 @@ jobs:
       - name: Install e2e dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y webkit2gtk-driver xvfb
+          # same DNS resilience as the dependency install above
+          for attempt in 1 2 3 4 5; do
+            if timeout 180 sudo apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=1 install -y webkit2gtk-driver xvfb; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::apt-get failed after 5 attempts (runner DNS/network outage)"
+              exit 1
+            fi
+            echo "apt-get attempt $attempt failed; retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
           cargo install tauri-driver --locked
 
       - name: Build debug binary (Linux)
@@ -275,7 +301,17 @@ jobs:
       - name: Synthesize test speech (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y espeak-ng
+          for attempt in 1 2 3 4 5; do
+            if timeout 180 sudo apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=1 install -y espeak-ng; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::apt-get failed after 5 attempts (runner DNS/network outage)"
+              exit 1
+            fi
+            echo "apt-get attempt $attempt failed; retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
           espeak-ng -v en-us -s 150 -w "${RUNNER_TEMP}/speech.wav" \
             "The quick brown fox jumps over the lazy dog."
 
