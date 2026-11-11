@@ -102,7 +102,7 @@ objc2 = "0.6"
 # a deliberate upgrade should re-verify the analyzer surface (see
 # tests/apple_stt_smoke.rs). Requires Xcode with the macOS 26 SDK for the
 # SpeechAnalyzer family; older SDKs compile those paths as stubs.
-speech = "=0.9.1"
+speech = "=0.9.3"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = "=0.16.0"
