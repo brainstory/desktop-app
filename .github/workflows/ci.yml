@@ -202,5 +202,10 @@ jobs:
           node-version: 26
           cache: pnpm
 
+      # GHSA-fc5q-39xc-vjpf was WITHDRAWN upstream on 2026-11-18 (the
+      # ReDoS premise was disputed) and has no patched picomatch version;
+      # GitHub's advisory feed still lists it as high, so ignore that ID
+      # alone until the feed catches up. Every other high advisory still
+      # fails the audit.
       - name: pnpm audit (production dependencies, high and above)
-        run: pnpm audit --prod --audit-level=high
+        run: pnpm audit --prod --audit-level=high --ignore GHSA-fc5q-39xc-vjpf
